@@ -112,29 +112,33 @@ where
         }
     }
 
-    pub fn get_clone(&mut self, k: &K) -> Option<V>
-    where
-        V: Clone,
-    {
+    pub fn get(&mut self, k: &K) -> Option<&V> {
         self.rehash_step();
         let hs = self.hasher.clone();
-        if let Some(new) = self.new.as_mut() {
+        if let Some(new) = self.new.as_ref() {
             let idx = Self::index_for_with_hasher(&hs, k, new.len());
             if let Some(pos) = new[idx].iter().position(|(kk, _)| kk == k) {
-                return Some(new[idx][pos].1.clone());
+                return Some(&new[idx][pos].1);
             }
             let idx_old = Self::index_for_with_hasher(&hs, k, self.old.len());
             if let Some(pos) = self.old[idx_old].iter().position(|(kk, _)| kk == k) {
-                return Some(self.old[idx_old][pos].1.clone());
+                return Some(&self.old[idx_old][pos].1);
             }
             None
         } else {
             let idx = Self::index_for_with_hasher(&hs, k, self.old.len());
             if let Some(pos) = self.old[idx].iter().position(|(kk, _)| kk == k) {
-                return Some(self.old[idx][pos].1.clone());
+                return Some(&self.old[idx][pos].1);
             }
             None
         }
+    }
+
+    pub fn get_clone(&mut self, k: &K) -> Option<V>
+    where
+        V: Clone,
+    {
+        self.get(k).cloned()
     }
 
     pub fn remove(&mut self, k: &K) -> Option<V> {
@@ -175,4 +179,7 @@ where
     }
 }
 
-pub type Db = RehashMap<String, Vec<u8>>;
+// #[cfg(feature = "rehash")]
+// pub type Db = RehashMap<String, bytes::Bytes>;
+// #[cfg(not(feature = "rehash"))]
+pub type Db = std::collections::HashMap<String, bytes::Bytes>;

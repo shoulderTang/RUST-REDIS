@@ -1,10 +1,8 @@
 #[path = "../resp.rs"]
 mod resp;
 use std::io;
-use std::io::Write;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpStream;
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use resp::{Resp, read_frame, write_frame};
 
 fn to_bulk(s: &str) -> Resp {
