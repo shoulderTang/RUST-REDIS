@@ -10,9 +10,16 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-appender = "0.2.4"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+ahash = "0.8"
+dashmap = "6.1"
+
+[profile.release]
+# 优化级别：0(无) < 1(轻量) < 2(中度) < 3(最高) < "s"(尺寸优化) < "z"(极致尺寸优化)
+opt-level = 3  # Release 模式默认就是 3，可根据需求调整
+lto = true     # 启用链接时优化（LTO），进一步提升性能（编译时间更长）
+codegen-units = 1  # 减少代码生成单元，让编译器做全局优化（编译变慢，性能更好）
 
 [features]
-rehash = []
 
 [[bin]]
 name = "server"

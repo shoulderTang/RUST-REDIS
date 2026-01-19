@@ -1,9 +1,9 @@
-use crate::db::Db;
+use crate::db::{Db, Value};
 use crate::resp::{as_bytes, Resp};
 
 pub fn process_frame(
     frame: Resp,
-    db: &mut Db,
+    db: &Db,
 ) -> Resp {
     match frame {
         Resp::Array(Some(items)) => {
@@ -17,11 +17,12 @@ pub fn process_frame(
             match command_name(cmd_raw) {
                 Command::Ping => {
                     if items.len() == 1 {
-                        Resp::SimpleString("PONG".to_string())
+                        Resp::SimpleString(bytes::Bytes::from_static(b"PONG"))
                     } else if items.len() == 2 {
-                        match as_bytes(&items[1]) {
-                            Some(b) => Resp::BulkString(Some(b.to_vec())),
-                            None => Resp::BulkString(None),
+                        match &items[1] {
+                            Resp::BulkString(Some(b)) => Resp::BulkString(Some(b.clone())),
+                            Resp::SimpleString(s) => Resp::BulkString(Some(s.clone())),
+                            _ => Resp::BulkString(None),
                         }
                     } else {
                         Resp::Error("ERR wrong number of arguments for 'PING'".to_string())
@@ -31,37 +32,37 @@ pub fn process_frame(
                     if items.len() != 3 {
                         return Resp::Error("ERR wrong number of arguments for 'SET'".to_string());
                     }
-                    let key_bytes = match as_bytes(&items[1]) {
-                        Some(b) => b,
-                        None => return Resp::Error("ERR invalid key".to_string()),
+                    let key = match &items[1] {
+                        Resp::BulkString(Some(b)) => b.clone(),
+                        Resp::SimpleString(s) => s.clone(),
+                        _ => return Resp::Error("ERR invalid key".to_string()),
                     };
-                    let val_bytes = match as_bytes(&items[2]) {
-                        Some(b) => b,
-                        None => return Resp::BulkString(None),
+                    let val = match &items[2] {
+                        Resp::BulkString(Some(b)) => b.clone(),
+                        Resp::SimpleString(s) => s.clone(),
+                        _ => return Resp::BulkString(None),
                     };
-                    let key = match std::str::from_utf8(key_bytes) {
-                        Ok(s) => s.to_string(),
-                        Err(_) => return Resp::Error("ERR key must be UTF-8".to_string()),
-                    };
-                    db.insert(key, bytes::Bytes::copy_from_slice(val_bytes));
-                    Resp::SimpleString("OK".to_string())
+                    db.insert(key, Value::String(val));
+                    Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
                 }
                 Command::Get => {
                     if items.len() != 2 {
                         return Resp::Error("ERR wrong number of arguments for 'GET'".to_string());
                     }
-                    let key_bytes = match as_bytes(&items[1]) {
-                        Some(b) => b,
-                        None => return Resp::Error("ERR invalid key".to_string()),
+                    let key = match &items[1] {
+                        Resp::BulkString(Some(b)) => b.clone(),
+                        Resp::SimpleString(s) => s.clone(),
+                        _ => return Resp::Error("ERR invalid key".to_string()),
                     };
-                    let key = match std::str::from_utf8(key_bytes) {
-                        Ok(s) => s.to_string(),
-                        Err(_) => return Resp::Error("ERR key must be UTF-8".to_string()),
-                    };
-                    match db.get(&key) {
-                        Some(v) => Resp::BulkString(Some(v.to_vec())),
+
+                    let resp = match db.get(&key) {
+                        Some(v) => match &*v {
+                            Value::String(b) => Resp::BulkString(Some(b.clone())),
+                        },
                         None => Resp::BulkString(None),
-                    }
+                    };
+
+                    resp
                 }
                 Command::Shutdown => {
                     std::process::exit(0);

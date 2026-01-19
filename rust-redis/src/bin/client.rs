@@ -6,7 +6,7 @@ use tokio::net::TcpStream;
 use resp::{Resp, read_frame, write_frame};
 
 fn to_bulk(s: &str) -> Resp {
-    Resp::BulkString(Some(s.as_bytes().to_vec()))
+    Resp::BulkString(Some(bytes::Bytes::copy_from_slice(s.as_bytes())))
 }
 
 fn tokens_to_resp(tokens: &[String]) -> Option<Resp> {
@@ -23,7 +23,13 @@ fn tokens_to_resp(tokens: &[String]) -> Option<Resp> {
 fn print_resp(r: &Resp) {
     match r {
         Resp::SimpleString(s) => {
-            println!("{}", s);
+            match std::str::from_utf8(s.as_ref()) {
+                Ok(text) => println!("{}", text),
+                Err(_) => {
+                    let hex = s.as_ref().iter().map(|x| format!("{:02x}", x)).collect::<String>();
+                    println!("0x{}", hex);
+                }
+            }
         }
         Resp::Error(s) => {
             println!("(error) {}", s);
@@ -35,10 +41,10 @@ fn print_resp(r: &Resp) {
             println!("(nil)");
         }
         Resp::BulkString(Some(b)) => {
-            match std::str::from_utf8(b) {
+            match std::str::from_utf8(b.as_ref()) {
                 Ok(s) => println!("{}", s),
                 Err(_) => {
-                    let hex = b.iter().map(|x| format!("{:02x}", x)).collect::<String>();
+                    let hex = b.as_ref().iter().map(|x| format!("{:02x}", x)).collect::<String>();
                     println!("0x{}", hex);
                 }
             }

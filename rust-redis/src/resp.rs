@@ -3,12 +3,13 @@ use std::io::{self, ErrorKind};
 use std::pin::Pin;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use bytes::{Bytes, BytesMut};
 
 pub enum Resp {
-    SimpleString(String),
+    SimpleString(Bytes),
     Error(String),
     Integer(i64),
-    BulkString(Option<Vec<u8>>),
+    BulkString(Option<Bytes>),
     Array(Option<Vec<Resp>>),
 }
 
@@ -55,14 +56,15 @@ where
     if len < 0 {
         return Err(io::Error::new(ErrorKind::InvalidData, "negative bulk string length"));
     }
-    let mut buf = vec![0u8; len as usize];
-    reader.read_exact(&mut buf).await?;
+    let mut buf = BytesMut::with_capacity(len as usize);
+    buf.resize(len as usize, 0);
+    reader.read_exact(&mut buf[..]).await?;
     let mut crlf = [0u8; 2];
     reader.read_exact(&mut crlf).await?;
     if &crlf != b"\r\n" {
         return Err(io::Error::new(ErrorKind::InvalidData, "invalid bulk string terminator"));
     }
-    Ok(Some(Resp::BulkString(Some(buf))))
+    Ok(Some(Resp::BulkString(Some(buf.freeze()))))
 }
 
 async fn read_array(reader: &mut BufReader<OwnedReadHalf>) -> io::Result<Option<Resp>> {
@@ -104,7 +106,8 @@ pub fn read_frame<'a>(reader: &'a mut BufReader<OwnedReadHalf>) -> Pin<Box<dyn F
                     Some(l) => l,
                     None => return Ok(None),
                 };
-                Ok(Some(Resp::SimpleString(line)))
+                let bytes = Bytes::copy_from_slice(line.as_bytes());
+                Ok(Some(Resp::SimpleString(bytes)))
             }
             b'-' => {
                 let line = match read_line(reader).await? {
@@ -132,7 +135,7 @@ pub fn write_frame<'a>(writer: &'a mut BufWriter<OwnedWriteHalf>, frame: &'a Res
         match frame {
             Resp::SimpleString(s) => {
                 writer.write_all(b"+").await?;
-                writer.write_all(s.as_bytes()).await?;
+                writer.write_all(s.as_ref()).await?;
                 writer.write_all(b"\r\n").await?;
             }
             Resp::Error(s) => {
@@ -152,7 +155,7 @@ pub fn write_frame<'a>(writer: &'a mut BufWriter<OwnedWriteHalf>, frame: &'a Res
                 writer.write_all(b"$").await?;
                 writer.write_all(data.len().to_string().as_bytes()).await?;
                 writer.write_all(b"\r\n").await?;
-                writer.write_all(data).await?;
+                writer.write_all(data.as_ref()).await?;
                 writer.write_all(b"\r\n").await?;
             }
             Resp::Array(None) => {
@@ -173,9 +176,9 @@ pub fn write_frame<'a>(writer: &'a mut BufWriter<OwnedWriteHalf>, frame: &'a Res
 
 pub fn as_bytes(r: &Resp) -> Option<&[u8]> {
     match r {
-        Resp::BulkString(Some(b)) => Some(b.as_slice()),
+        Resp::BulkString(Some(b)) => Some(b.as_ref()),
         Resp::BulkString(None) => None,
-        Resp::SimpleString(s) => Some(s.as_bytes()),
+        Resp::SimpleString(s) => Some(s.as_ref()),
         _ => None,
     }
 }

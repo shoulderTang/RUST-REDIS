@@ -1,16 +1,10 @@
 #![allow(unexpected_cfgs)]
 #![allow(unused_imports)]
 #![allow(dead_code)]
-use std::future::Future;
-use std::io::{self, ErrorKind};
-use std::pin::Pin;
-use std::collections::HashMap;
-use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hash, Hasher};
-use std::mem;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
+// use tokio::sync::Mutex;
 use tracing::{info, warn, error};
 #[path = "../resp.rs"]
 mod resp;
@@ -20,11 +14,6 @@ mod db;
 mod cmd;
 #[path = "../conf.rs"]
 mod conf;
-
-struct CommandMessage {
-    frame: resp::Resp,
-    resp_tx: mpsc::UnboundedSender<resp::Resp>,
-}
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -65,27 +54,18 @@ async fn run_server(cfg: conf::Config, _guard: Option<tracing_appender::non_bloc
     }
     
     let listener = TcpListener::bind(&addr).await.unwrap();
-    let (tx, mut rx) = mpsc::unbounded_channel::<CommandMessage>();
-
-    tokio::spawn(async move {
-        let mut db_state: db::Db = Default::default();
-        while let Some(msg) = rx.recv().await {
-            let CommandMessage { frame, resp_tx } = msg;
-            let response = cmd::process_frame(frame, &mut db_state);
-            let _ = resp_tx.send(response);
-        }
-    });
+    //let db = Arc::new(db::Db::default());
+    let db = db::Db::default();
 
     loop {
         let (socket, addr) = listener.accept().await.unwrap();
         info!("accepted connection from {}", addr);
-        let tx_cloned = tx.clone();
+        let db_cloned = db.clone();
 
         tokio::spawn(async move {
             let (read_half, write_half) = socket.into_split();
             let mut reader = BufReader::new(read_half);
             let mut writer = BufWriter::new(write_half);
-            let (resp_tx, mut resp_rx) = mpsc::unbounded_channel::<resp::Resp>();
 
             loop {
                 let frame = match resp::read_frame(&mut reader).await {
@@ -93,15 +73,8 @@ async fn run_server(cfg: conf::Config, _guard: Option<tracing_appender::non_bloc
                     Ok(None) => return,
                     Err(_) => return,
                 };
-                if tx_cloned
-                    .send(CommandMessage { frame, resp_tx: resp_tx.clone() })
-                    .is_err()
-                {
-                    return;
-                }
-                let response = match resp_rx.recv().await {
-                    Some(r) => r,
-                    None => return,
+                let response = {
+                    cmd::process_frame(frame, &db_cloned)
                 };
                 if resp::write_frame(&mut writer, &response).await.is_err() {
                     return;
