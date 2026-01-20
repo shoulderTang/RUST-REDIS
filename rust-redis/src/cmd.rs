@@ -112,3 +112,7 @@ fn equals_ignore_ascii_case(a: &[u8], b: &[u8]) -> bool {
     }
     true
 }
+
+#[cfg(test)]
+#[path = "cmd_test.rs"]
+mod tests;
