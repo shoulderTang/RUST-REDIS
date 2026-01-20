@@ -56,6 +56,17 @@ async fn run_server(cfg: conf::Config, _guard: Option<tracing_appender::non_bloc
     let listener = TcpListener::bind(&addr).await.unwrap();
     //let db = Arc::new(db::Db::default());
     let db = db::Db::default();
+    //let db = Arc::new(db);
+
+    // Background task to clean up expired keys
+    let db_for_cleanup = db.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
+        loop {
+            interval.tick().await;
+            db_for_cleanup.retain(|_, v| !v.is_expired());
+        }
+    });
 
     loop {
         let (socket, addr) = listener.accept().await.unwrap();

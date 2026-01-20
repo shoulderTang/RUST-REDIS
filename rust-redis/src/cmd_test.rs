@@ -95,3 +95,108 @@ fn test_invalid_args() {
         _ => panic!("expected Error"),
     }
 }
+
+#[test]
+fn test_expire_ttl() {
+    let db = Db::default();
+
+    // SET key val
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("SET"))),
+        Resp::BulkString(Some(Bytes::from("foo"))),
+        Resp::BulkString(Some(Bytes::from("bar"))),
+    ]));
+    process_frame(req, &db);
+
+    // TTL key -> -1
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("TTL"))),
+        Resp::BulkString(Some(Bytes::from("foo"))),
+    ]));
+    let res = process_frame(req, &db);
+    match res {
+        Resp::Integer(i) => assert_eq!(i, -1),
+        _ => panic!("expected Integer(-1)"),
+    }
+
+    // EXPIRE key 1
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("EXPIRE"))),
+        Resp::BulkString(Some(Bytes::from("foo"))),
+        Resp::BulkString(Some(Bytes::from("1"))),
+    ]));
+    let res = process_frame(req, &db);
+    match res {
+        Resp::Integer(i) => assert_eq!(i, 1),
+        _ => panic!("expected Integer(1)"),
+    }
+
+    // TTL key -> ~1
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("TTL"))),
+        Resp::BulkString(Some(Bytes::from("foo"))),
+    ]));
+    let res = process_frame(req, &db);
+    match res {
+        Resp::Integer(i) => assert!(i >= 0 && i <= 1),
+        _ => panic!("expected Integer(>=0)"),
+    }
+
+    // Sleep 1.1s
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+
+    // GET key -> Nil
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("GET"))),
+        Resp::BulkString(Some(Bytes::from("foo"))),
+    ]));
+    let res = process_frame(req, &db);
+    match res {
+        Resp::BulkString(None) => {},
+        _ => panic!("expected BulkString(None)"),
+    }
+
+    // TTL key -> -2
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("TTL"))),
+        Resp::BulkString(Some(Bytes::from("foo"))),
+    ]));
+    let res = process_frame(req, &db);
+    match res {
+        Resp::Integer(i) => assert_eq!(i, -2),
+        _ => panic!("expected Integer(-2)"),
+    }
+}
+
+#[test]
+fn test_dbsize() {
+    let db = Db::default();
+
+    // DBSIZE -> 0
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("DBSIZE"))),
+    ]));
+    let res = process_frame(req, &db);
+    match res {
+        Resp::Integer(i) => assert_eq!(i, 0),
+        _ => panic!("expected Integer(0)"),
+    }
+
+    // SET key val
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("SET"))),
+        Resp::BulkString(Some(Bytes::from("foo"))),
+        Resp::BulkString(Some(Bytes::from("bar"))),
+    ]));
+    process_frame(req, &db);
+
+    // DBSIZE -> 1
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("DBSIZE"))),
+    ]));
+    let res = process_frame(req, &db);
+    match res {
+        Resp::Integer(i) => assert_eq!(i, 1),
+        _ => panic!("expected Integer(1)"),
+    }
+}

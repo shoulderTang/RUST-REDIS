@@ -8,5 +8,5 @@ Rewrite the redis in Rust language and in Rust way.
 
 2026.1.19 性能优化，get,set命令redis-benchmark测试达到redis6.2.5的90%以上; 
 
-2026.1.20 增加命令相关的单元测试代码。
+2026.1.20 1.增加key过期清理功能。2.增加expire,ttl,dbsize命令。3.增加命令相关的单元测试代码。
 
