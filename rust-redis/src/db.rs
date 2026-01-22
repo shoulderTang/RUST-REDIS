@@ -4,11 +4,48 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // RehashMap struct and implementation are removed for simplicity
 // and replaced by DashMap as the default implementation.
 
+use std::collections::{VecDeque, HashMap, HashSet, BTreeSet};
+use std::cmp::Ordering;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TotalOrderF64(pub f64);
+
+impl Eq for TotalOrderF64 {}
+
+impl PartialOrd for TotalOrderF64 {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for TotalOrderF64 {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.partial_cmp(&other.0).unwrap_or(Ordering::Equal)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SortedSet {
+    pub members: HashMap<bytes::Bytes, f64>,
+    pub scores: BTreeSet<(TotalOrderF64, bytes::Bytes)>,
+}
+
+impl SortedSet {
+    pub fn new() -> Self {
+        SortedSet {
+            members: HashMap::new(),
+            scores: BTreeSet::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Value {
     String(bytes::Bytes),
-    // List(Vec<bytes::Bytes>),
-    // Hash(DashMap<bytes::Bytes, bytes::Bytes>),
+    List(VecDeque<bytes::Bytes>),
+    Hash(HashMap<bytes::Bytes, bytes::Bytes>),
+    Set(HashSet<bytes::Bytes>),
+    ZSet(SortedSet),
 }
 
 #[derive(Clone, Debug)]

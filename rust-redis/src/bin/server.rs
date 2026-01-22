@@ -10,7 +10,7 @@ use tracing::{info, warn, error};
 mod resp;
 #[path = "../db.rs"]
 mod db;
-#[path = "../cmd.rs"]
+#[path = "../cmd/mod.rs"]
 mod cmd;
 #[path = "../conf.rs"]
 mod conf;

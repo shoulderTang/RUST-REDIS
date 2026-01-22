@@ -10,3 +10,4 @@ Rewrite the redis in Rust language and in Rust way.
 
 2026.1.20 1.增加key过期清理功能。2.增加expire,ttl,dbsize命令。3.增加命令相关的单元测试代码。
 
+2026.2.22 1.增加list类型的命令实现。2.增加hash类型的命令实现。3.增加set类型的命令实现。4.代码结构优化，增加模块之间的解耦。
