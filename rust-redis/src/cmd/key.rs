@@ -79,6 +79,62 @@ pub fn ttl(items: &[Resp], db: &Db) -> Resp {
     }
 }
 
+pub fn keys(items: &[Resp], db: &Db) -> Resp {
+    if items.len() != 2 {
+        return Resp::Error("ERR wrong number of arguments for 'KEYS'".to_string());
+    }
+    let pattern = match &items[1] {
+        Resp::BulkString(Some(b)) => b,
+        Resp::SimpleString(s) => s,
+        _ => return Resp::Error("ERR invalid pattern".to_string()),
+    };
+
+    let mut matched_keys = Vec::new();
+    for entry in db.iter() {
+        if entry.value().is_expired() {
+            continue;
+        }
+        let key = entry.key();
+        if match_pattern(pattern, key) {
+             matched_keys.push(Resp::BulkString(Some(key.clone())));
+        }
+    }
+    
+    Resp::Array(Some(matched_keys))
+}
+
+fn match_pattern(pattern: &[u8], text: &[u8]) -> bool {
+    let mut p_idx = 0;
+    let mut t_idx = 0;
+    let p_len = pattern.len();
+    let t_len = text.len();
+
+    while p_idx < p_len {
+        if p_idx < p_len && pattern[p_idx] == b'*' {
+            while p_idx < p_len && pattern[p_idx] == b'*' {
+                p_idx += 1;
+            }
+            if p_idx == p_len {
+                return true;
+            }
+            while t_idx < t_len {
+                if match_pattern(&pattern[p_idx..], &text[t_idx..]) {
+                    return true;
+                }
+                t_idx += 1;
+            }
+            return false;
+        } else if p_idx < p_len && t_idx < t_len && (pattern[p_idx] == b'?' || pattern[p_idx] == text[t_idx]) {
+            p_idx += 1;
+            t_idx += 1;
+        } else {
+            return false;
+        }
+    }
+    
+    t_idx == t_len
+}
+
 pub fn dbsize(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 1 {
         return Resp::Error("ERR wrong number of arguments for 'DBSIZE'".to_string());

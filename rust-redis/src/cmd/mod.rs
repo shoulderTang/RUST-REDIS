@@ -1,5 +1,10 @@
 use crate::db::Db;
 use crate::resp::{as_bytes, Resp};
+use crate::aof::Aof;
+use crate::conf::Config;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tracing::error;
 
 mod string;
 mod list;
@@ -21,6 +26,7 @@ enum Command {
     Expire,
     Ttl,
     Dbsize,
+    Keys,
     Lpush,
     Rpush,
     Lpop,
@@ -48,12 +54,15 @@ enum Command {
     Shutdown,
     Command,
     Config,
+    BgRewriteAof,
     Unknown,
 }
 
 pub fn process_frame(
     frame: Resp,
     db: &Db,
+    aof: &Option<Arc<Mutex<Aof>>>,
+    cfg: &Config,
 ) -> (Resp, Option<Resp>) {
     let cmd_to_log = if let Resp::Array(Some(ref items)) = frame {
         if !items.is_empty() {
@@ -121,11 +130,26 @@ pub fn process_frame(
                 Command::Expire => key::expire(&items, db),
                 Command::Ttl => key::ttl(&items, db),
                 Command::Dbsize => key::dbsize(&items, db),
+                Command::Keys => key::keys(&items, db),
                 Command::Shutdown => {
                     std::process::exit(0);
                 }
                 Command::Command => command::command(&items),
-                Command::Config => config::config(&items),
+                Command::Config => config::config(&items, cfg),
+                Command::BgRewriteAof => {
+                    if let Some(aof) = aof {
+                        let aof = aof.clone();
+                        let db = db.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = aof.lock().await.rewrite(&db).await {
+                                error!("Background AOF rewrite failed: {}", e);
+                            }
+                        });
+                        Resp::SimpleString(bytes::Bytes::from_static(b"Background append only file rewriting started"))
+                    } else {
+                        Resp::Error("ERR AOF is not enabled".to_string())
+                    }
+                }
                 Command::Unknown => Resp::Error("ERR unknown command".to_string()),
             }
         }
@@ -148,6 +172,8 @@ fn command_name(raw: &[u8]) -> Command {
         Command::Ttl
     } else if equals_ignore_ascii_case(raw, b"DBSIZE") {
         Command::Dbsize
+    } else if equals_ignore_ascii_case(raw, b"KEYS") {
+        Command::Keys
     } else if equals_ignore_ascii_case(raw, b"LPUSH") {
         Command::Lpush
     } else if equals_ignore_ascii_case(raw, b"RPUSH") {
@@ -202,6 +228,8 @@ fn command_name(raw: &[u8]) -> Command {
         Command::Command
     } else if equals_ignore_ascii_case(raw, b"CONFIG") {
         Command::Config
+    } else if equals_ignore_ascii_case(raw, b"BGREWRITEAOF") {
+        Command::BgRewriteAof
     } else {
         Command::Unknown
     }

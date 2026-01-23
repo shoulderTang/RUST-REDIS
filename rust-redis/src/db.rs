@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use std::collections::{VecDeque, HashMap, HashSet, BTreeSet};
 use std::cmp::Ordering;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TotalOrderF64(pub f64);
@@ -80,4 +81,4 @@ impl Entry {
     }
 }
 
-pub type Db = DashMap<bytes::Bytes, Entry>;
+pub type Db = Arc<DashMap<bytes::Bytes, Entry>>;

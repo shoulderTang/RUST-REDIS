@@ -17,6 +17,7 @@ const COMMAND_TABLE: &[CommandInfo] = &[
     CommandInfo { name: "expire", arity: 3, flags: &["write", "fast"], first_key: 1, last_key: 1, step: 1 },
     CommandInfo { name: "ttl", arity: 2, flags: &["readonly", "fast", "random"], first_key: 1, last_key: 1, step: 1 },
     CommandInfo { name: "dbsize", arity: 1, flags: &["readonly", "fast"], first_key: 0, last_key: 0, step: 0 },
+    CommandInfo { name: "keys", arity: 2, flags: &["readonly", "sort_for_script"], first_key: 0, last_key: 0, step: 0 },
     
     // List
     CommandInfo { name: "lpush", arity: -3, flags: &["write", "denyoom", "fast"], first_key: 1, last_key: 1, step: 1 },
@@ -54,6 +55,7 @@ const COMMAND_TABLE: &[CommandInfo] = &[
     CommandInfo { name: "shutdown", arity: 1, flags: &["admin", "loading", "stale"], first_key: 0, last_key: 0, step: 0 },
     CommandInfo { name: "command", arity: 1, flags: &["random", "loading", "stale"], first_key: 0, last_key: 0, step: 0 },
     CommandInfo { name: "config", arity: -2, flags: &["admin", "loading", "stale"], first_key: 0, last_key: 0, step: 0 },
+    CommandInfo { name: "bgrewriteaof", arity: 1, flags: &["admin", "loading", "stale"], first_key: 0, last_key: 0, step: 0 },
 ];
 
 pub fn is_write_command(name: &str) -> bool {

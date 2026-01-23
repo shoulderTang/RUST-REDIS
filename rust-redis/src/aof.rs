@@ -1,35 +1,74 @@
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{self, AsyncWriteExt, BufWriter};
 use crate::resp::{Resp, read_frame};
-use crate::db::Db;
+use crate::db::{Db, Value};
 use crate::cmd::process_frame;
+use crate::conf::Config;
 use std::pin::Pin;
 use std::future::Future;
+use bytes::Bytes;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::task::JoinHandle;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AppendFsync {
+    Always,
+    EverySec,
+    No,
+}
 
 pub struct Aof {
     writer: BufWriter<File>,
+    path: String,
+    policy: AppendFsync,
+    sync_task: Option<JoinHandle<()>>,
 }
 
 impl Aof {
-    pub async fn new(path: &str) -> io::Result<Self> {
+    pub async fn new(path: &str, policy: AppendFsync) -> io::Result<Self> {
         let file = OpenOptions::new()
             .write(true)
             .create(true)
             .append(true)
             .open(path)
             .await?;
+        
+        let sync_task = if policy == AppendFsync::EverySec {
+            let file_clone = file.try_clone().await?;
+            Some(tokio::spawn(async move {
+                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+                loop {
+                    interval.tick().await;
+                    if let Err(e) = file_clone.sync_data().await {
+                        // Log error but don't panic?
+                        eprintln!("AOF background sync failed: {}", e);
+                    }
+                }
+            }))
+        } else {
+            None
+        };
+
         Ok(Aof {
             writer: BufWriter::new(file),
+            path: path.to_string(),
+            policy,
+            sync_task,
         })
     }
 
     pub async fn append(&mut self, frame: &Resp) -> io::Result<()> {
         write_resp(&mut self.writer, frame).await?;
         self.writer.flush().await?;
+        
+        if self.policy == AppendFsync::Always {
+            self.writer.get_mut().sync_all().await?;
+        }
+        
         Ok(())
     }
 
-    pub async fn load(&self, path: &str, db: &Db) -> io::Result<()> {
+    pub async fn load(&self, path: &str, db: &Db, cfg: &Config) -> io::Result<()> {
         // Check if file exists first
         match tokio::fs::metadata(path).await {
             Ok(_) => {},
@@ -43,18 +82,134 @@ impl Aof {
         loop {
             match read_frame(&mut reader).await {
                 Ok(Some(frame)) => {
-                    // process_frame might return a tuple or just Resp depending on our changes.
-                    // Since we haven't changed process_frame yet, this code assumes it returns Resp.
-                    // If we change it, we will need to update this line.
-                    // For now, I'll assume I will update process_frame to return (Resp, Option<Resp>)
-                    // So I will handle it here defensively or update it later.
-                    // Actually, I can just ignore the return value.
-                    let _ = process_frame(frame, db);
+                    // process_frame requires Aof option now, but during load we pass None
+                    // to avoid recursive or circular dependency issues and because we don't want to log loaded commands
+                    let _ = process_frame(frame, db, &None, cfg);
                 }
                 Ok(None) => break,
                 Err(e) => return Err(e),
             }
         }
+        Ok(())
+    }
+
+    pub async fn rewrite(&mut self, db: &Db) -> io::Result<()> {
+        let temp_path = format!("{}.tmp", self.path);
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&temp_path)
+            .await?;
+        let mut writer = BufWriter::new(file);
+
+        // Iterate over DB and write reconstruction commands
+        for entry in db.iter() {
+            let key = entry.key();
+            let val = entry.value();
+
+            // Check if expired
+            if val.is_expired() {
+                continue;
+            }
+
+            let cmd = match &val.value {
+                Value::String(v) => {
+                    Resp::Array(Some(vec![
+                        Resp::BulkString(Some(Bytes::from("SET"))),
+                        Resp::BulkString(Some(key.clone())),
+                        Resp::BulkString(Some(v.clone())),
+                    ]))
+                },
+                Value::List(l) => {
+                    let mut args = Vec::with_capacity(2 + l.len());
+                    args.push(Resp::BulkString(Some(Bytes::from("RPUSH"))));
+                    args.push(Resp::BulkString(Some(key.clone())));
+                    for item in l {
+                        args.push(Resp::BulkString(Some(item.clone())));
+                    }
+                    Resp::Array(Some(args))
+                },
+                Value::Hash(h) => {
+                    let mut args = Vec::with_capacity(2 + h.len() * 2);
+                    args.push(Resp::BulkString(Some(Bytes::from("HMSET"))));
+                    args.push(Resp::BulkString(Some(key.clone())));
+                    for (f, v) in h {
+                        args.push(Resp::BulkString(Some(f.clone())));
+                        args.push(Resp::BulkString(Some(v.clone())));
+                    }
+                    Resp::Array(Some(args))
+                },
+                Value::Set(s) => {
+                    let mut args = Vec::with_capacity(2 + s.len());
+                    args.push(Resp::BulkString(Some(Bytes::from("SADD"))));
+                    args.push(Resp::BulkString(Some(key.clone())));
+                    for m in s {
+                        args.push(Resp::BulkString(Some(m.clone())));
+                    }
+                    Resp::Array(Some(args))
+                },
+                Value::ZSet(z) => {
+                    let mut args = Vec::with_capacity(2 + z.members.len() * 2);
+                    args.push(Resp::BulkString(Some(Bytes::from("ZADD"))));
+                    args.push(Resp::BulkString(Some(key.clone())));
+                    for (m, s) in &z.members {
+                        args.push(Resp::BulkString(Some(Bytes::from(s.to_string()))));
+                        args.push(Resp::BulkString(Some(m.clone())));
+                    }
+                    Resp::Array(Some(args))
+                },
+            };
+
+            write_resp(&mut writer, &cmd).await?;
+
+            // Handle expiration
+            if let Some(expires_at) = val.expires_at {
+                let pexpireat_cmd = Resp::Array(Some(vec![
+                    Resp::BulkString(Some(Bytes::from("PEXPIREAT"))),
+                    Resp::BulkString(Some(key.clone())),
+                    Resp::BulkString(Some(Bytes::from(expires_at.to_string()))),
+                ]));
+                write_resp(&mut writer, &pexpireat_cmd).await?;
+            }
+        }
+
+        writer.flush().await?;
+        writer.get_mut().sync_all().await?; // Ensure data is safe before rename
+        drop(writer); // Close file
+
+        // Rename temp to real
+        tokio::fs::rename(&temp_path, &self.path).await?;
+
+        // Stop old sync task if exists
+        if let Some(task) = self.sync_task.take() {
+            task.abort();
+        }
+
+        // Reopen writer
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(&self.path)
+            .await?;
+        
+        // Restart sync task if needed
+        if self.policy == AppendFsync::EverySec {
+            let file_clone = file.try_clone().await?;
+            self.sync_task = Some(tokio::spawn(async move {
+                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+                loop {
+                    interval.tick().await;
+                    if let Err(e) = file_clone.sync_data().await {
+                        eprintln!("AOF background sync failed: {}", e);
+                    }
+                }
+            }));
+        }
+
+        self.writer = BufWriter::new(file);
+
         Ok(())
     }
 }
@@ -124,7 +279,7 @@ mod tests {
         
         // 1. Create AOF and append commands
         {
-            let mut aof = Aof::new(&path).await.expect("failed to create aof");
+            let mut aof = Aof::new(&path, AppendFsync::Always).await.expect("failed to create aof");
             
             // SET key1 value1
             let set_cmd = Resp::Array(Some(vec![
@@ -145,8 +300,8 @@ mod tests {
 
         // 2. Load AOF into a new DB
         let db_new = Db::default();
-        let aof_loader = Aof::new(&path).await.expect("failed to open aof for loading");
-        aof_loader.load(&path, &db_new).await.expect("failed to load aof");
+        let aof_loader = Aof::new(&path, AppendFsync::Always).await.expect("failed to open aof for loading");
+        aof_loader.load(&path, &db_new, &Config::default()).await.expect("failed to load aof");
 
         // 3. Verify DB state
         // Check key1

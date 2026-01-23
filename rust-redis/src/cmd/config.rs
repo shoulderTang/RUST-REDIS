@@ -1,7 +1,9 @@
 use crate::resp::Resp;
 use bytes::Bytes;
+use crate::conf::Config;
+use crate::aof::AppendFsync;
 
-pub fn config(items: &[Resp]) -> Resp {
+pub fn config(items: &[Resp], cfg: &Config) -> Resp {
     if items.len() < 3 {
         return Resp::Error("ERR wrong number of arguments for 'config' command".to_string());
     }
@@ -33,20 +35,30 @@ pub fn config(items: &[Resp]) -> Resp {
     };
 
     // We can add more configs here as needed
+    let appendfsync_str = match cfg.appendfsync {
+        AppendFsync::Always => "always",
+        AppendFsync::EverySec => "everysec",
+        AppendFsync::No => "no",
+    };
+    
     let configs = vec![
-        ("save", "3600 1 300 100 60 10000"),
-        ("appendonly", "no"),
-        ("databases", "16"),
+        //("save", "3600 1 300 100 60 10000".to_string()),
+        ("appendonly", if cfg.appendonly { "yes".to_string() } else { "no".to_string() }),
+        ("appendfilename", cfg.appendfilename.clone()),
+        ("appendfsync", appendfsync_str.to_string()),
+        ("bind", cfg.bind.clone()),
+        ("port", cfg.port.to_string()),
+        ("databases", cfg.databases.to_string()),
     ];
 
     if param_lower == "*" {
         for (k, v) in configs {
-            add_pair(k, v);
+            add_pair(k, &v);
         }
     } else {
         for (k, v) in configs {
             if k == param_lower {
-                add_pair(k, v);
+                add_pair(k, &v);
             }
         }
     }

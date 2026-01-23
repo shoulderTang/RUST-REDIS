@@ -62,13 +62,15 @@ async fn run_server(cfg: conf::Config, _guard: Option<tracing_appender::non_bloc
 
     let aof = if cfg.appendonly {
         info!("AOF enabled, file: {}", cfg.appendfilename);
-        let aof = aof::Aof::new(&cfg.appendfilename).await.expect("failed to open AOF file");
-        aof.load(&cfg.appendfilename, &db).await.expect("failed to load AOF");
+        let aof = aof::Aof::new(&cfg.appendfilename, cfg.appendfsync).await.expect("failed to open AOF file");
+        aof.load(&cfg.appendfilename, &db, &cfg).await.expect("failed to load AOF");
         Some(Arc::new(Mutex::new(aof)))
     } else {
         None
     };
 
+    let cfg_arc = Arc::new(cfg);
+    
     // Background task to clean up expired keys
     let db_for_cleanup = db.clone();
     tokio::spawn(async move {
@@ -84,6 +86,7 @@ async fn run_server(cfg: conf::Config, _guard: Option<tracing_appender::non_bloc
         info!("accepted connection from {}", addr);
         let db_cloned = db.clone();
         let aof_cloned = aof.clone();
+        let cfg_cloned = cfg_arc.clone();
 
         tokio::spawn(async move {
             let (read_half, write_half) = socket.into_split();
@@ -96,7 +99,7 @@ async fn run_server(cfg: conf::Config, _guard: Option<tracing_appender::non_bloc
                     Ok(None) => return,
                     Err(_) => return,
                 };
-                let (response, cmd_to_log) = cmd::process_frame(frame, &db_cloned);
+                let (response, cmd_to_log) = cmd::process_frame(frame, &db_cloned, &aof_cloned, &cfg_cloned);
 
                 if resp::write_frame(&mut writer, &response).await.is_err() {
                     return;
