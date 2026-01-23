@@ -54,15 +54,29 @@ enum Command {
 pub fn process_frame(
     frame: Resp,
     db: &Db,
-) -> Resp {
-    match frame {
+) -> (Resp, Option<Resp>) {
+    let cmd_to_log = if let Resp::Array(Some(ref items)) = frame {
+        if !items.is_empty() {
+             if let Some(b) = as_bytes(&items[0]) {
+                 if let Ok(s) = std::str::from_utf8(&b) {
+                     if command::is_write_command(s) {
+                         Some(frame.clone())
+                     } else {
+                         None
+                     }
+                 } else { None }
+             } else { None }
+        } else { None }
+    } else { None };
+
+    let res = match frame {
         Resp::Array(Some(items)) => {
             if items.is_empty() {
-                return Resp::Error("ERR empty command".to_string());
+                return (Resp::Error("ERR empty command".to_string()), None);
             }
             let cmd_raw = match as_bytes(&items[0]) {
                 Some(b) => b,
-                None => return Resp::Error("ERR invalid command".to_string()),
+                None => return (Resp::Error("ERR invalid command".to_string()), None),
             };
             match command_name(cmd_raw) {
                 Command::Ping => {
@@ -116,7 +130,8 @@ pub fn process_frame(
             }
         }
         _ => Resp::Error("ERR protocol error: expected array".to_string()),
-    }
+    };
+    (res, cmd_to_log)
 }
 
 

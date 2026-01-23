@@ -5,6 +5,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWrit
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use bytes::{Bytes, BytesMut};
 
+#[derive(Clone, Debug)]
 pub enum Resp {
     SimpleString(Bytes),
     Error(String),
@@ -67,7 +68,10 @@ where
     Ok(Some(Resp::BulkString(Some(buf.freeze()))))
 }
 
-async fn read_array(reader: &mut BufReader<OwnedReadHalf>) -> io::Result<Option<Resp>> {
+async fn read_array<R>(reader: &mut R) -> io::Result<Option<Resp>>
+where
+    R: AsyncBufReadExt + AsyncReadExt + Unpin + Send,
+{
     let len = match read_integer_line(reader).await? {
         Some(l) => l,
         None => return Ok(None),
@@ -89,7 +93,10 @@ async fn read_array(reader: &mut BufReader<OwnedReadHalf>) -> io::Result<Option<
     Ok(Some(Resp::Array(Some(items))))
 }
 
-pub fn read_frame<'a>(reader: &'a mut BufReader<OwnedReadHalf>) -> Pin<Box<dyn Future<Output = io::Result<Option<Resp>>> + Send + 'a>> {
+pub fn read_frame<'a, R>(reader: &'a mut R) -> Pin<Box<dyn Future<Output = io::Result<Option<Resp>>> + Send + 'a>>
+where
+    R: AsyncBufReadExt + AsyncReadExt + Unpin + Send,
+{
     Box::pin(async move {
         let mut prefix = [0u8; 1];
         let n = match reader.read_exact(&mut prefix).await {

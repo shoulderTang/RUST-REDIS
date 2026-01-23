@@ -1,71 +1,82 @@
 use crate::resp::Resp;
 use bytes::Bytes;
 
+struct CommandInfo {
+    name: &'static str,
+    arity: i64,
+    flags: &'static [&'static str],
+    first_key: i64,
+    last_key: i64,
+    step: i64,
+}
+
+const COMMAND_TABLE: &[CommandInfo] = &[
+    CommandInfo { name: "ping", arity: -1, flags: &["fast", "stale"], first_key: 0, last_key: 0, step: 0 },
+    CommandInfo { name: "set", arity: 3, flags: &["write", "denyoom"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "get", arity: 2, flags: &["readonly", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "expire", arity: 3, flags: &["write", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "ttl", arity: 2, flags: &["readonly", "fast", "random"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "dbsize", arity: 1, flags: &["readonly", "fast"], first_key: 0, last_key: 0, step: 0 },
+    
+    // List
+    CommandInfo { name: "lpush", arity: -3, flags: &["write", "denyoom", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "rpush", arity: -3, flags: &["write", "denyoom", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "lpop", arity: 2, flags: &["write", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "rpop", arity: 2, flags: &["write", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "llen", arity: 2, flags: &["readonly", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "lrange", arity: 4, flags: &["readonly"], first_key: 1, last_key: 1, step: 1 },
+    
+    // Hash
+    CommandInfo { name: "hset", arity: 4, flags: &["write", "denyoom", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "hget", arity: 3, flags: &["readonly", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "hgetall", arity: 2, flags: &["readonly", "random"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "hmset", arity: -4, flags: &["write", "denyoom", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "hmget", arity: -3, flags: &["readonly", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "hdel", arity: -3, flags: &["write", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "hlen", arity: 2, flags: &["readonly", "fast"], first_key: 1, last_key: 1, step: 1 },
+    
+    // Set
+    CommandInfo { name: "sadd", arity: -3, flags: &["write", "denyoom", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "srem", arity: -3, flags: &["write", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "sismember", arity: 3, flags: &["readonly", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "smembers", arity: 2, flags: &["readonly", "sort_for_script"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "scard", arity: 2, flags: &["readonly", "fast"], first_key: 1, last_key: 1, step: 1 },
+    
+    // ZSet
+    CommandInfo { name: "zadd", arity: -4, flags: &["write", "denyoom", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "zrem", arity: -3, flags: &["write", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "zscore", arity: 3, flags: &["readonly", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "zcard", arity: 2, flags: &["readonly", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "zrank", arity: 3, flags: &["readonly", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "zrange", arity: -4, flags: &["readonly"], first_key: 1, last_key: 1, step: 1 },
+
+    // System
+    CommandInfo { name: "shutdown", arity: 1, flags: &["admin", "loading", "stale"], first_key: 0, last_key: 0, step: 0 },
+    CommandInfo { name: "command", arity: 1, flags: &["random", "loading", "stale"], first_key: 0, last_key: 0, step: 0 },
+    CommandInfo { name: "config", arity: -2, flags: &["admin", "loading", "stale"], first_key: 0, last_key: 0, step: 0 },
+];
+
+pub fn is_write_command(name: &str) -> bool {
+    COMMAND_TABLE.iter().any(|c| c.name.eq_ignore_ascii_case(name) && c.flags.contains(&"write"))
+}
+
 pub fn command(_items: &[Resp]) -> Resp {
-    // Format: name, arity, flags, first_key, last_key, step
-    // Note: This is a simplified version of command metadata.
-    let commands = vec![
-        ("ping", -1, vec!["fast", "stale"], 0, 0, 0),
-        ("set", 3, vec!["write", "denyoom"], 1, 1, 1),
-        ("get", 2, vec!["readonly", "fast"], 1, 1, 1),
-        ("expire", 3, vec!["write", "fast"], 1, 1, 1),
-        ("ttl", 2, vec!["readonly", "fast", "random"], 1, 1, 1),
-        ("dbsize", 1, vec!["readonly", "fast"], 0, 0, 0),
-        
-        // List
-        ("lpush", -3, vec!["write", "denyoom", "fast"], 1, 1, 1),
-        ("rpush", -3, vec!["write", "denyoom", "fast"], 1, 1, 1),
-        ("lpop", 2, vec!["write", "fast"], 1, 1, 1),
-        ("rpop", 2, vec!["write", "fast"], 1, 1, 1),
-        ("llen", 2, vec!["readonly", "fast"], 1, 1, 1),
-        ("lrange", 4, vec!["readonly"], 1, 1, 1),
-        
-        // Hash
-        ("hset", 4, vec!["write", "denyoom", "fast"], 1, 1, 1),
-        ("hget", 3, vec!["readonly", "fast"], 1, 1, 1),
-        ("hgetall", 2, vec!["readonly", "random"], 1, 1, 1),
-        ("hmset", -4, vec!["write", "denyoom", "fast"], 1, 1, 1),
-        ("hmget", -3, vec!["readonly", "fast"], 1, 1, 1),
-        ("hdel", -3, vec!["write", "fast"], 1, 1, 1),
-        ("hlen", 2, vec!["readonly", "fast"], 1, 1, 1),
-        
-        // Set
-        ("sadd", -3, vec!["write", "denyoom", "fast"], 1, 1, 1),
-        ("srem", -3, vec!["write", "fast"], 1, 1, 1),
-        ("sismember", 3, vec!["readonly", "fast"], 1, 1, 1),
-        ("smembers", 2, vec!["readonly", "sort_for_script"], 1, 1, 1),
-        ("scard", 2, vec!["readonly", "fast"], 1, 1, 1),
-        
-        // ZSet
-        ("zadd", -4, vec!["write", "denyoom", "fast"], 1, 1, 1),
-        ("zrem", -3, vec!["write", "fast"], 1, 1, 1),
-        ("zscore", 3, vec!["readonly", "fast"], 1, 1, 1),
-        ("zcard", 2, vec!["readonly", "fast"], 1, 1, 1),
-        ("zrank", 3, vec!["readonly", "fast"], 1, 1, 1),
-        ("zrange", -4, vec!["readonly"], 1, 1, 1),
-
-        // System
-        ("shutdown", 1, vec!["admin", "loading", "stale"], 0, 0, 0),
-        ("command", 1, vec!["random", "loading", "stale"], 0, 0, 0),
-        ("config", -2, vec!["admin", "loading", "stale"], 0, 0, 0),
-    ];
-
-    let mut cmd_resps = Vec::with_capacity(commands.len());
-    for (name, arity, flags, first, last, step) in commands {
-        let mut flag_resps = Vec::with_capacity(flags.len());
-        for f in flags {
-            flag_resps.push(Resp::SimpleString(Bytes::from(f)));
+    let mut cmd_resps = Vec::with_capacity(COMMAND_TABLE.len());
+    for info in COMMAND_TABLE {
+        let mut flag_resps = Vec::with_capacity(info.flags.len());
+        for f in info.flags {
+            flag_resps.push(Resp::SimpleString(Bytes::from(*f)));
         }
         
-        let info = vec![
-            Resp::BulkString(Some(Bytes::from(name))),
-            Resp::Integer(arity),
+        let cmd_info = vec![
+            Resp::BulkString(Some(Bytes::from(info.name))),
+            Resp::Integer(info.arity),
             Resp::Array(Some(flag_resps)),
-            Resp::Integer(first),
-            Resp::Integer(last),
-            Resp::Integer(step),
+            Resp::Integer(info.first_key),
+            Resp::Integer(info.last_key),
+            Resp::Integer(info.step),
         ];
-        cmd_resps.push(Resp::Array(Some(info)));
+        cmd_resps.push(Resp::Array(Some(cmd_info)));
     }
     
     Resp::Array(Some(cmd_resps))

@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpListener;
-// use tokio::sync::Mutex;
+use tokio::sync::Mutex;
 use tracing::{info, warn, error};
 #[path = "../resp.rs"]
 mod resp;
@@ -14,6 +14,8 @@ mod db;
 mod cmd;
 #[path = "../conf.rs"]
 mod conf;
+#[path = "../aof.rs"]
+mod aof;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -58,6 +60,15 @@ async fn run_server(cfg: conf::Config, _guard: Option<tracing_appender::non_bloc
     let db = db::Db::default();
     //let db = Arc::new(db);
 
+    let aof = if cfg.appendonly {
+        info!("AOF enabled, file: {}", cfg.appendfilename);
+        let aof = aof::Aof::new(&cfg.appendfilename).await.expect("failed to open AOF file");
+        aof.load(&cfg.appendfilename, &db).await.expect("failed to load AOF");
+        Some(Arc::new(Mutex::new(aof)))
+    } else {
+        None
+    };
+
     // Background task to clean up expired keys
     let db_for_cleanup = db.clone();
     tokio::spawn(async move {
@@ -72,6 +83,7 @@ async fn run_server(cfg: conf::Config, _guard: Option<tracing_appender::non_bloc
         let (socket, addr) = listener.accept().await.unwrap();
         info!("accepted connection from {}", addr);
         let db_cloned = db.clone();
+        let aof_cloned = aof.clone();
 
         tokio::spawn(async move {
             let (read_half, write_half) = socket.into_split();
@@ -84,12 +96,20 @@ async fn run_server(cfg: conf::Config, _guard: Option<tracing_appender::non_bloc
                     Ok(None) => return,
                     Err(_) => return,
                 };
-                let response = {
-                    cmd::process_frame(frame, &db_cloned)
-                };
+                let (response, cmd_to_log) = cmd::process_frame(frame, &db_cloned);
+
                 if resp::write_frame(&mut writer, &response).await.is_err() {
                     return;
                 }
+                
+                if let Some(cmd) = cmd_to_log {
+                    if let Some(aof) = &aof_cloned {
+                         if let Err(e) = aof.lock().await.append(&cmd).await {
+                            error!("failed to append to AOF: {}", e);
+                         }
+                    }
+                }
+
                 // Smart flush: only flush if the buffer is empty, meaning we might wait for IO.
                 // If the buffer is not empty, we have more pipelined requests to process immediately.
                 if reader.buffer().is_empty() {

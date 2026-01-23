@@ -10,7 +10,7 @@ fn test_ping() {
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("PING"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::SimpleString(s) => assert_eq!(s, Bytes::from("PONG")),
         _ => panic!("expected SimpleString(PONG)"),
@@ -21,7 +21,7 @@ fn test_ping() {
         Resp::BulkString(Some(Bytes::from("PING"))),
         Resp::BulkString(Some(Bytes::from("hello"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("hello")),
         _ => panic!("expected BulkString(hello)"),
@@ -38,7 +38,7 @@ fn test_set_get() {
         Resp::BulkString(Some(Bytes::from("foo"))),
         Resp::BulkString(Some(Bytes::from("bar"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
         _ => panic!("expected SimpleString(OK)"),
@@ -49,7 +49,7 @@ fn test_set_get() {
         Resp::BulkString(Some(Bytes::from("GET"))),
         Resp::BulkString(Some(Bytes::from("foo"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("bar")),
         _ => panic!("expected BulkString(bar)"),
@@ -60,7 +60,7 @@ fn test_set_get() {
         Resp::BulkString(Some(Bytes::from("GET"))),
         Resp::BulkString(Some(Bytes::from("baz"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::BulkString(None) => {},
         _ => panic!("expected BulkString(None)"),
@@ -73,7 +73,7 @@ fn test_unknown_command() {
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("NOT_EXIST_CMD"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Error(e) => assert_eq!(e, "ERR unknown command"),
         _ => panic!("expected Error"),
@@ -89,7 +89,7 @@ fn test_invalid_args() {
         Resp::BulkString(Some(Bytes::from("SET"))),
         Resp::BulkString(Some(Bytes::from("foo"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Error(e) => assert!(e.contains("wrong number of arguments")),
         _ => panic!("expected Error"),
@@ -113,7 +113,7 @@ fn test_expire_ttl() {
         Resp::BulkString(Some(Bytes::from("TTL"))),
         Resp::BulkString(Some(Bytes::from("foo"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, -1),
         _ => panic!("expected Integer(-1)"),
@@ -125,7 +125,7 @@ fn test_expire_ttl() {
         Resp::BulkString(Some(Bytes::from("foo"))),
         Resp::BulkString(Some(Bytes::from("1"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
@@ -136,7 +136,7 @@ fn test_expire_ttl() {
         Resp::BulkString(Some(Bytes::from("TTL"))),
         Resp::BulkString(Some(Bytes::from("foo"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert!(i >= 0 && i <= 1),
         _ => panic!("expected Integer(>=0)"),
@@ -150,7 +150,7 @@ fn test_expire_ttl() {
         Resp::BulkString(Some(Bytes::from("GET"))),
         Resp::BulkString(Some(Bytes::from("foo"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::BulkString(None) => {},
         _ => panic!("expected BulkString(None)"),
@@ -161,7 +161,7 @@ fn test_expire_ttl() {
         Resp::BulkString(Some(Bytes::from("TTL"))),
         Resp::BulkString(Some(Bytes::from("foo"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, -2),
         _ => panic!("expected Integer(-2)"),
@@ -176,7 +176,7 @@ fn test_dbsize() {
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("DBSIZE"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 0),
         _ => panic!("expected Integer(0)"),
@@ -194,7 +194,7 @@ fn test_dbsize() {
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("DBSIZE"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
@@ -209,7 +209,7 @@ fn test_command() {
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("COMMAND"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     
     // Just verify it returns an array and contains some known commands
     match res {
@@ -249,7 +249,7 @@ fn test_config() {
         Resp::BulkString(Some(Bytes::from("GET"))),
         Resp::BulkString(Some(Bytes::from("save"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 2);
@@ -271,7 +271,7 @@ fn test_config() {
         Resp::BulkString(Some(Bytes::from("GET"))),
         Resp::BulkString(Some(Bytes::from("appendonly"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 2);
@@ -293,7 +293,7 @@ fn test_config() {
         Resp::BulkString(Some(Bytes::from("GET"))),
         Resp::BulkString(Some(Bytes::from("*"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Array(Some(items)) => {
             // Should contain at least save, appendonly, databases
@@ -330,7 +330,7 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("2"))),
         Resp::BulkString(Some(Bytes::from("m2"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 2),
         _ => panic!("expected Integer(2)"),
@@ -342,7 +342,7 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("zset"))),
         Resp::BulkString(Some(Bytes::from("m1"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("1")),
         _ => panic!("expected BulkString(1)"),
@@ -354,7 +354,7 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("zset"))),
         Resp::BulkString(Some(Bytes::from("m1"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 0),
         _ => panic!("expected Integer(0)"),
@@ -367,7 +367,7 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("0"))),
         Resp::BulkString(Some(Bytes::from("-1"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 2);
@@ -391,7 +391,7 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("-1"))),
         Resp::BulkString(Some(Bytes::from("WITHSCORES"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 4);
@@ -420,7 +420,7 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("ZCARD"))),
         Resp::BulkString(Some(Bytes::from("zset"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 2),
         _ => panic!("expected Integer(2)"),
@@ -432,7 +432,7 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("zset"))),
         Resp::BulkString(Some(Bytes::from("m1"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
@@ -443,7 +443,7 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("ZCARD"))),
         Resp::BulkString(Some(Bytes::from("zset"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
@@ -460,7 +460,7 @@ fn test_list_ops() {
         Resp::BulkString(Some(Bytes::from("list"))),
         Resp::BulkString(Some(Bytes::from("1"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
@@ -472,7 +472,7 @@ fn test_list_ops() {
         Resp::BulkString(Some(Bytes::from("list"))),
         Resp::BulkString(Some(Bytes::from("2"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 2),
         _ => panic!("expected Integer(2)"),
@@ -485,7 +485,7 @@ fn test_list_ops() {
         Resp::BulkString(Some(Bytes::from("0"))),
         Resp::BulkString(Some(Bytes::from("-1"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 2);
@@ -506,7 +506,7 @@ fn test_list_ops() {
         Resp::BulkString(Some(Bytes::from("LPOP"))),
         Resp::BulkString(Some(Bytes::from("list"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("1")),
         _ => panic!("expected BulkString(1)"),
@@ -517,7 +517,7 @@ fn test_list_ops() {
         Resp::BulkString(Some(Bytes::from("RPOP"))),
         Resp::BulkString(Some(Bytes::from("list"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("2")),
         _ => panic!("expected BulkString(2)"),
@@ -528,7 +528,7 @@ fn test_list_ops() {
         Resp::BulkString(Some(Bytes::from("LLEN"))),
         Resp::BulkString(Some(Bytes::from("list"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 0),
         _ => panic!("expected Integer(0)"),
@@ -546,7 +546,7 @@ fn test_hash_ops() {
         Resp::BulkString(Some(Bytes::from("f1"))),
         Resp::BulkString(Some(Bytes::from("v1"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
@@ -558,7 +558,7 @@ fn test_hash_ops() {
         Resp::BulkString(Some(Bytes::from("hash"))),
         Resp::BulkString(Some(Bytes::from("f1"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("v1")),
         _ => panic!("expected BulkString(v1)"),
@@ -573,7 +573,7 @@ fn test_hash_ops() {
         Resp::BulkString(Some(Bytes::from("f3"))),
         Resp::BulkString(Some(Bytes::from("v3"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
         _ => panic!("expected SimpleString(OK)"),
@@ -586,7 +586,7 @@ fn test_hash_ops() {
         Resp::BulkString(Some(Bytes::from("f1"))),
         Resp::BulkString(Some(Bytes::from("f2"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 2);
@@ -607,7 +607,7 @@ fn test_hash_ops() {
         Resp::BulkString(Some(Bytes::from("HLEN"))),
         Resp::BulkString(Some(Bytes::from("hash"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 3),
         _ => panic!("expected Integer(3)"),
@@ -619,7 +619,7 @@ fn test_hash_ops() {
         Resp::BulkString(Some(Bytes::from("hash"))),
         Resp::BulkString(Some(Bytes::from("f1"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
@@ -636,7 +636,7 @@ fn test_set_ops() {
         Resp::BulkString(Some(Bytes::from("set"))),
         Resp::BulkString(Some(Bytes::from("m1"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
@@ -648,7 +648,7 @@ fn test_set_ops() {
         Resp::BulkString(Some(Bytes::from("set"))),
         Resp::BulkString(Some(Bytes::from("m1"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 0),
         _ => panic!("expected Integer(0)"),
@@ -660,7 +660,7 @@ fn test_set_ops() {
         Resp::BulkString(Some(Bytes::from("set"))),
         Resp::BulkString(Some(Bytes::from("m1"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
@@ -671,7 +671,7 @@ fn test_set_ops() {
         Resp::BulkString(Some(Bytes::from("SMEMBERS"))),
         Resp::BulkString(Some(Bytes::from("set"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 1);
@@ -688,7 +688,7 @@ fn test_set_ops() {
         Resp::BulkString(Some(Bytes::from("SCARD"))),
         Resp::BulkString(Some(Bytes::from("set"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
@@ -700,7 +700,7 @@ fn test_set_ops() {
         Resp::BulkString(Some(Bytes::from("set"))),
         Resp::BulkString(Some(Bytes::from("m1"))),
     ]));
-    let res = process_frame(req, &db);
+    let (res, _) = process_frame(req, &db);
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),

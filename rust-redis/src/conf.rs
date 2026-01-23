@@ -6,6 +6,8 @@ pub struct Config {
     pub bind: String,
     pub port: u16,
     pub logfile: Option<String>,
+    pub appendonly: bool,
+    pub appendfilename: String,
 }
 
 impl Default for Config {
@@ -14,6 +16,8 @@ impl Default for Config {
             bind: "127.0.0.1".to_string(),
             port: 6380,
             logfile: None,
+            appendonly: false,
+            appendfilename: "appendonly.aof".to_string(),
         }
     }
 }
@@ -63,6 +67,12 @@ pub fn load_config(path: Option<&str>) -> io::Result<Config> {
                 if !logfile.is_empty() {
                     cfg.logfile = Some(logfile);
                 }
+            }
+            "appendonly" if parts.len() >= 2 => {
+                cfg.appendonly = parts[1].eq_ignore_ascii_case("yes");
+            }
+            "appendfilename" if parts.len() >= 2 => {
+                cfg.appendfilename = parts[1].trim_matches('"').to_string();
             }
             _ => {}
         }
