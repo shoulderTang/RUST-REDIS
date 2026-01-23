@@ -202,6 +202,122 @@ fn test_dbsize() {
 }
 
 #[test]
+fn test_command() {
+    let db = Db::default();
+
+    // COMMAND
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("COMMAND"))),
+    ]));
+    let res = process_frame(req, &db);
+    
+    // Just verify it returns an array and contains some known commands
+    match res {
+        Resp::Array(Some(items)) => {
+            assert!(!items.is_empty());
+            
+            // Check if "set" command is present
+            let mut found_set = false;
+            for item in items {
+                if let Resp::Array(Some(details)) = item {
+                    if let Some(Resp::BulkString(Some(name))) = details.get(0) {
+                        if *name == Bytes::from("set") {
+                            found_set = true;
+                            // Check arity
+                            match details.get(1) {
+                                Some(Resp::Integer(arity)) => assert_eq!(*arity, 3),
+                                _ => panic!("expected Integer arity for set"),
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            assert!(found_set, "COMMAND output should contain 'set'");
+        }
+        _ => panic!("expected Array"),
+    }
+}
+
+#[test]
+fn test_config() {
+    let db = Db::default();
+
+    // CONFIG GET save
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("CONFIG"))),
+        Resp::BulkString(Some(Bytes::from("GET"))),
+        Resp::BulkString(Some(Bytes::from("save"))),
+    ]));
+    let res = process_frame(req, &db);
+    match res {
+        Resp::Array(Some(items)) => {
+            assert_eq!(items.len(), 2);
+            match &items[0] {
+                Resp::BulkString(Some(b)) => assert_eq!(*b, Bytes::from("save")),
+                _ => panic!("expected BulkString(save)"),
+            }
+            match &items[1] {
+                Resp::BulkString(Some(b)) => assert_eq!(*b, Bytes::from("3600 1 300 100 60 10000")),
+                _ => panic!("expected BulkString(save params)"),
+            }
+        }
+        _ => panic!("expected Array"),
+    }
+
+    // CONFIG GET appendonly
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("CONFIG"))),
+        Resp::BulkString(Some(Bytes::from("GET"))),
+        Resp::BulkString(Some(Bytes::from("appendonly"))),
+    ]));
+    let res = process_frame(req, &db);
+    match res {
+        Resp::Array(Some(items)) => {
+            assert_eq!(items.len(), 2);
+            match &items[0] {
+                Resp::BulkString(Some(b)) => assert_eq!(*b, Bytes::from("appendonly")),
+                _ => panic!("expected BulkString(appendonly)"),
+            }
+            match &items[1] {
+                Resp::BulkString(Some(b)) => assert_eq!(*b, Bytes::from("no")),
+                _ => panic!("expected BulkString(no)"),
+            }
+        }
+        _ => panic!("expected Array"),
+    }
+
+    // CONFIG GET *
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("CONFIG"))),
+        Resp::BulkString(Some(Bytes::from("GET"))),
+        Resp::BulkString(Some(Bytes::from("*"))),
+    ]));
+    let res = process_frame(req, &db);
+    match res {
+        Resp::Array(Some(items)) => {
+            // Should contain at least save, appendonly, databases
+            assert!(items.len() >= 6); 
+            let mut found_save = false;
+            let mut found_appendonly = false;
+            
+            for i in (0..items.len()).step_by(2) {
+                if let Resp::BulkString(Some(key)) = &items[i] {
+                    if *key == Bytes::from("save") {
+                        found_save = true;
+                    } else if *key == Bytes::from("appendonly") {
+                        found_appendonly = true;
+                    }
+                }
+            }
+            assert!(found_save);
+            assert!(found_appendonly);
+        }
+        _ => panic!("expected Array"),
+    }
+}
+
+#[test]
 fn test_zset_ops() {
     let db = Db::default();
 
