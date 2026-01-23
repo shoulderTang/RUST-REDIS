@@ -12,4 +12,4 @@ Rewrite the redis in Rust language and in Rust way.
 
 2026.2.22 1.增加list类型的命令实现。2.增加hash类型的命令实现。3.增加set/zset类型的命令实现。4.代码结构优化，增加模块之间的解耦。
 
-2026.1.23 1.增加aof持久化功能。2.增加rdb持久化功能。3.增加持久化相关的单元测试代码。
+2026.1.23 1.增加aof持久化功能。2.set命令增加过期时间参数。3.增加del,mset,mget,keys命令。4.增加相关的单元测试代码。

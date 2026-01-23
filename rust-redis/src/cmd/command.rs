@@ -12,8 +12,17 @@ struct CommandInfo {
 
 const COMMAND_TABLE: &[CommandInfo] = &[
     CommandInfo { name: "ping", arity: -1, flags: &["fast", "stale"], first_key: 0, last_key: 0, step: 0 },
-    CommandInfo { name: "set", arity: 3, flags: &["write", "denyoom"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "set", arity: -3, flags: &["write", "denyoom"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "mset", arity: -3, flags: &["write", "denyoom"], first_key: 1, last_key: -1, step: 2 },
+    CommandInfo { name: "del", arity: -2, flags: &["write", "fast"], first_key: 1, last_key: -1, step: 1 },
     CommandInfo { name: "get", arity: 2, flags: &["readonly", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "mget", arity: -2, flags: &["readonly", "fast"], first_key: 1, last_key: -1, step: 1 },
+    CommandInfo { name: "incr", arity: 2, flags: &["write", "denyoom", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "decr", arity: 2, flags: &["write", "denyoom", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "incrby", arity: 3, flags: &["write", "denyoom", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "decrby", arity: 3, flags: &["write", "denyoom", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "append", arity: 3, flags: &["write", "denyoom", "fast"], first_key: 1, last_key: 1, step: 1 },
+    CommandInfo { name: "strlen", arity: 2, flags: &["readonly", "fast"], first_key: 1, last_key: 1, step: 1 },
     CommandInfo { name: "expire", arity: 3, flags: &["write", "fast"], first_key: 1, last_key: 1, step: 1 },
     CommandInfo { name: "ttl", arity: 2, flags: &["readonly", "fast", "random"], first_key: 1, last_key: 1, step: 1 },
     CommandInfo { name: "dbsize", arity: 1, flags: &["readonly", "fast"], first_key: 0, last_key: 0, step: 0 },

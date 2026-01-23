@@ -22,7 +22,16 @@ mod tests;
 enum Command {
     Ping,
     Set,
+    Mset,
+    Del,
     Get,
+    Mget,
+    Incr,
+    Decr,
+    IncrBy,
+    DecrBy,
+    Append,
+    StrLen,
     Expire,
     Ttl,
     Dbsize,
@@ -102,7 +111,16 @@ pub fn process_frame(
                     }
                 }
                 Command::Set => string::set(&items, db),
+                Command::Mset => string::mset(&items, db),
+                Command::Del => key::del(&items, db),
                 Command::Get => string::get(&items, db),
+                Command::Mget => string::mget(&items, db),
+                Command::Incr => string::incr(&items, db),
+                Command::Decr => string::decr(&items, db),
+                Command::IncrBy => string::incrby(&items, db),
+                Command::DecrBy => string::decrby(&items, db),
+                Command::Append => string::append(&items, db),
+                Command::StrLen => string::strlen(&items, db),
                 Command::Lpush => list::lpush(&items, db),
                 Command::Rpush => list::rpush(&items, db),
                 Command::Lpop => list::lpop(&items, db),
@@ -164,8 +182,26 @@ fn command_name(raw: &[u8]) -> Command {
         Command::Ping
     } else if equals_ignore_ascii_case(raw, b"SET") {
         Command::Set
+    } else if equals_ignore_ascii_case(raw, b"MSET") {
+        Command::Mset
+    } else if equals_ignore_ascii_case(raw, b"DEL") {
+        Command::Del
     } else if equals_ignore_ascii_case(raw, b"GET") {
         Command::Get
+    } else if equals_ignore_ascii_case(raw, b"MGET") {
+        Command::Mget
+    } else if equals_ignore_ascii_case(raw, b"INCR") {
+        Command::Incr
+    } else if equals_ignore_ascii_case(raw, b"DECR") {
+        Command::Decr
+    } else if equals_ignore_ascii_case(raw, b"INCRBY") {
+        Command::IncrBy
+    } else if equals_ignore_ascii_case(raw, b"DECRBY") {
+        Command::DecrBy
+    } else if equals_ignore_ascii_case(raw, b"APPEND") {
+        Command::Append
+    } else if equals_ignore_ascii_case(raw, b"STRLEN") {
+        Command::StrLen
     } else if equals_ignore_ascii_case(raw, b"EXPIRE") {
         Command::Expire
     } else if equals_ignore_ascii_case(raw, b"TTL") {

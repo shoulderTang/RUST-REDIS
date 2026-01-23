@@ -25,7 +25,7 @@ impl Ord for TotalOrderF64 {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SortedSet {
     pub members: HashMap<bytes::Bytes, f64>,
     pub scores: BTreeSet<(TotalOrderF64, bytes::Bytes)>,
@@ -40,7 +40,7 @@ impl SortedSet {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     String(bytes::Bytes),
     List(VecDeque<bytes::Bytes>),

@@ -1,6 +1,34 @@
 use crate::db::{Db, Entry};
 use crate::resp::Resp;
 
+pub fn del(items: &[Resp], db: &Db) -> Resp {
+    if items.len() < 2 {
+        return Resp::Error("ERR wrong number of arguments for 'DEL'".to_string());
+    }
+    
+    let mut deleted = 0;
+    for item in &items[1..] {
+        let key = match item {
+            Resp::BulkString(Some(b)) => b,
+            Resp::SimpleString(s) => s,
+            _ => continue,
+        };
+        
+        if let Some(entry) = db.get(key) {
+             if entry.is_expired() {
+                 drop(entry);
+                 db.remove(key);
+             } else {
+                 drop(entry);
+                 if db.remove(key).is_some() {
+                     deleted += 1;
+                 }
+             }
+        }
+    }
+    Resp::Integer(deleted)
+}
+
 pub fn expire(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 3 {
         return Resp::Error("ERR wrong number of arguments for 'EXPIRE'".to_string());
