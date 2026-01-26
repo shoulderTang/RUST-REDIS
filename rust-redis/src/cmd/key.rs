@@ -5,7 +5,7 @@ pub fn del(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 2 {
         return Resp::Error("ERR wrong number of arguments for 'DEL'".to_string());
     }
-    
+
     let mut deleted = 0;
     for item in &items[1..] {
         let key = match item {
@@ -13,17 +13,17 @@ pub fn del(items: &[Resp], db: &Db) -> Resp {
             Resp::SimpleString(s) => s,
             _ => continue,
         };
-        
+
         if let Some(entry) = db.get(key) {
-             if entry.is_expired() {
-                 drop(entry);
-                 db.remove(key);
-             } else {
-                 drop(entry);
-                 if db.remove(key).is_some() {
-                     deleted += 1;
-                 }
-             }
+            if entry.is_expired() {
+                drop(entry);
+                db.remove(key);
+            } else {
+                drop(entry);
+                if db.remove(key).is_some() {
+                    deleted += 1;
+                }
+            }
         }
     }
     Resp::Integer(deleted)
@@ -98,8 +98,8 @@ pub fn ttl(items: &[Resp], db: &Db) -> Resp {
                         let ttl_ms = at - now;
                         Resp::Integer((ttl_ms / 1000) as i64)
                     }
-                },
-                None => Resp::Integer(-1)
+                }
+                None => Resp::Integer(-1),
             }
         }
     } else {
@@ -124,10 +124,10 @@ pub fn keys(items: &[Resp], db: &Db) -> Resp {
         }
         let key = entry.key();
         if match_pattern(pattern, key) {
-             matched_keys.push(Resp::BulkString(Some(key.clone())));
+            matched_keys.push(Resp::BulkString(Some(key.clone())));
         }
     }
-    
+
     Resp::Array(Some(matched_keys))
 }
 
@@ -152,14 +152,17 @@ fn match_pattern(pattern: &[u8], text: &[u8]) -> bool {
                 t_idx += 1;
             }
             return false;
-        } else if p_idx < p_len && t_idx < t_len && (pattern[p_idx] == b'?' || pattern[p_idx] == text[t_idx]) {
+        } else if p_idx < p_len
+            && t_idx < t_len
+            && (pattern[p_idx] == b'?' || pattern[p_idx] == text[t_idx])
+        {
             p_idx += 1;
             t_idx += 1;
         } else {
             return false;
         }
     }
-    
+
     t_idx == t_len
 }
 

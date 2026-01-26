@@ -1,9 +1,9 @@
 #[path = "../resp.rs"]
 mod resp;
+use resp::{Resp, read_frame, write_frame};
 use std::io;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpStream;
-use resp::{Resp, read_frame, write_frame};
 
 fn to_bulk(s: &str) -> Resp {
     Resp::BulkString(Some(bytes::Bytes::copy_from_slice(s.as_bytes())))
@@ -22,15 +22,17 @@ fn tokens_to_resp(tokens: &[String]) -> Option<Resp> {
 
 fn print_resp(r: &Resp) {
     match r {
-        Resp::SimpleString(s) => {
-            match std::str::from_utf8(s.as_ref()) {
-                Ok(text) => println!("{}", text),
-                Err(_) => {
-                    let hex = s.as_ref().iter().map(|x| format!("{:02x}", x)).collect::<String>();
-                    println!("0x{}", hex);
-                }
+        Resp::SimpleString(s) => match std::str::from_utf8(s.as_ref()) {
+            Ok(text) => println!("{}", text),
+            Err(_) => {
+                let hex = s
+                    .as_ref()
+                    .iter()
+                    .map(|x| format!("{:02x}", x))
+                    .collect::<String>();
+                println!("0x{}", hex);
             }
-        }
+        },
         Resp::Error(s) => {
             println!("(error) {}", s);
         }
@@ -40,15 +42,17 @@ fn print_resp(r: &Resp) {
         Resp::BulkString(None) => {
             println!("(nil)");
         }
-        Resp::BulkString(Some(b)) => {
-            match std::str::from_utf8(b.as_ref()) {
-                Ok(s) => println!("{}", s),
-                Err(_) => {
-                    let hex = b.as_ref().iter().map(|x| format!("{:02x}", x)).collect::<String>();
-                    println!("0x{}", hex);
-                }
+        Resp::BulkString(Some(b)) => match std::str::from_utf8(b.as_ref()) {
+            Ok(s) => println!("{}", s),
+            Err(_) => {
+                let hex = b
+                    .as_ref()
+                    .iter()
+                    .map(|x| format!("{:02x}", x))
+                    .collect::<String>();
+                println!("0x{}", hex);
             }
-        }
+        },
         Resp::Array(None) => {
             println!("(nil array)");
         }
@@ -64,7 +68,9 @@ fn print_resp(r: &Resp) {
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    let addr = std::env::args().nth(1).unwrap_or_else(|| "127.0.0.1:6380".to_string());
+    let addr = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "127.0.0.1:6380".to_string());
     let stream = TcpStream::connect(addr).await?;
     let (read_half, write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);

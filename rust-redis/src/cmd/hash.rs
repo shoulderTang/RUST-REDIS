@@ -1,4 +1,4 @@
-use crate::db::{Db, Value, Entry};
+use crate::db::{Db, Entry, Value};
 use crate::resp::Resp;
 use std::collections::HashMap;
 
@@ -22,7 +22,9 @@ pub fn hset(items: &[Resp], db: &Db) -> Resp {
         _ => return Resp::Error("ERR invalid value".to_string()),
     };
 
-    let mut entry = db.entry(key).or_insert_with(|| Entry::new(Value::Hash(HashMap::new()), None));
+    let mut entry = db
+        .entry(key)
+        .or_insert_with(|| Entry::new(Value::Hash(HashMap::new()), None));
     if entry.is_expired() {
         entry.value = Value::Hash(HashMap::new());
         entry.expires_at = None;
@@ -58,13 +60,13 @@ pub fn hget(items: &[Resp], db: &Db) -> Resp {
             return Resp::BulkString(None);
         }
         match &entry.value {
-            Value::Hash(map) => {
-                match map.get(&field) {
-                    Some(v) => Resp::BulkString(Some(v.clone())),
-                    None => Resp::BulkString(None),
-                }
-            }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            Value::Hash(map) => match map.get(&field) {
+                Some(v) => Resp::BulkString(Some(v.clone())),
+                None => Resp::BulkString(None),
+            },
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::BulkString(None)
@@ -96,7 +98,9 @@ pub fn hgetall(items: &[Resp], db: &Db) -> Resp {
                 }
                 Resp::Array(Some(result))
             }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::Array(Some(vec![]))
@@ -113,7 +117,9 @@ pub fn hmset(items: &[Resp], db: &Db) -> Resp {
         _ => return Resp::Error("ERR invalid key".to_string()),
     };
 
-    let mut entry = db.entry(key).or_insert_with(|| Entry::new(Value::Hash(HashMap::new()), None));
+    let mut entry = db
+        .entry(key)
+        .or_insert_with(|| Entry::new(Value::Hash(HashMap::new()), None));
     if entry.is_expired() {
         entry.value = Value::Hash(HashMap::new());
         entry.expires_at = None;
@@ -176,7 +182,9 @@ pub fn hmget(items: &[Resp], db: &Db) -> Resp {
                 }
                 Resp::Array(Some(result))
             }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         let len = items.len() - 2;
@@ -219,7 +227,9 @@ pub fn hdel(items: &[Resp], db: &Db) -> Resp {
                 }
                 Resp::Integer(count)
             }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::Integer(0)
@@ -244,7 +254,9 @@ pub fn hlen(items: &[Resp], db: &Db) -> Resp {
         }
         match &entry.value {
             Value::Hash(map) => Resp::Integer(map.len() as i64),
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::Integer(0)

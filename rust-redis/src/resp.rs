@@ -1,9 +1,9 @@
+use bytes::{Bytes, BytesMut};
 use std::future::Future;
 use std::io::{self, ErrorKind};
 use std::pin::Pin;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
-use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
-use bytes::{Bytes, BytesMut};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufWriter};
+use tokio::net::tcp::OwnedWriteHalf;
 
 #[derive(Clone, Debug)]
 pub enum Resp {
@@ -39,7 +39,9 @@ where
         Some(l) => l,
         None => return Ok(None),
     };
-    let value = line.parse::<i64>().map_err(|_| io::Error::new(ErrorKind::InvalidData, "invalid integer"))?;
+    let value = line
+        .parse::<i64>()
+        .map_err(|_| io::Error::new(ErrorKind::InvalidData, "invalid integer"))?;
     Ok(Some(value))
 }
 
@@ -55,7 +57,10 @@ where
         return Ok(Some(Resp::BulkString(None)));
     }
     if len < 0 {
-        return Err(io::Error::new(ErrorKind::InvalidData, "negative bulk string length"));
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "negative bulk string length",
+        ));
     }
     let mut buf = BytesMut::with_capacity(len as usize);
     buf.resize(len as usize, 0);
@@ -63,7 +68,10 @@ where
     let mut crlf = [0u8; 2];
     reader.read_exact(&mut crlf).await?;
     if &crlf != b"\r\n" {
-        return Err(io::Error::new(ErrorKind::InvalidData, "invalid bulk string terminator"));
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "invalid bulk string terminator",
+        ));
     }
     Ok(Some(Resp::BulkString(Some(buf.freeze()))))
 }
@@ -80,7 +88,10 @@ where
         return Ok(Some(Resp::Array(None)));
     }
     if len < 0 {
-        return Err(io::Error::new(ErrorKind::InvalidData, "negative array length"));
+        return Err(io::Error::new(
+            ErrorKind::InvalidData,
+            "negative array length",
+        ));
     }
     let mut items = Vec::with_capacity(len as usize);
     for _ in 0..len {
@@ -93,7 +104,9 @@ where
     Ok(Some(Resp::Array(Some(items))))
 }
 
-pub fn read_frame<'a, R>(reader: &'a mut R) -> Pin<Box<dyn Future<Output = io::Result<Option<Resp>>> + Send + 'a>>
+pub fn read_frame<'a, R>(
+    reader: &'a mut R,
+) -> Pin<Box<dyn Future<Output = io::Result<Option<Resp>>> + Send + 'a>>
 where
     R: AsyncBufReadExt + AsyncReadExt + Unpin + Send,
 {
@@ -137,7 +150,10 @@ where
     })
 }
 
-pub fn write_frame<'a>(writer: &'a mut BufWriter<OwnedWriteHalf>, frame: &'a Resp) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+pub fn write_frame<'a>(
+    writer: &'a mut BufWriter<OwnedWriteHalf>,
+    frame: &'a Resp,
+) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
     Box::pin(async move {
         match frame {
             Resp::SimpleString(s) => {
@@ -181,6 +197,7 @@ pub fn write_frame<'a>(writer: &'a mut BufWriter<OwnedWriteHalf>, frame: &'a Res
     })
 }
 
+#[allow(dead_code)]
 pub fn as_bytes(r: &Resp) -> Option<&[u8]> {
     match r {
         Resp::BulkString(Some(b)) => Some(b.as_ref()),

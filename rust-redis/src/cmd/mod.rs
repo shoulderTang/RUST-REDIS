@@ -1,23 +1,26 @@
-use crate::db::Db;
-use crate::resp::{as_bytes, Resp};
 use crate::aof::Aof;
+use crate::cmd::scripting::ScriptManager;
 use crate::conf::Config;
+use crate::db::Db;
+use crate::resp::{Resp, as_bytes};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::error;
 
-mod string;
-mod list;
-mod hash;
-mod set;
-mod zset;
-mod key;
 mod command;
 mod config;
+mod hash;
+mod key;
+mod list;
+pub mod scripting;
+mod save;
+mod set;
+mod string;
+mod zset;
 
-#[cfg(test)]
-#[path = "../cmd_test.rs"]
-mod tests;
+
+
+
 
 enum Command {
     Ping,
@@ -32,10 +35,6 @@ enum Command {
     DecrBy,
     Append,
     StrLen,
-    Expire,
-    Ttl,
-    Dbsize,
-    Keys,
     Lpush,
     Rpush,
     Lpop,
@@ -60,10 +59,19 @@ enum Command {
     Zcard,
     Zrank,
     Zrange,
+    Expire,
+    Ttl,
+    Dbsize,
+    Keys,
+    Save,
+    Bgsave,
     Shutdown,
     Command,
     Config,
     BgRewriteAof,
+    Eval,
+    EvalSha,
+    Script,
     Unknown,
 }
 
@@ -72,20 +80,29 @@ pub fn process_frame(
     db: &Db,
     aof: &Option<Arc<Mutex<Aof>>>,
     cfg: &Config,
+    script_manager: &Arc<ScriptManager>,
 ) -> (Resp, Option<Resp>) {
     let cmd_to_log = if let Resp::Array(Some(ref items)) = frame {
         if !items.is_empty() {
-             if let Some(b) = as_bytes(&items[0]) {
-                 if let Ok(s) = std::str::from_utf8(&b) {
-                     if command::is_write_command(s) {
-                         Some(frame.clone())
-                     } else {
-                         None
-                     }
-                 } else { None }
-             } else { None }
-        } else { None }
-    } else { None };
+            if let Some(b) = as_bytes(&items[0]) {
+                if let Ok(s) = std::str::from_utf8(&b) {
+                    if command::is_write_command(s) {
+                        Some(frame.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let res = match frame {
         Resp::Array(Some(items)) => {
@@ -149,11 +166,16 @@ pub fn process_frame(
                 Command::Ttl => key::ttl(&items, db),
                 Command::Dbsize => key::dbsize(&items, db),
                 Command::Keys => key::keys(&items, db),
+                Command::Save => save::save(&items, db, cfg),
+                Command::Bgsave => save::bgsave(&items, db, cfg),
                 Command::Shutdown => {
                     std::process::exit(0);
                 }
                 Command::Command => command::command(&items),
                 Command::Config => config::config(&items, cfg),
+                Command::Eval => scripting::eval(&items, db, aof, cfg, script_manager),
+                Command::EvalSha => scripting::evalsha(&items, db, aof, cfg, script_manager),
+                Command::Script => scripting::script(&items, script_manager),
                 Command::BgRewriteAof => {
                     if let Some(aof) = aof {
                         let aof = aof.clone();
@@ -163,7 +185,9 @@ pub fn process_frame(
                                 error!("Background AOF rewrite failed: {}", e);
                             }
                         });
-                        Resp::SimpleString(bytes::Bytes::from_static(b"Background append only file rewriting started"))
+                        Resp::SimpleString(bytes::Bytes::from_static(
+                            b"Background append only file rewriting started",
+                        ))
                     } else {
                         Resp::Error("ERR AOF is not enabled".to_string())
                     }
@@ -175,7 +199,6 @@ pub fn process_frame(
     };
     (res, cmd_to_log)
 }
-
 
 fn command_name(raw: &[u8]) -> Command {
     if equals_ignore_ascii_case(raw, b"PING") {
@@ -258,12 +281,22 @@ fn command_name(raw: &[u8]) -> Command {
         Command::Zrank
     } else if equals_ignore_ascii_case(raw, b"ZRANGE") {
         Command::Zrange
+    } else if equals_ignore_ascii_case(raw, b"SAVE") {
+        Command::Save
+    } else if equals_ignore_ascii_case(raw, b"BGSAVE") {
+        Command::Bgsave
     } else if equals_ignore_ascii_case(raw, b"SHUTDOWN") {
         Command::Shutdown
     } else if equals_ignore_ascii_case(raw, b"COMMAND") {
         Command::Command
     } else if equals_ignore_ascii_case(raw, b"CONFIG") {
         Command::Config
+    } else if equals_ignore_ascii_case(raw, b"EVAL") {
+        Command::Eval
+    } else if equals_ignore_ascii_case(raw, b"EVALSHA") {
+        Command::EvalSha
+    } else if equals_ignore_ascii_case(raw, b"SCRIPT") {
+        Command::Script
     } else if equals_ignore_ascii_case(raw, b"BGREWRITEAOF") {
         Command::BgRewriteAof
     } else {

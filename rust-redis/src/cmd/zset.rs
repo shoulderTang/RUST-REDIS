@@ -1,4 +1,4 @@
-use crate::db::{Db, Value, Entry, SortedSet, TotalOrderF64};
+use crate::db::{Db, Entry, SortedSet, TotalOrderF64, Value};
 use crate::resp::Resp;
 
 pub fn zadd(items: &[Resp], db: &Db) -> Resp {
@@ -11,7 +11,9 @@ pub fn zadd(items: &[Resp], db: &Db) -> Resp {
         _ => return Resp::Error("ERR invalid key".to_string()),
     };
 
-    let mut entry = db.entry(key).or_insert_with(|| Entry::new(Value::ZSet(SortedSet::new()), None));
+    let mut entry = db
+        .entry(key)
+        .or_insert_with(|| Entry::new(Value::ZSet(SortedSet::new()), None));
     if entry.is_expired() {
         entry.value = Value::ZSet(SortedSet::new());
         entry.expires_at = None;
@@ -33,7 +35,7 @@ pub fn zadd(items: &[Resp], db: &Db) -> Resp {
                 Ok(s) => s,
                 Err(_) => return Resp::Error("ERR value is not a valid float".to_string()),
             };
-            
+
             let member = match &chunk[1] {
                 Resp::BulkString(Some(b)) => b.clone(),
                 Resp::SimpleString(s) => s.clone(),
@@ -42,7 +44,8 @@ pub fn zadd(items: &[Resp], db: &Db) -> Resp {
 
             if let Some(old_score) = zset.members.get(&member) {
                 if *old_score != score {
-                    zset.scores.remove(&(TotalOrderF64(*old_score), member.clone()));
+                    zset.scores
+                        .remove(&(TotalOrderF64(*old_score), member.clone()));
                     zset.members.insert(member.clone(), score);
                     zset.scores.insert((TotalOrderF64(score), member));
                 }
@@ -90,7 +93,9 @@ pub fn zrem(items: &[Resp], db: &Db) -> Resp {
                 }
                 Resp::Integer(count)
             }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::Integer(0)
@@ -126,7 +131,9 @@ pub fn zscore(items: &[Resp], db: &Db) -> Resp {
                     Resp::BulkString(None)
                 }
             }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::BulkString(None)
@@ -151,7 +158,9 @@ pub fn zcard(items: &[Resp], db: &Db) -> Resp {
         }
         match &entry.value {
             Value::ZSet(zset) => Resp::Integer(zset.members.len() as i64),
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::Integer(0)
@@ -194,7 +203,9 @@ pub fn zrank(items: &[Resp], db: &Db) -> Resp {
                     Resp::BulkString(None)
                 }
             }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::BulkString(None)
@@ -243,14 +254,14 @@ pub fn zrange(items: &[Resp], db: &Db) -> Resp {
                 } else {
                     return Resp::Error("ERR syntax error".to_string());
                 }
-            },
+            }
             Resp::SimpleString(s) => {
                 if s.eq_ignore_ascii_case(b"WITHSCORES") {
                     true
                 } else {
                     return Resp::Error("ERR syntax error".to_string());
                 }
-            },
+            }
             _ => return Resp::Error("ERR syntax error".to_string()),
         }
     } else {
@@ -287,15 +298,24 @@ pub fn zrange(items: &[Resp], db: &Db) -> Resp {
                 }
 
                 let mut result = Vec::new();
-                for (score, member) in zset.scores.iter().skip(start_idx as usize).take((stop_idx - start_idx + 1) as usize) {
+                for (score, member) in zset
+                    .scores
+                    .iter()
+                    .skip(start_idx as usize)
+                    .take((stop_idx - start_idx + 1) as usize)
+                {
                     result.push(Resp::BulkString(Some(member.clone())));
                     if withscores {
-                         result.push(Resp::BulkString(Some(bytes::Bytes::from(score.0.to_string()))));
+                        result.push(Resp::BulkString(Some(bytes::Bytes::from(
+                            score.0.to_string(),
+                        ))));
                     }
                 }
                 Resp::Array(Some(result))
             }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::Array(Some(vec![]))

@@ -5,17 +5,23 @@ use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
-use tracing::{info, warn, error};
-#[path = "../resp.rs"]
-mod resp;
-#[path = "../db.rs"]
-mod db;
+use tracing::{error, info, warn};
+#[path = "../aof.rs"]
+mod aof;
 #[path = "../cmd/mod.rs"]
 mod cmd;
 #[path = "../conf.rs"]
 mod conf;
-#[path = "../aof.rs"]
-mod aof;
+#[path = "../db.rs"]
+mod db;
+#[path = "../rdb.rs"]
+mod rdb;
+#[path = "../resp.rs"]
+mod resp;
+
+#[cfg(test)]
+#[path = "../tests/mod.rs"]
+mod tests;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -48,29 +54,47 @@ async fn main() {
     }
 }
 
-async fn run_server(cfg: conf::Config, _guard: Option<tracing_appender::non_blocking::WorkerGuard>) {
+async fn run_server(
+    cfg: conf::Config,
+    _guard: Option<tracing_appender::non_blocking::WorkerGuard>,
+) {
     let addr = cfg.address();
     info!("starting server, listen on {}", addr);
     if let Some(path) = &cfg.logfile {
         info!("logging to file: {}", path);
     }
-    
+
     let listener = TcpListener::bind(&addr).await.unwrap();
     //let db = Arc::new(db::Db::default());
     let db = db::Db::default();
-    //let db = Arc::new(db);
+
+    if !cfg.appendonly {
+        if let Err(e) = rdb::rdb_load(&db, &cfg) {
+            warn!("Failed to load RDB: {}", e);
+        }
+    }
+
+    // Create script cache
+    let script_manager = cmd::scripting::create_script_manager();
 
     let aof = if cfg.appendonly {
         info!("AOF enabled, file: {}", cfg.appendfilename);
-        let aof = aof::Aof::new(&cfg.appendfilename, cfg.appendfsync).await.expect("failed to open AOF file");
-        aof.load(&cfg.appendfilename, &db, &cfg).await.expect("failed to load AOF");
+        let aof = aof::Aof::new(&cfg.appendfilename, cfg.appendfsync)
+            .await
+            .expect("failed to open AOF file");
+        aof.load(&cfg.appendfilename, &db, &cfg, &script_manager)
+            .await
+            .expect("failed to load AOF");
         Some(Arc::new(Mutex::new(aof)))
     } else {
         None
     };
 
+    // Create script cache if not created (e.g. AOF disabled), or share the one used for loading
+    // Since we can't easily extract it from the if/else block without defining it outside, let's define it outside.
+
     let cfg_arc = Arc::new(cfg);
-    
+
     // Background task to clean up expired keys
     let db_for_cleanup = db.clone();
     tokio::spawn(async move {
@@ -87,6 +111,7 @@ async fn run_server(cfg: conf::Config, _guard: Option<tracing_appender::non_bloc
         let db_cloned = db.clone();
         let aof_cloned = aof.clone();
         let cfg_cloned = cfg_arc.clone();
+        let script_manager_cloned = script_manager.clone();
 
         tokio::spawn(async move {
             let (read_half, write_half) = socket.into_split();
@@ -99,17 +124,23 @@ async fn run_server(cfg: conf::Config, _guard: Option<tracing_appender::non_bloc
                     Ok(None) => return,
                     Err(_) => return,
                 };
-                let (response, cmd_to_log) = cmd::process_frame(frame, &db_cloned, &aof_cloned, &cfg_cloned);
+                let (response, cmd_to_log) = cmd::process_frame(
+                    frame,
+                    &db_cloned,
+                    &aof_cloned,
+                    &cfg_cloned,
+                    &script_manager_cloned,
+                );
 
                 if resp::write_frame(&mut writer, &response).await.is_err() {
                     return;
                 }
-                
+
                 if let Some(cmd) = cmd_to_log {
                     if let Some(aof) = &aof_cloned {
-                         if let Err(e) = aof.lock().await.append(&cmd).await {
+                        if let Err(e) = aof.lock().await.append(&cmd).await {
                             error!("failed to append to AOF: {}", e);
-                         }
+                        }
                     }
                 }
 

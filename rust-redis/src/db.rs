@@ -4,8 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // RehashMap struct and implementation are removed for simplicity
 // and replaced by DashMap as the default implementation.
 
-use std::collections::{VecDeque, HashMap, HashSet, BTreeSet};
 use std::cmp::Ordering;
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -69,12 +69,12 @@ impl Entry {
 
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
-             let start = SystemTime::now();
-             let since_the_epoch = start
+            let start = SystemTime::now();
+            let since_the_epoch = start
                 .duration_since(UNIX_EPOCH)
                 .expect("Time went backwards");
-             let now = since_the_epoch.as_millis() as u64;
-             now >= expires_at
+            let now = since_the_epoch.as_millis() as u64;
+            now >= expires_at
         } else {
             false
         }

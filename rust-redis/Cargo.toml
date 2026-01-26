@@ -12,6 +12,9 @@ tracing-appender = "0.2.4"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 ahash = "0.8"
 dashmap = "6.1"
+mlua = { version = "0.9", features = ["lua54", "vendored", "send"] }
+sha1 = "0.10.6"
+hex = "0.4.3"
 
 [profile.release]
 # 优化级别：0(无) < 1(轻量) < 2(中度) < 3(最高) < "s"(尺寸优化) < "z"(极致尺寸优化)

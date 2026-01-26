@@ -1,4 +1,4 @@
-use crate::db::{Db, Value, Entry};
+use crate::db::{Db, Entry, Value};
 use crate::resp::Resp;
 use std::collections::HashSet;
 
@@ -12,7 +12,9 @@ pub fn sadd(items: &[Resp], db: &Db) -> Resp {
         _ => return Resp::Error("ERR invalid key".to_string()),
     };
 
-    let mut entry = db.entry(key).or_insert_with(|| Entry::new(Value::Set(HashSet::new()), None));
+    let mut entry = db
+        .entry(key)
+        .or_insert_with(|| Entry::new(Value::Set(HashSet::new()), None));
     if entry.is_expired() {
         entry.value = Value::Set(HashSet::new());
         entry.expires_at = None;
@@ -67,7 +69,9 @@ pub fn srem(items: &[Resp], db: &Db) -> Resp {
                 }
                 Resp::Integer(count)
             }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::Integer(0)
@@ -96,10 +100,10 @@ pub fn sismember(items: &[Resp], db: &Db) -> Resp {
             return Resp::Integer(0);
         }
         match &entry.value {
-            Value::Set(set) => {
-                Resp::Integer(if set.contains(&member) { 1 } else { 0 })
-            }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            Value::Set(set) => Resp::Integer(if set.contains(&member) { 1 } else { 0 }),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::Integer(0)
@@ -130,7 +134,9 @@ pub fn smembers(items: &[Resp], db: &Db) -> Resp {
                 }
                 Resp::Array(Some(result))
             }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::Array(Some(vec![]))
@@ -155,7 +161,9 @@ pub fn scard(items: &[Resp], db: &Db) -> Resp {
         }
         match &entry.value {
             Value::Set(set) => Resp::Integer(set.len() as i64),
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::Integer(0)

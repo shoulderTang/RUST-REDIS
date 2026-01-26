@@ -1,7 +1,7 @@
+use crate::aof::AppendFsync;
+use crate::conf::Config;
 use crate::resp::Resp;
 use bytes::Bytes;
-use crate::conf::Config;
-use crate::aof::AppendFsync;
 
 pub fn config(items: &[Resp], cfg: &Config) -> Resp {
     if items.len() < 3 {
@@ -27,7 +27,7 @@ pub fn config(items: &[Resp], cfg: &Config) -> Resp {
 
     let mut response = Vec::new();
     let param_lower = parameter.to_lowercase();
-    
+
     // Helper to add pair
     let mut add_pair = |k: &str, v: &str| {
         response.push(Resp::BulkString(Some(Bytes::from(k.to_string()))));
@@ -40,10 +40,17 @@ pub fn config(items: &[Resp], cfg: &Config) -> Resp {
         AppendFsync::EverySec => "everysec",
         AppendFsync::No => "no",
     };
-    
+
     let configs = vec![
         //("save", "3600 1 300 100 60 10000".to_string()),
-        ("appendonly", if cfg.appendonly { "yes".to_string() } else { "no".to_string() }),
+        (
+            "appendonly",
+            if cfg.appendonly {
+                "yes".to_string()
+            } else {
+                "no".to_string()
+            },
+        ),
         ("appendfilename", cfg.appendfilename.clone()),
         ("appendfsync", appendfsync_str.to_string()),
         ("bind", cfg.bind.clone()),

@@ -1,13 +1,15 @@
+use crate::cmd::process_frame;
+use crate::cmd::scripting::ScriptManager;
+use crate::conf::Config;
+use crate::db::{Db, Value};
+use crate::resp::{Resp, read_frame};
+use bytes::Bytes;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{self, AsyncWriteExt, BufWriter};
-use crate::resp::{Resp, read_frame};
-use crate::db::{Db, Value};
-use crate::cmd::process_frame;
-use crate::conf::Config;
-use std::pin::Pin;
-use std::future::Future;
-use bytes::Bytes;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::task::JoinHandle;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -32,7 +34,7 @@ impl Aof {
             .append(true)
             .open(path)
             .await?;
-        
+
         let sync_task = if policy == AppendFsync::EverySec {
             let file_clone = file.try_clone().await?;
             Some(tokio::spawn(async move {
@@ -60,18 +62,24 @@ impl Aof {
     pub async fn append(&mut self, frame: &Resp) -> io::Result<()> {
         write_resp(&mut self.writer, frame).await?;
         self.writer.flush().await?;
-        
+
         if self.policy == AppendFsync::Always {
             self.writer.get_mut().sync_all().await?;
         }
-        
+
         Ok(())
     }
 
-    pub async fn load(&self, path: &str, db: &Db, cfg: &Config) -> io::Result<()> {
+    pub async fn load(
+        &self,
+        path: &str,
+        db: &Db,
+        cfg: &Config,
+        script_manager: &Arc<ScriptManager>,
+    ) -> io::Result<()> {
         // Check if file exists first
         match tokio::fs::metadata(path).await {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(e) => return Err(e),
         }
@@ -84,7 +92,7 @@ impl Aof {
                 Ok(Some(frame)) => {
                     // process_frame requires Aof option now, but during load we pass None
                     // to avoid recursive or circular dependency issues and because we don't want to log loaded commands
-                    let _ = process_frame(frame, db, &None, cfg);
+                    let _ = process_frame(frame, db, &None, cfg, script_manager);
                 }
                 Ok(None) => break,
                 Err(e) => return Err(e),
@@ -114,13 +122,11 @@ impl Aof {
             }
 
             let cmd = match &val.value {
-                Value::String(v) => {
-                    Resp::Array(Some(vec![
-                        Resp::BulkString(Some(Bytes::from("SET"))),
-                        Resp::BulkString(Some(key.clone())),
-                        Resp::BulkString(Some(v.clone())),
-                    ]))
-                },
+                Value::String(v) => Resp::Array(Some(vec![
+                    Resp::BulkString(Some(Bytes::from("SET"))),
+                    Resp::BulkString(Some(key.clone())),
+                    Resp::BulkString(Some(v.clone())),
+                ])),
                 Value::List(l) => {
                     let mut args = Vec::with_capacity(2 + l.len());
                     args.push(Resp::BulkString(Some(Bytes::from("RPUSH"))));
@@ -129,7 +135,7 @@ impl Aof {
                         args.push(Resp::BulkString(Some(item.clone())));
                     }
                     Resp::Array(Some(args))
-                },
+                }
                 Value::Hash(h) => {
                     let mut args = Vec::with_capacity(2 + h.len() * 2);
                     args.push(Resp::BulkString(Some(Bytes::from("HMSET"))));
@@ -139,7 +145,7 @@ impl Aof {
                         args.push(Resp::BulkString(Some(v.clone())));
                     }
                     Resp::Array(Some(args))
-                },
+                }
                 Value::Set(s) => {
                     let mut args = Vec::with_capacity(2 + s.len());
                     args.push(Resp::BulkString(Some(Bytes::from("SADD"))));
@@ -148,7 +154,7 @@ impl Aof {
                         args.push(Resp::BulkString(Some(m.clone())));
                     }
                     Resp::Array(Some(args))
-                },
+                }
                 Value::ZSet(z) => {
                     let mut args = Vec::with_capacity(2 + z.members.len() * 2);
                     args.push(Resp::BulkString(Some(Bytes::from("ZADD"))));
@@ -158,7 +164,7 @@ impl Aof {
                         args.push(Resp::BulkString(Some(m.clone())));
                     }
                     Resp::Array(Some(args))
-                },
+                }
             };
 
             write_resp(&mut writer, &cmd).await?;
@@ -193,7 +199,7 @@ impl Aof {
             .append(true)
             .open(&self.path)
             .await?;
-        
+
         // Restart sync task if needed
         if self.policy == AppendFsync::EverySec {
             let file_clone = file.try_clone().await?;
@@ -214,7 +220,10 @@ impl Aof {
     }
 }
 
-fn write_resp<'a, W>(writer: &'a mut W, resp: &'a Resp) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>
+fn write_resp<'a, W>(
+    writer: &'a mut W,
+    resp: &'a Resp,
+) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>
 where
     W: AsyncWriteExt + Unpin + Send,
 {
@@ -269,18 +278,23 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_file() -> String {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
         format!("/tmp/redis_aof_test_{}.aof", now)
     }
 
     #[tokio::test]
     async fn test_aof_append_and_load() {
         let path = temp_file();
-        
+
         // 1. Create AOF and append commands
         {
-            let mut aof = Aof::new(&path, AppendFsync::Always).await.expect("failed to create aof");
-            
+            let mut aof = Aof::new(&path, AppendFsync::Always)
+                .await
+                .expect("failed to create aof");
+
             // SET key1 value1
             let set_cmd = Resp::Array(Some(vec![
                 Resp::BulkString(Some(Bytes::from("SET"))),
@@ -295,13 +309,21 @@ mod tests {
                 Resp::BulkString(Some(Bytes::from("list1"))),
                 Resp::BulkString(Some(Bytes::from("item1"))),
             ]));
-            aof.append(&rpush_cmd).await.expect("failed to append rpush");
+            aof.append(&rpush_cmd)
+                .await
+                .expect("failed to append rpush");
         }
 
         // 2. Load AOF into a new DB
         let db_new = Db::default();
-        let aof_loader = Aof::new(&path, AppendFsync::Always).await.expect("failed to open aof for loading");
-        aof_loader.load(&path, &db_new, &Config::default()).await.expect("failed to load aof");
+        let aof_loader = Aof::new(&path, AppendFsync::Always)
+            .await
+            .expect("failed to open aof for loading");
+        let script_manager = crate::cmd::scripting::create_script_manager();
+        aof_loader
+            .load(&path, &db_new, &Config::default(), &script_manager)
+            .await
+            .expect("failed to load aof");
 
         // 3. Verify DB state
         // Check key1
@@ -319,11 +341,13 @@ mod tests {
             crate::db::Value::List(l) => {
                 assert_eq!(l.len(), 1);
                 assert_eq!(l[0], Bytes::from("item1"));
-            },
+            }
             _ => panic!("expected list for list1"),
         }
 
         // Cleanup
-        tokio::fs::remove_file(&path).await.expect("failed to remove temp file");
+        tokio::fs::remove_file(&path)
+            .await
+            .expect("failed to remove temp file");
     }
 }

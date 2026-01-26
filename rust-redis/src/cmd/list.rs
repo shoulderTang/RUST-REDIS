@@ -1,4 +1,4 @@
-use crate::db::{Db, Value, Entry};
+use crate::db::{Db, Entry, Value};
 use crate::resp::Resp;
 use std::collections::VecDeque;
 
@@ -12,7 +12,9 @@ pub fn lpush(items: &[Resp], db: &Db) -> Resp {
         _ => return Resp::Error("ERR invalid key".to_string()),
     };
 
-    let mut entry = db.entry(key).or_insert_with(|| Entry::new(Value::List(VecDeque::new()), None));
+    let mut entry = db
+        .entry(key)
+        .or_insert_with(|| Entry::new(Value::List(VecDeque::new()), None));
     if entry.is_expired() {
         entry.value = Value::List(VecDeque::new());
         entry.expires_at = None;
@@ -43,7 +45,9 @@ pub fn rpush(items: &[Resp], db: &Db) -> Resp {
         _ => return Resp::Error("ERR invalid key".to_string()),
     };
 
-    let mut entry = db.entry(key).or_insert_with(|| Entry::new(Value::List(VecDeque::new()), None));
+    let mut entry = db
+        .entry(key)
+        .or_insert_with(|| Entry::new(Value::List(VecDeque::new()), None));
     if entry.is_expired() {
         entry.value = Value::List(VecDeque::new());
         entry.expires_at = None;
@@ -81,13 +85,13 @@ pub fn lpop(items: &[Resp], db: &Db) -> Resp {
             return Resp::BulkString(None);
         }
         match &mut entry.value {
-            Value::List(list) => {
-                match list.pop_front() {
-                    Some(v) => Resp::BulkString(Some(v)),
-                    None => Resp::BulkString(None),
-                }
-            }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            Value::List(list) => match list.pop_front() {
+                Some(v) => Resp::BulkString(Some(v)),
+                None => Resp::BulkString(None),
+            },
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::BulkString(None)
@@ -111,13 +115,13 @@ pub fn rpop(items: &[Resp], db: &Db) -> Resp {
             return Resp::BulkString(None);
         }
         match &mut entry.value {
-            Value::List(list) => {
-                match list.pop_back() {
-                    Some(v) => Resp::BulkString(Some(v)),
-                    None => Resp::BulkString(None),
-                }
-            }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            Value::List(list) => match list.pop_back() {
+                Some(v) => Resp::BulkString(Some(v)),
+                None => Resp::BulkString(None),
+            },
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::BulkString(None)
@@ -142,7 +146,9 @@ pub fn llen(items: &[Resp], db: &Db) -> Resp {
         }
         match &entry.value {
             Value::List(list) => Resp::Integer(list.len() as i64),
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::Integer(0)
@@ -211,16 +217,18 @@ pub fn lrange(items: &[Resp], db: &Db) -> Resp {
                 if start_idx > stop_idx || start_idx >= len {
                     return Resp::Array(Some(vec![]));
                 }
-                
+
                 let mut result = Vec::new();
                 for i in start_idx..=stop_idx {
-                     if let Some(val) = list.get(i as usize) {
-                         result.push(Resp::BulkString(Some(val.clone())));
-                     }
+                    if let Some(val) = list.get(i as usize) {
+                        result.push(Resp::BulkString(Some(val.clone())));
+                    }
                 }
                 Resp::Array(Some(result))
             }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::Array(Some(vec![]))
