@@ -16,8 +16,16 @@ mod conf;
 mod db;
 #[path = "../rdb.rs"]
 mod rdb;
+#[path = "../rax.rs"]
+mod rax;
+#[path = "../hll.rs"]
+mod hll;
+#[path = "../stream.rs"]
+mod stream;
 #[path = "../resp.rs"]
 mod resp;
+#[path = "../geo.rs"]
+mod geo;
 
 #[cfg(test)]
 #[path = "../tests/mod.rs"]

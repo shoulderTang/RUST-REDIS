@@ -7,6 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use crate::stream::Stream;
+use crate::hll::HyperLogLog;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TotalOrderF64(pub f64);
@@ -47,6 +49,8 @@ pub enum Value {
     Hash(HashMap<bytes::Bytes, bytes::Bytes>),
     Set(HashSet<bytes::Bytes>),
     ZSet(SortedSet),
+    Stream(Stream),
+    HyperLogLog(HyperLogLog),
 }
 
 #[derive(Clone, Debug)]

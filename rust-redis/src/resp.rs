@@ -5,7 +5,7 @@ use std::pin::Pin;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufWriter};
 use tokio::net::tcp::OwnedWriteHalf;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Resp {
     SimpleString(Bytes),
     Error(String),

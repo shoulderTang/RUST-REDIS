@@ -15,8 +15,11 @@ mod list;
 pub mod scripting;
 mod save;
 mod set;
+mod stream;
 mod string;
 mod zset;
+mod hll;
+mod geo;
 
 
 
@@ -59,6 +62,15 @@ enum Command {
     Zcard,
     Zrank,
     Zrange,
+    Pfadd,
+    Pfcount,
+    Pfmerge,
+    GeoAdd,
+    GeoDist,
+    GeoHash,
+    GeoPos,
+    GeoRadius,
+    GeoRadiusByMember,
     Expire,
     Ttl,
     Dbsize,
@@ -72,6 +84,15 @@ enum Command {
     Eval,
     EvalSha,
     Script,
+    Xadd,
+    Xlen,
+    Xrange,
+    Xrevrange,
+    Xdel,
+    Xread,
+    Xgroup,
+    Xreadgroup,
+    Xack,
     Unknown,
 }
 
@@ -82,7 +103,7 @@ pub fn process_frame(
     cfg: &Config,
     script_manager: &Arc<ScriptManager>,
 ) -> (Resp, Option<Resp>) {
-    let cmd_to_log = if let Resp::Array(Some(ref items)) = frame {
+    let mut cmd_to_log = if let Resp::Array(Some(ref items)) = frame {
         if !items.is_empty() {
             if let Some(b) = as_bytes(&items[0]) {
                 if let Ok(s) = std::str::from_utf8(&b) {
@@ -162,6 +183,15 @@ pub fn process_frame(
                 Command::Zcard => zset::zcard(&items, db),
                 Command::Zrank => zset::zrank(&items, db),
                 Command::Zrange => zset::zrange(&items, db),
+                Command::Pfadd => hll::pfadd(&items, db),
+                Command::Pfcount => hll::pfcount(&items, db),
+                Command::Pfmerge => hll::pfmerge(&items, db),
+                Command::GeoAdd => geo::geoadd(&items, db),
+                Command::GeoDist => geo::geodist(&items, db),
+                Command::GeoHash => geo::geohash(&items, db),
+                Command::GeoPos => geo::geopos(&items, db),
+                Command::GeoRadius => geo::georadius(&items, db),
+                Command::GeoRadiusByMember => geo::georadiusbymember(&items, db),
                 Command::Expire => key::expire(&items, db),
                 Command::Ttl => key::ttl(&items, db),
                 Command::Dbsize => key::dbsize(&items, db),
@@ -176,6 +206,45 @@ pub fn process_frame(
                 Command::Eval => scripting::eval(&items, db, aof, cfg, script_manager),
                 Command::EvalSha => scripting::evalsha(&items, db, aof, cfg, script_manager),
                 Command::Script => scripting::script(&items, script_manager),
+                Command::Xadd => {
+                    let (res, log) = stream::xadd(&items, db);
+                    if let Some(l) = log {
+                        cmd_to_log = Some(l);
+                    }
+                    res
+                }
+                Command::Xlen => stream::xlen(&items, db),
+                Command::Xrange => stream::xrange(&items, db),
+                Command::Xrevrange => stream::xrevrange(&items, db),
+                Command::Xdel => {
+                    let (res, log) = stream::xdel(&items, db);
+                    if let Some(l) = log {
+                        cmd_to_log = Some(l);
+                    }
+                    res
+                }
+                Command::Xread => stream::xread(&items, db),
+                Command::Xgroup => {
+                    let (res, log) = stream::xgroup(&items, db);
+                    if let Some(l) = log {
+                        cmd_to_log = Some(l);
+                    }
+                    res
+                }
+                Command::Xreadgroup => {
+                    let (res, log) = stream::xreadgroup(&items, db);
+                    if let Some(l) = log {
+                        cmd_to_log = Some(l);
+                    }
+                    res
+                }
+                Command::Xack => {
+                    let (res, log) = stream::xack(&items, db);
+                    if let Some(l) = log {
+                        cmd_to_log = Some(l);
+                    }
+                    res
+                }
                 Command::BgRewriteAof => {
                     if let Some(aof) = aof {
                         let aof = aof.clone();
@@ -281,6 +350,24 @@ fn command_name(raw: &[u8]) -> Command {
         Command::Zrank
     } else if equals_ignore_ascii_case(raw, b"ZRANGE") {
         Command::Zrange
+    } else if equals_ignore_ascii_case(raw, b"PFADD") {
+        Command::Pfadd
+    } else if equals_ignore_ascii_case(raw, b"PFCOUNT") {
+        Command::Pfcount
+    } else if equals_ignore_ascii_case(raw, b"PFMERGE") {
+        Command::Pfmerge
+    } else if equals_ignore_ascii_case(raw, b"GEOADD") {
+        Command::GeoAdd
+    } else if equals_ignore_ascii_case(raw, b"GEODIST") {
+        Command::GeoDist
+    } else if equals_ignore_ascii_case(raw, b"GEOHASH") {
+        Command::GeoHash
+    } else if equals_ignore_ascii_case(raw, b"GEOPOS") {
+        Command::GeoPos
+    } else if equals_ignore_ascii_case(raw, b"GEORADIUS") {
+        Command::GeoRadius
+    } else if equals_ignore_ascii_case(raw, b"GEORADIUSBYMEMBER") {
+        Command::GeoRadiusByMember
     } else if equals_ignore_ascii_case(raw, b"SAVE") {
         Command::Save
     } else if equals_ignore_ascii_case(raw, b"BGSAVE") {
@@ -297,6 +384,24 @@ fn command_name(raw: &[u8]) -> Command {
         Command::EvalSha
     } else if equals_ignore_ascii_case(raw, b"SCRIPT") {
         Command::Script
+    } else if equals_ignore_ascii_case(raw, b"XADD") {
+        Command::Xadd
+    } else if equals_ignore_ascii_case(raw, b"XLEN") {
+        Command::Xlen
+    } else if equals_ignore_ascii_case(raw, b"XRANGE") {
+        Command::Xrange
+    } else if equals_ignore_ascii_case(raw, b"XREVRANGE") {
+        Command::Xrevrange
+    } else if equals_ignore_ascii_case(raw, b"XDEL") {
+        Command::Xdel
+    } else if equals_ignore_ascii_case(raw, b"XREAD") {
+        Command::Xread
+    } else if equals_ignore_ascii_case(raw, b"XGROUP") {
+        Command::Xgroup
+    } else if equals_ignore_ascii_case(raw, b"XREADGROUP") {
+        Command::Xreadgroup
+    } else if equals_ignore_ascii_case(raw, b"XACK") {
+        Command::Xack
     } else if equals_ignore_ascii_case(raw, b"BGREWRITEAOF") {
         Command::BgRewriteAof
     } else {

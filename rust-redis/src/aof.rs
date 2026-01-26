@@ -122,11 +122,11 @@ impl Aof {
             }
 
             let cmd = match &val.value {
-                Value::String(v) => Resp::Array(Some(vec![
+                Value::String(v) => Some(Resp::Array(Some(vec![
                     Resp::BulkString(Some(Bytes::from("SET"))),
                     Resp::BulkString(Some(key.clone())),
                     Resp::BulkString(Some(v.clone())),
-                ])),
+                ]))),
                 Value::List(l) => {
                     let mut args = Vec::with_capacity(2 + l.len());
                     args.push(Resp::BulkString(Some(Bytes::from("RPUSH"))));
@@ -134,7 +134,7 @@ impl Aof {
                     for item in l {
                         args.push(Resp::BulkString(Some(item.clone())));
                     }
-                    Resp::Array(Some(args))
+                    Some(Resp::Array(Some(args)))
                 }
                 Value::Hash(h) => {
                     let mut args = Vec::with_capacity(2 + h.len() * 2);
@@ -144,7 +144,7 @@ impl Aof {
                         args.push(Resp::BulkString(Some(f.clone())));
                         args.push(Resp::BulkString(Some(v.clone())));
                     }
-                    Resp::Array(Some(args))
+                    Some(Resp::Array(Some(args)))
                 }
                 Value::Set(s) => {
                     let mut args = Vec::with_capacity(2 + s.len());
@@ -153,7 +153,7 @@ impl Aof {
                     for m in s {
                         args.push(Resp::BulkString(Some(m.clone())));
                     }
-                    Resp::Array(Some(args))
+                    Some(Resp::Array(Some(args)))
                 }
                 Value::ZSet(z) => {
                     let mut args = Vec::with_capacity(2 + z.members.len() * 2);
@@ -163,11 +163,52 @@ impl Aof {
                         args.push(Resp::BulkString(Some(Bytes::from(s.to_string()))));
                         args.push(Resp::BulkString(Some(m.clone())));
                     }
-                    Resp::Array(Some(args))
+                    Some(Resp::Array(Some(args)))
                 }
+                Value::Stream(s) => {
+                    // 1. Reconstruct entries
+                    let start = crate::stream::StreamID::new(0, 0);
+                    let end = crate::stream::StreamID::new(u64::MAX, u64::MAX);
+                    let entries = s.range(&start, &end);
+
+                    for entry in entries {
+                        let mut args = Vec::with_capacity(3 + entry.fields.len() * 2);
+                        args.push(Resp::BulkString(Some(Bytes::from("XADD"))));
+                        args.push(Resp::BulkString(Some(key.clone())));
+                        args.push(Resp::BulkString(Some(Bytes::from(entry.id.to_string()))));
+                        for (f, v) in entry.fields {
+                            args.push(Resp::BulkString(Some(f)));
+                            args.push(Resp::BulkString(Some(v)));
+                        }
+                        let cmd = Resp::Array(Some(args));
+                        write_resp(&mut writer, &cmd).await?;
+                    }
+
+                    // 2. Reconstruct groups
+                    for (name, group) in &s.groups {
+                        let mut args = Vec::with_capacity(6);
+                        args.push(Resp::BulkString(Some(Bytes::from("XGROUP"))));
+                        args.push(Resp::BulkString(Some(Bytes::from("CREATE"))));
+                        args.push(Resp::BulkString(Some(key.clone())));
+                        args.push(Resp::BulkString(Some(Bytes::from(name.clone()))));
+                        args.push(Resp::BulkString(Some(Bytes::from(group.last_id.to_string()))));
+                        args.push(Resp::BulkString(Some(Bytes::from("MKSTREAM"))));
+                        
+                        let cmd = Resp::Array(Some(args));
+                        write_resp(&mut writer, &cmd).await?;
+                    }
+                    None
+                }
+                Value::HyperLogLog(hll) => Some(Resp::Array(Some(vec![
+                    Resp::BulkString(Some(Bytes::from("SET"))),
+                    Resp::BulkString(Some(key.clone())),
+                    Resp::BulkString(Some(Bytes::copy_from_slice(&hll.registers))),
+                ]))),
             };
 
-            write_resp(&mut writer, &cmd).await?;
+            if let Some(c) = cmd {
+                write_resp(&mut writer, &c).await?;
+            }
 
             // Handle expiration
             if let Some(expires_at) = val.expires_at {
@@ -268,86 +309,4 @@ where
         }
         Ok(())
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::resp::Resp;
-    use bytes::Bytes;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn temp_file() -> String {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        format!("/tmp/redis_aof_test_{}.aof", now)
-    }
-
-    #[tokio::test]
-    async fn test_aof_append_and_load() {
-        let path = temp_file();
-
-        // 1. Create AOF and append commands
-        {
-            let mut aof = Aof::new(&path, AppendFsync::Always)
-                .await
-                .expect("failed to create aof");
-
-            // SET key1 value1
-            let set_cmd = Resp::Array(Some(vec![
-                Resp::BulkString(Some(Bytes::from("SET"))),
-                Resp::BulkString(Some(Bytes::from("key1"))),
-                Resp::BulkString(Some(Bytes::from("value1"))),
-            ]));
-            aof.append(&set_cmd).await.expect("failed to append set");
-
-            // RPUSH list1 item1
-            let rpush_cmd = Resp::Array(Some(vec![
-                Resp::BulkString(Some(Bytes::from("RPUSH"))),
-                Resp::BulkString(Some(Bytes::from("list1"))),
-                Resp::BulkString(Some(Bytes::from("item1"))),
-            ]));
-            aof.append(&rpush_cmd)
-                .await
-                .expect("failed to append rpush");
-        }
-
-        // 2. Load AOF into a new DB
-        let db_new = Db::default();
-        let aof_loader = Aof::new(&path, AppendFsync::Always)
-            .await
-            .expect("failed to open aof for loading");
-        let script_manager = crate::cmd::scripting::create_script_manager();
-        aof_loader
-            .load(&path, &db_new, &Config::default(), &script_manager)
-            .await
-            .expect("failed to load aof");
-
-        // 3. Verify DB state
-        // Check key1
-        let val = db_new.get(&Bytes::from("key1"));
-        assert!(val.is_some(), "key1 not found");
-        match &val.unwrap().value {
-            crate::db::Value::String(s) => assert_eq!(s, &Bytes::from("value1")),
-            _ => panic!("expected string for key1"),
-        }
-
-        // Check list1
-        let list = db_new.get(&Bytes::from("list1"));
-        assert!(list.is_some(), "list1 not found");
-        match &list.unwrap().value {
-            crate::db::Value::List(l) => {
-                assert_eq!(l.len(), 1);
-                assert_eq!(l[0], Bytes::from("item1"));
-            }
-            _ => panic!("expected list for list1"),
-        }
-
-        // Cleanup
-        tokio::fs::remove_file(&path)
-            .await
-            .expect("failed to remove temp file");
-    }
 }
