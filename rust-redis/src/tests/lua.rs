@@ -5,10 +5,12 @@ use crate::db::{Db, Value};
 use bytes::Bytes;
 use crate::cmd::scripting;
 use crate::resp::Resp;
+use std::sync::Arc;
 
 #[test]
 fn test_eval() {
-    let db = Db::default();
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
     let config = Config::default();
 
     // Script with keys and redis.call
@@ -20,6 +22,7 @@ fn test_eval() {
     process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &config,
         &scripting::create_script_manager(),
@@ -34,6 +37,7 @@ fn test_eval() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &config,
         &scripting::create_script_manager(),
@@ -46,7 +50,8 @@ fn test_eval() {
 
 #[test]
 fn test_eval_pcall() {
-    let db = Db::default();
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
     let config = Config::default();
 
     // redis.call with error -> raises Lua error
@@ -58,6 +63,7 @@ fn test_eval_pcall() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &config,
         &scripting::create_script_manager(),
@@ -76,6 +82,7 @@ fn test_eval_pcall() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &config,
         &scripting::create_script_manager(),
@@ -88,7 +95,8 @@ fn test_eval_pcall() {
 
 #[test]
 fn test_script_commands() {
-    let db = Db::default();
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
     let config = Config::default();
     let script_manager = scripting::create_script_manager();
 
@@ -99,7 +107,7 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from("LOAD"))),
         Resp::BulkString(Some(Bytes::from(script))),
     ]));
-    let (res, _) = process_frame(req, &db, &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
     let sha1 = match res {
         Resp::BulkString(Some(b)) => {
             let s = std::str::from_utf8(&b).unwrap();
@@ -115,7 +123,7 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from("EXISTS"))),
         Resp::BulkString(Some(Bytes::from(sha1.clone()))),
     ]));
-    let (res, _) = process_frame(req, &db, &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 1);
@@ -133,7 +141,7 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from(sha1.clone()))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
-    let (res, _) = process_frame(req, &db, &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
     match res {
         Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("hello")),
         _ => panic!("expected BulkString(hello)"),
@@ -144,7 +152,7 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from("SCRIPT"))),
         Resp::BulkString(Some(Bytes::from("FLUSH"))),
     ]));
-    let (res, _) = process_frame(req, &db, &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
     match res {
         Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
         _ => panic!("expected SimpleString(OK)"),
@@ -156,7 +164,7 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from("EXISTS"))),
         Resp::BulkString(Some(Bytes::from(sha1.clone()))),
     ]));
-    let (res, _) = process_frame(req, &db, &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
     match res {
         Resp::Array(Some(items)) => match items[0] {
             Resp::Integer(i) => assert_eq!(i, 0),
@@ -171,7 +179,7 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from(sha1))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
-    let (res, _) = process_frame(req, &db, &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
     match res {
         Resp::Error(e) => assert!(e.contains("NOSCRIPT")),
         _ => panic!("expected NOSCRIPT error"),
@@ -180,7 +188,8 @@ fn test_script_commands() {
 
 #[test]
 fn test_lua_state_reuse() {
-    let db = Db::default();
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
     let config = Config::default();
     let script_manager = scripting::create_script_manager();
 
@@ -191,7 +200,7 @@ fn test_lua_state_reuse() {
         Resp::BulkString(Some(Bytes::from(script1))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
-    let (res1, _) = process_frame(req1, &db, &None, &config, &script_manager);
+    let (res1, _) = process_frame(req1, &db, &mut db_index, &None, &config, &script_manager);
     match res1 {
         Resp::Integer(i) => assert_eq!(i, 10),
         _ => panic!("expected Integer(10), got {:?}", res1),
@@ -204,7 +213,7 @@ fn test_lua_state_reuse() {
         Resp::BulkString(Some(Bytes::from(script2))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
-    let (res2, _) = process_frame(req2, &db, &None, &config, &script_manager);
+    let (res2, _) = process_frame(req2, &db, &mut db_index, &None, &config, &script_manager);
     match res2 {
         Resp::Integer(i) => assert_eq!(i, 10), // Should still be 10 if reused
         _ => panic!("expected Integer(10), got {:?}", res2),

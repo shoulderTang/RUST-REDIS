@@ -4,10 +4,12 @@ use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
 use bytes::Bytes;
+use std::sync::Arc;
 
 #[test]
 fn test_keys() {
-    let db = Db::default();
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
 
     // Setup keys
     let req = Resp::Array(Some(vec![
@@ -18,6 +20,7 @@ fn test_keys() {
     process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -31,6 +34,7 @@ fn test_keys() {
     process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -44,6 +48,7 @@ fn test_keys() {
     process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -57,6 +62,7 @@ fn test_keys() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -76,6 +82,7 @@ fn test_keys() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -95,6 +102,7 @@ fn test_keys() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -109,7 +117,8 @@ fn test_keys() {
 
 #[test]
 fn test_expire_ttl() {
-    let db = Db::default();
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
 
     // SET key val
     let req = Resp::Array(Some(vec![
@@ -120,6 +129,7 @@ fn test_expire_ttl() {
     process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -133,6 +143,7 @@ fn test_expire_ttl() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -151,6 +162,7 @@ fn test_expire_ttl() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -168,6 +180,7 @@ fn test_expire_ttl() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -188,6 +201,7 @@ fn test_expire_ttl() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -205,6 +219,7 @@ fn test_expire_ttl() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -217,13 +232,15 @@ fn test_expire_ttl() {
 
 #[test]
 fn test_dbsize() {
-    let db = Db::default();
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
 
     // DBSIZE -> 0
     let req = Resp::Array(Some(vec![Resp::BulkString(Some(Bytes::from("DBSIZE")))]));
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -242,6 +259,7 @@ fn test_dbsize() {
     process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -252,6 +270,7 @@ fn test_dbsize() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -264,7 +283,8 @@ fn test_dbsize() {
 
 #[test]
 fn test_del() {
-    let db = Db::default();
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
 
     // Setup keys
     let req = Resp::Array(Some(vec![
@@ -279,6 +299,7 @@ fn test_del() {
     process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -294,6 +315,7 @@ fn test_del() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -305,7 +327,7 @@ fn test_del() {
     }
 
     // Verify deletion
-    assert!(!db.contains_key(&Bytes::from("k1")));
-    assert!(!db.contains_key(&Bytes::from("k2")));
-    assert!(db.contains_key(&Bytes::from("k3")));
+    assert!(!db[0].contains_key(&Bytes::from("k1")));
+    assert!(!db[0].contains_key(&Bytes::from("k2")));
+    assert!(db[0].contains_key(&Bytes::from("k3")));
 }

@@ -5,10 +5,12 @@ use crate::db::{Db, Value};
 use crate::resp::Resp;
 use bytes::Bytes;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
 
 #[test]
 fn test_set_get() {
-    let db = Db::default();
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
 
     // SET key val
     let req = Resp::Array(Some(vec![
@@ -19,6 +21,7 @@ fn test_set_get() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -36,6 +39,7 @@ fn test_set_get() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -53,6 +57,7 @@ fn test_set_get() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -65,7 +70,8 @@ fn test_set_get() {
 
 #[test]
 fn test_mset_mget() {
-    let db = Db::default();
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
 
     // MSET k1 v1 k2 v2
     let req = Resp::Array(Some(vec![
@@ -78,6 +84,7 @@ fn test_mset_mget() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -97,6 +104,7 @@ fn test_mset_mget() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -123,7 +131,8 @@ fn test_mset_mget() {
 
 #[test]
 fn test_string_extended() {
-    let db = Db::default();
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
 
     // SET NX key val -> OK
     let req = Resp::Array(Some(vec![
@@ -135,6 +144,7 @@ fn test_string_extended() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -152,6 +162,7 @@ fn test_string_extended() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -169,6 +180,7 @@ fn test_string_extended() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -187,6 +199,7 @@ fn test_string_extended() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -205,6 +218,7 @@ fn test_string_extended() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -223,6 +237,7 @@ fn test_string_extended() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -241,6 +256,7 @@ fn test_string_extended() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -258,6 +274,7 @@ fn test_string_extended() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -270,7 +287,8 @@ fn test_string_extended() {
 
 #[test]
 fn test_set_options() {
-    let db = Db::default();
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
 
     // 1. SET k1 v1 EX 10
     let req = Resp::Array(Some(vec![
@@ -283,6 +301,7 @@ fn test_set_options() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -293,7 +312,7 @@ fn test_set_options() {
     }
 
     // Check TTL
-    if let Some(entry) = db.get(&Bytes::from("k1")) {
+    if let Some(entry) = db[0].get(&Bytes::from("k1")) {
         assert!(entry.expires_at.is_some());
         // Should be roughly now + 10s
         let exp = entry.expires_at.unwrap();
@@ -318,6 +337,7 @@ fn test_set_options() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -327,7 +347,7 @@ fn test_set_options() {
         _ => panic!("expected SimpleString(OK)"),
     }
 
-    if let Some(entry) = db.get(&Bytes::from("k2")) {
+    if let Some(entry) = db[0].get(&Bytes::from("k2")) {
         assert!(entry.expires_at.is_some());
         let exp = entry.expires_at.unwrap();
         let now = SystemTime::now()
@@ -347,6 +367,7 @@ fn test_set_options() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -356,7 +377,7 @@ fn test_set_options() {
         _ => panic!("expected SimpleString(OK)"),
     }
 
-    if let Some(entry) = db.get(&Bytes::from("k1")) {
+    if let Some(entry) = db[0].get(&Bytes::from("k1")) {
         // TTL should be preserved
         assert!(entry.expires_at.is_some());
         assert_eq!(entry.value, Value::String(Bytes::from("v1_new")));
@@ -372,6 +393,7 @@ fn test_set_options() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -381,7 +403,7 @@ fn test_set_options() {
         _ => panic!("expected BulkString(None)"),
     }
     // k3 should exist
-    assert!(db.contains_key(&Bytes::from("k3")));
+    assert!(db[0].contains_key(&Bytes::from("k3")));
 
     // 5. SET k3 v3_new GET (k3 exists)
     let req = Resp::Array(Some(vec![
@@ -393,6 +415,7 @@ fn test_set_options() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -402,7 +425,7 @@ fn test_set_options() {
         _ => panic!("expected BulkString(v3)"),
     }
     // k3 should be updated
-    if let Some(entry) = db.get(&Bytes::from("k3")) {
+    if let Some(entry) = db[0].get(&Bytes::from("k3")) {
         assert_eq!(entry.value, Value::String(Bytes::from("v3_new")));
     }
 
@@ -422,6 +445,7 @@ fn test_set_options() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -430,7 +454,7 @@ fn test_set_options() {
         Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
         _ => panic!("expected SimpleString(OK)"),
     }
-    if let Some(entry) = db.get(&Bytes::from("k_exat")) {
+    if let Some(entry) = db[0].get(&Bytes::from("k_exat")) {
         let exp = entry.expires_at.unwrap();
         let expected = exat * 1000;
         assert!(exp >= expected && exp <= expected + 1000);
@@ -452,6 +476,7 @@ fn test_set_options() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -460,7 +485,7 @@ fn test_set_options() {
         Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
         _ => panic!("expected SimpleString(OK)"),
     }
-    if let Some(entry) = db.get(&Bytes::from("k_pxat")) {
+    if let Some(entry) = db[0].get(&Bytes::from("k_pxat")) {
         let exp = entry.expires_at.unwrap();
         // Allow small difference due to execution time
         assert!(exp >= pxat && exp <= pxat + 1000);

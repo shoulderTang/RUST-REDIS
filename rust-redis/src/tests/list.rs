@@ -4,10 +4,12 @@ use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
 use bytes::Bytes;
+use std::sync::Arc;
 
 #[test]
 fn test_list_ops() {
-    let db = Db::default();
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
 
     // LPUSH list 1 -> 1
     let req = Resp::Array(Some(vec![
@@ -18,6 +20,7 @@ fn test_list_ops() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -36,6 +39,7 @@ fn test_list_ops() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -55,6 +59,7 @@ fn test_list_ops() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -82,6 +87,7 @@ fn test_list_ops() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -99,6 +105,7 @@ fn test_list_ops() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -116,6 +123,7 @@ fn test_list_ops() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),

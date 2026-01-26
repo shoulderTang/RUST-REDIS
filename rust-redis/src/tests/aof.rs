@@ -4,6 +4,7 @@ use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
 use bytes::Bytes;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 fn temp_file() -> String {
@@ -44,7 +45,7 @@ async fn test_aof_append_and_load() {
     }
 
     // 2. Load AOF into a new DB
-    let db_new = Db::default();
+    let db_new = Arc::new(vec![Db::default()]);
     let aof_loader = Aof::new(&path, AppendFsync::Always)
         .await
         .expect("failed to open aof for loading");
@@ -56,7 +57,7 @@ async fn test_aof_append_and_load() {
 
     // 3. Verify DB state
     // Check key1
-    let val = db_new.get(&Bytes::from("key1"));
+    let val = db_new[0].get(&Bytes::from("key1"));
     assert!(val.is_some(), "key1 not found");
     match &val.unwrap().value {
         crate::db::Value::String(s) => assert_eq!(s, &Bytes::from("value1")),
@@ -64,7 +65,7 @@ async fn test_aof_append_and_load() {
     }
 
     // Check list1
-    let list = db_new.get(&Bytes::from("list1"));
+    let list = db_new[0].get(&Bytes::from("list1"));
     assert!(list.is_some(), "list1 not found");
     match &list.unwrap().value {
         crate::db::Value::List(l) => {

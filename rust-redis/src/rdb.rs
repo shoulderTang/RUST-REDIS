@@ -220,7 +220,7 @@ impl RdbEncoder {
         Ok(())
     }
 
-    pub fn save(&mut self, db: &Db) -> io::Result<()> {
+    pub fn save(&mut self, databases: &Arc<Vec<Db>>) -> io::Result<()> {
         self.write_magic()?;
 
         self.write_aux("redis-ver", "6.2.5")?;
@@ -232,84 +232,90 @@ impl RdbEncoder {
             .as_secs();
         self.write_aux("ctime", &now.to_string())?;
 
-        self.write_u8(RDB_OPCODE_SELECTDB)?;
-        self.write_u8(0)?; 
-
-        let len = db.len() as u64;
-        let expires_len = db
-            .iter()
-            .filter(|entry| entry.value().expires_at.is_some())
-            .count() as u64;
-        self.write_u8(RDB_OPCODE_RESIZEDB)?;
-        self.write_len(len)?;
-        self.write_len(expires_len)?;
-
-        for entry in db.iter() {
-            let key = entry.key();
-            let value = entry.value();
-
-            if let Some(expires_at) = value.expires_at {
-                let now_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as u64;
-                if now_ms >= expires_at {
-                    continue; 
-                }
-                self.write_u8(RDB_OPCODE_EXPIRETIME_MS)?;
-                self.write_u64_le(expires_at)?;
+        for (i, db) in databases.iter().enumerate() {
+            if db.is_empty() {
+                continue;
             }
 
-            match &value.value {
-                Value::String(s) => {
-                    self.write_u8(RDB_TYPE_STRING)?;
-                    self.write_string(key)?;
-                    self.write_string(s)?;
-                }
-                Value::List(l) => {
-                    self.write_u8(RDB_TYPE_LIST)?;
-                    self.write_string(key)?;
-                    self.write_len(l.len() as u64)?;
-                    for item in l {
-                        self.write_string(item)?;
+            self.write_u8(RDB_OPCODE_SELECTDB)?;
+            self.write_len(i as u64)?;
+
+            let len = db.len() as u64;
+            let expires_len = db
+                .iter()
+                .filter(|entry| entry.value().expires_at.is_some())
+                .count() as u64;
+            self.write_u8(RDB_OPCODE_RESIZEDB)?;
+            self.write_len(len)?;
+            self.write_len(expires_len)?;
+
+            for entry in db.iter() {
+                let key = entry.key();
+                let value = entry.value();
+
+                if let Some(expires_at) = value.expires_at {
+                    let now_ms = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as u64;
+                    if now_ms >= expires_at {
+                        continue;
                     }
+                    self.write_u8(RDB_OPCODE_EXPIRETIME_MS)?;
+                    self.write_u64_le(expires_at)?;
                 }
-                Value::Set(s) => {
-                    self.write_u8(RDB_TYPE_SET)?;
-                    self.write_string(key)?;
-                    self.write_len(s.len() as u64)?;
-                    for item in s {
-                        self.write_string(item)?;
+
+                match &value.value {
+                    Value::String(s) => {
+                        self.write_u8(RDB_TYPE_STRING)?;
+                        self.write_string(key)?;
+                        self.write_string(s)?;
                     }
-                }
-                Value::Hash(h) => {
-                    self.write_u8(RDB_TYPE_HASH)?;
-                    self.write_string(key)?;
-                    self.write_len(h.len() as u64)?;
-                    for (k, v) in h {
-                        self.write_string(k)?;
-                        self.write_string(v)?;
+                    Value::List(l) => {
+                        self.write_u8(RDB_TYPE_LIST)?;
+                        self.write_string(key)?;
+                        self.write_len(l.len() as u64)?;
+                        for item in l {
+                            self.write_string(item)?;
+                        }
                     }
-                }
-                Value::ZSet(z) => {
-                    self.write_u8(RDB_TYPE_ZSET)?;
-                    self.write_string(key)?;
-                    self.write_len(z.scores.len() as u64)?;
-                    for (score, member) in &z.scores {
-                        self.write_string(member)?;
-                        let score_str = score.0.to_string();
-                        self.write_string(score_str.as_bytes())?;
+                    Value::Set(s) => {
+                        self.write_u8(RDB_TYPE_SET)?;
+                        self.write_string(key)?;
+                        self.write_len(s.len() as u64)?;
+                        for item in s {
+                            self.write_string(item)?;
+                        }
                     }
-                }
-                Value::HyperLogLog(hll) => {
-                    self.write_u8(RDB_TYPE_STRING)?;
-                    self.write_string(key)?;
-                    self.write_string(&hll.registers)?;
-                }
-                Value::Stream(stream) => {
-                    self.write_u8(RDB_TYPE_STREAM_LISTPACKS)?;
-                    self.write_string(key)?;
-                    self.save_stream(stream)?;
+                    Value::Hash(h) => {
+                        self.write_u8(RDB_TYPE_HASH)?;
+                        self.write_string(key)?;
+                        self.write_len(h.len() as u64)?;
+                        for (k, v) in h {
+                            self.write_string(k)?;
+                            self.write_string(v)?;
+                        }
+                    }
+                    Value::ZSet(z) => {
+                        self.write_u8(RDB_TYPE_ZSET)?;
+                        self.write_string(key)?;
+                        self.write_len(z.scores.len() as u64)?;
+                        for (score, member) in &z.scores {
+                            self.write_string(member)?;
+                            let score_str = score.0.to_string();
+                            self.write_string(score_str.as_bytes())?;
+                        }
+                    }
+                    Value::HyperLogLog(hll) => {
+                        self.write_u8(RDB_TYPE_STRING)?;
+                        self.write_string(key)?;
+                        self.write_string(&hll.registers)?;
+                    }
+                    Value::Stream(stream) => {
+                        self.write_u8(RDB_TYPE_STREAM_LISTPACKS)?;
+                        self.write_string(key)?;
+                        self.save_stream(stream)?;
+                    }
                 }
             }
         }
@@ -844,17 +850,19 @@ impl RdbLoader {
         Ok(stream)
     }
 
-    pub fn load(&mut self) -> io::Result<Db> {
+    pub fn load(&mut self, databases: &Arc<Vec<Db>>) -> io::Result<()> {
         // Simple loader: assumes only one DB and reads until EOF
         // Real RDB loader handles opcodes
         
-        let db = Arc::new(DashMap::new());
         let mut magic = [0u8; 9];
         self.read_exact(&mut magic)?;
         if &magic != b"REDIS0009" {
              // For now assume version 9 or fail
              // return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid Magic"));
         }
+
+        let mut current_db_index = 0;
+        let mut expire_at: Option<u64> = None;
 
         loop {
             let opcode = self.read_u8()?;
@@ -868,25 +876,16 @@ impl RdbLoader {
                     let _expires_size = self.read_len()?;
                 }
                 RDB_OPCODE_EXPIRETIME_MS => {
-                    let _expires = self.read_u64_le()?;
-                    // Next comes the value type and key/value
-                    // We need to read them and set expiry
-                    // But our structure is: read type, read key, read value.
-                    // The expiry precedes the entry.
-                    // Implementation detail: we need to handle this statefully or peek?
-                    // RDB format: [EXPIRETIME] [time] [TYPE] [KEY] [VALUE]
-                    // So we continue loop? No, we need to associate it with the next entry.
-                    // This simple loop structure is insufficient for EXPIRETIME handling 
-                    // without a state variable.
-                    // For now, let's ignore expiry or implement it properly.
-                    // TODO: Implement expiry handling
+                    let expires = self.read_u64_le()?;
+                    expire_at = Some(expires);
                 }
                 RDB_OPCODE_EXPIRETIME => {
-                     let _expires = self.read_u32_be()?;
-                     // Same as above
+                     let expires = self.read_u32_be()?;
+                     expire_at = Some(expires as u64 * 1000);
                 }
                 RDB_OPCODE_SELECTDB => {
-                    let _db_id = self.read_len()?;
+                    let (id, _) = self.read_len()?;
+                    current_db_index = id as usize;
                 }
                 RDB_OPCODE_EOF => {
                     break;
@@ -947,31 +946,27 @@ impl RdbLoader {
                         }
                     };
                     
-                    db.insert(key, Entry::new(val, None));
+                    if current_db_index < databases.len() {
+                        databases[current_db_index].insert(key, Entry::new(val, expire_at));
+                    }
+                    expire_at = None;
                 }
             }
         }
         
-        Ok(db)
+        Ok(())
     }
 }
 
-pub fn rdb_save(db: &Db, conf: &Config) -> io::Result<()> {
+pub fn rdb_save(databases: &Arc<Vec<Db>>, conf: &Config) -> io::Result<()> {
     let mut encoder = RdbEncoder::new(&conf.dbfilename)?;
-    encoder.save(db)
+    encoder.save(databases)
 }
 
-pub fn rdb_load(db: &Db, conf: &Config) -> io::Result<()> {
+pub fn rdb_load(databases: &Arc<Vec<Db>>, conf: &Config) -> io::Result<()> {
     if !std::path::Path::new(&conf.dbfilename).exists() {
         return Ok(());
     }
     let mut loader = RdbLoader::new(&conf.dbfilename)?;
-    let loaded_db = loader.load()?;
-    
-    // Merge loaded_db into db
-    db.clear();
-    for entry in loaded_db.iter() {
-        db.insert(entry.key().clone(), entry.value().clone());
-    }
-    Ok(())
+    loader.load(databases)
 }

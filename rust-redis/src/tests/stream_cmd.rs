@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn test_xadd() {
-    let db = Arc::new(DashMap::new());
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
     let config = Config::default();
     let script_manager = crate::cmd::scripting::create_script_manager();
 
@@ -22,7 +23,7 @@ async fn test_xadd() {
     ];
     let frame = Resp::Array(Some(args));
 
-    let (resp, _) = process_frame(frame, &db, &None, &config, &script_manager);
+    let (resp, _) = process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
 
     match resp {
         Resp::BulkString(Some(id)) => {
@@ -35,7 +36,8 @@ async fn test_xadd() {
 
 #[tokio::test]
 async fn test_xlen() {
-    let db = Arc::new(DashMap::new());
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
     let config = Config::default();
     let script_manager = crate::cmd::scripting::create_script_manager();
 
@@ -48,7 +50,7 @@ async fn test_xlen() {
         Resp::BulkString(Some(Bytes::from("foo"))),
     ];
     let frame = Resp::Array(Some(args));
-    process_frame(frame, &db, &None, &config, &script_manager);
+    process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
 
     // XLEN key
     let args = vec![
@@ -56,14 +58,15 @@ async fn test_xlen() {
         Resp::BulkString(Some(Bytes::from("mystream"))),
     ];
     let frame = Resp::Array(Some(args));
-    let (resp, _) = process_frame(frame, &db, &None, &config, &script_manager);
+    let (resp, _) = process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
 
     assert_eq!(resp, Resp::Integer(1));
 }
 
 #[tokio::test]
 async fn test_xlen_bug_repro() {
-    let db = Arc::new(DashMap::new());
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
     let config = Config::default();
     let script_manager = crate::cmd::scripting::create_script_manager();
 
@@ -81,7 +84,7 @@ async fn test_xlen_bug_repro() {
         Resp::BulkString(Some(Bytes::from("v3"))),
     ];
     let frame = Resp::Array(Some(args));
-    process_frame(frame, &db, &None, &config, &script_manager);
+    process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
 
     // XLEN mystream1 -> Should be 1
     let args = vec![
@@ -89,7 +92,7 @@ async fn test_xlen_bug_repro() {
         Resp::BulkString(Some(Bytes::from("mystream1"))),
     ];
     let frame = Resp::Array(Some(args));
-    let (resp, _) = process_frame(frame, &db, &None, &config, &script_manager);
+    let (resp, _) = process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
     assert_eq!(resp, Resp::Integer(1), "Single XADD with multiple fields should result in len 1");
 
     // Scenario 2: Three XADDs with auto ID
@@ -101,7 +104,7 @@ async fn test_xlen_bug_repro() {
         Resp::BulkString(Some(Bytes::from("f1"))),
         Resp::BulkString(Some(Bytes::from("v1"))),
     ];
-    process_frame(Resp::Array(Some(args)), &db, &None, &config, &script_manager);
+    process_frame(Resp::Array(Some(args)), &db, &mut db_index, &None, &config, &script_manager);
 
     // XADD mystream2 * f2 v2
     let args = vec![
@@ -111,7 +114,7 @@ async fn test_xlen_bug_repro() {
         Resp::BulkString(Some(Bytes::from("f2"))),
         Resp::BulkString(Some(Bytes::from("v2"))),
     ];
-    process_frame(Resp::Array(Some(args)), &db, &None, &config, &script_manager);
+    process_frame(Resp::Array(Some(args)), &db, &mut db_index, &None, &config, &script_manager);
 
     // XADD mystream2 * f3 v3
     let args = vec![
@@ -121,7 +124,7 @@ async fn test_xlen_bug_repro() {
         Resp::BulkString(Some(Bytes::from("f3"))),
         Resp::BulkString(Some(Bytes::from("v3"))),
     ];
-    process_frame(Resp::Array(Some(args)), &db, &None, &config, &script_manager);
+    process_frame(Resp::Array(Some(args)), &db, &mut db_index, &None, &config, &script_manager);
 
     // XLEN mystream2 -> Should be 3
     let args = vec![
@@ -129,7 +132,7 @@ async fn test_xlen_bug_repro() {
         Resp::BulkString(Some(Bytes::from("mystream2"))),
     ];
     let frame = Resp::Array(Some(args));
-    let (resp, _) = process_frame(frame, &db, &None, &config, &script_manager);
+    let (resp, _) = process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
     
     // If this assertion fails with 1, then the bug is reproduced.
     assert_eq!(resp, Resp::Integer(3), "Three separate XADDs should result in len 3");
@@ -137,7 +140,8 @@ async fn test_xlen_bug_repro() {
 
 #[tokio::test]
 async fn test_xrevrange() {
-    let db = Arc::new(DashMap::new());
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
     let config = Config::default();
     let script_manager = crate::cmd::scripting::create_script_manager();
 
@@ -150,7 +154,7 @@ async fn test_xrevrange() {
         Resp::BulkString(Some(Bytes::from("foo"))),
     ];
     let frame = Resp::Array(Some(args));
-    process_frame(frame, &db, &None, &config, &script_manager);
+    process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
 
     // XADD key 100-2 field value
     let args = vec![
@@ -161,7 +165,7 @@ async fn test_xrevrange() {
         Resp::BulkString(Some(Bytes::from("bar"))),
     ];
     let frame = Resp::Array(Some(args));
-    process_frame(frame, &db, &None, &config, &script_manager);
+    process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
 
     // XREVRANGE mystream + - COUNT 1
     let args = vec![
@@ -173,7 +177,7 @@ async fn test_xrevrange() {
         Resp::BulkString(Some(Bytes::from("1"))),
     ];
     let frame = Resp::Array(Some(args));
-    let (resp, _) = process_frame(frame, &db, &None, &config, &script_manager);
+    let (resp, _) = process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
 
     match resp {
         Resp::Array(Some(arr)) => {
@@ -190,7 +194,8 @@ async fn test_xrevrange() {
 
 #[tokio::test]
 async fn test_xrange() {
-    let db = Arc::new(DashMap::new());
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
     let config = Config::default();
     let script_manager = crate::cmd::scripting::create_script_manager();
 
@@ -203,7 +208,7 @@ async fn test_xrange() {
         Resp::BulkString(Some(Bytes::from("foo"))),
     ];
     let frame = Resp::Array(Some(args));
-    process_frame(frame, &db, &None, &config, &script_manager);
+    process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
 
     // XADD key 100-2 field value
     let args = vec![
@@ -214,7 +219,7 @@ async fn test_xrange() {
         Resp::BulkString(Some(Bytes::from("bar"))),
     ];
     let frame = Resp::Array(Some(args));
-    process_frame(frame, &db, &None, &config, &script_manager);
+    process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
 
     // XRANGE mystream - +
     let args = vec![
@@ -224,7 +229,7 @@ async fn test_xrange() {
         Resp::BulkString(Some(Bytes::from("+"))),
     ];
     let frame = Resp::Array(Some(args));
-    let (resp, _) = process_frame(frame, &db, &None, &config, &script_manager);
+    let (resp, _) = process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
 
     if let Resp::Array(Some(items)) = resp {
         assert_eq!(items.len(), 2);
@@ -247,7 +252,8 @@ async fn test_xrange() {
 
 #[tokio::test]
 async fn test_xdel() {
-    let db = Arc::new(DashMap::new());
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
     let config = Config::default();
     let script_manager = crate::cmd::scripting::create_script_manager();
 
@@ -260,7 +266,7 @@ async fn test_xdel() {
         Resp::BulkString(Some(Bytes::from("foo"))),
     ];
     let frame = Resp::Array(Some(args));
-    process_frame(frame, &db, &None, &config, &script_manager);
+    process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
 
     // XADD key 100-2 field value
     let args = vec![
@@ -271,7 +277,7 @@ async fn test_xdel() {
         Resp::BulkString(Some(Bytes::from("bar"))),
     ];
     let frame = Resp::Array(Some(args));
-    process_frame(frame, &db, &None, &config, &script_manager);
+    process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
 
     // XDEL mystream 100-1
     let args = vec![
@@ -280,7 +286,7 @@ async fn test_xdel() {
         Resp::BulkString(Some(Bytes::from("100-1"))),
     ];
     let frame = Resp::Array(Some(args));
-    let (resp, _) = process_frame(frame, &db, &None, &config, &script_manager);
+    let (resp, _) = process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
 
     assert_eq!(resp, Resp::Integer(1));
 
@@ -290,14 +296,15 @@ async fn test_xdel() {
         Resp::BulkString(Some(Bytes::from("mystream"))),
     ];
     let frame = Resp::Array(Some(args));
-    let (resp, _) = process_frame(frame, &db, &None, &config, &script_manager);
+    let (resp, _) = process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
 
     assert_eq!(resp, Resp::Integer(1));
 }
 
 #[tokio::test]
 async fn test_xread() {
-    let db = Arc::new(DashMap::new());
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
     let config = Config::default();
     let script_manager = crate::cmd::scripting::create_script_manager();
 
@@ -310,7 +317,7 @@ async fn test_xread() {
         Resp::BulkString(Some(Bytes::from("foo"))),
     ];
     let frame = Resp::Array(Some(args));
-    process_frame(frame, &db, &None, &config, &script_manager);
+    process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
 
     // XADD key 100-2 field value
     let args = vec![
@@ -321,7 +328,7 @@ async fn test_xread() {
         Resp::BulkString(Some(Bytes::from("bar"))),
     ];
     let frame = Resp::Array(Some(args));
-    process_frame(frame, &db, &None, &config, &script_manager);
+    process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
 
     // XREAD STREAMS mystream 0-0
     let args = vec![
@@ -331,7 +338,7 @@ async fn test_xread() {
         Resp::BulkString(Some(Bytes::from("0-0"))),
     ];
     let frame = Resp::Array(Some(args));
-    let (resp, _) = process_frame(frame, &db, &None, &config, &script_manager);
+    let (resp, _) = process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
 
     if let Resp::Array(Some(arr)) = resp {
         assert_eq!(arr.len(), 1);
@@ -373,7 +380,7 @@ async fn test_xread() {
         Resp::BulkString(Some(Bytes::from("0-0"))),
     ];
     let frame = Resp::Array(Some(args));
-    let (resp, _) = process_frame(frame, &db, &None, &config, &script_manager);
+    let (resp, _) = process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
     
     if let Resp::Array(Some(arr)) = resp {
         if let Resp::Array(Some(stream_res)) = &arr[0] {
@@ -396,7 +403,7 @@ async fn test_xread() {
         Resp::BulkString(Some(Bytes::from("100-1"))),
     ];
     let frame = Resp::Array(Some(args));
-    let (resp, _) = process_frame(frame, &db, &None, &config, &script_manager);
+    let (resp, _) = process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
     
     if let Resp::Array(Some(arr)) = resp {
         if let Resp::Array(Some(stream_res)) = &arr[0] {
@@ -419,7 +426,7 @@ async fn test_xread() {
         Resp::BulkString(Some(Bytes::from("$"))),
     ];
     let frame = Resp::Array(Some(args));
-    let (resp, _) = process_frame(frame, &db, &None, &config, &script_manager);
+    let (resp, _) = process_frame(frame, &db, &mut db_index, &None, &config, &script_manager);
     
     // Should be nil because no new items
     if let Resp::BulkString(None) = resp {

@@ -25,7 +25,7 @@ mod tests {
         let path = path_str.to_str().unwrap();
 
         // 1. Setup DB with Stream data
-        let db = Arc::new(DashMap::new());
+        let db = Arc::new(vec![Db::default()]);
         let key = Bytes::from("mystream_aof");
         
         let mut stream = Stream::new();
@@ -37,14 +37,14 @@ mod tests {
         let group = crate::stream::ConsumerGroup::new(group_name.clone(), StreamID::new(0, 0));
         stream.groups.insert(group_name.clone(), group);
 
-        db.insert(key.clone(), crate::db::Entry::new(Value::Stream(stream), None));
+        db[0].insert(key.clone(), crate::db::Entry::new(Value::Stream(stream), None));
 
         // 2. Perform AOF Rewrite
         let mut aof = Aof::new(path, AppendFsync::No).await.unwrap();
         aof.rewrite(&db).await.unwrap();
 
         // 3. Load AOF into new DB
-        let new_db = Arc::new(DashMap::new());
+        let new_db = Arc::new(vec![Db::default()]);
         let config = Config::default();
         let script_manager = create_script_manager();
         
@@ -54,7 +54,7 @@ mod tests {
         loader.load(path, &new_db, &config, &script_manager).await.unwrap();
 
         // 4. Verify
-        let entry = new_db.get(&key).unwrap();
+        let entry = new_db[0].get(&key).unwrap();
         match &entry.value {
              Value::Stream(s) => {
                  assert_eq!(s.len(), 1);
@@ -76,7 +76,8 @@ mod tests {
         let path_str = Path::new(dir).join(&filename);
         let path = path_str.to_str().unwrap();
 
-        let db = Arc::new(DashMap::new());
+        let db = Arc::new(vec![Db::default()]);
+        let mut db_index = 0;
         let config = Config::default();
         let script_manager = create_script_manager();
         
@@ -87,7 +88,16 @@ mod tests {
             ));
             
             // Pass None for AOF to process_frame because we want to capture the log command manually
-            let (_res, log_cmd) = process_frame(req, &db, &None, &config, &script_manager);
+            // Need to handle db_index mutable borrow in closure
+            // Since we can't easily capture mutable reference in this closure structure used repeatedly,
+            // we will just use a local db_index for the closure since these commands don't change DB.
+            // Wait, process_frame takes &mut db_index.
+            // We can just capture it. But FnMut?
+            // Let's rewrite the helper or just inline it if it's tricky.
+            // Or just use a RefCell? No, async.
+            // Let's just pass db_index explicitly or assume 0.
+            let mut local_db_index = 0;
+            let (_res, log_cmd) = process_frame(req, &db, &mut local_db_index, &None, &config, &script_manager);
             
             log_cmd
         };
@@ -111,7 +121,7 @@ mod tests {
         
         // 4. XACK
         let stream_id_bob = {
-            let entry = db.get(&Bytes::from("mystream")).unwrap();
+            let entry = db[0].get(&Bytes::from("mystream")).unwrap();
             match &entry.value {
                 Value::Stream(s) => s.last_id.to_string(),
                 _ => panic!("Expected stream"),
@@ -123,7 +133,7 @@ mod tests {
 
         // 5. XDEL (delete alice)
         let alice_id = {
-            let entry = db.get(&Bytes::from("mystream")).unwrap();
+            let entry = db[0].get(&Bytes::from("mystream")).unwrap();
             let stream_ids: Vec<String> = match &entry.value {
                 Value::Stream(s) => s.range(&StreamID::new(0,0), &StreamID::new(u64::MAX, u64::MAX)).iter().map(|e| e.id.to_string()).collect(),
                 _ => panic!(""),
@@ -136,14 +146,14 @@ mod tests {
 
 
         // 6. Load AOF into new DB
-        let new_db = Arc::new(DashMap::new());
+        let new_db = Arc::new(vec![Db::default()]);
         // We need to close the file/ensure it is flushed? write_resp_to_file opens and closes it each time.
         
         let loader = Aof::new(path, AppendFsync::No).await.unwrap();
         loader.load(path, &new_db, &config, &script_manager).await.unwrap();
 
         // 7. Verify
-        let entry = new_db.get(&Bytes::from("mystream")).unwrap();
+        let entry = new_db[0].get(&Bytes::from("mystream")).unwrap();
         match &entry.value {
              Value::Stream(s) => {
                  // We added 2 items, deleted 1. Should have 1.
@@ -213,7 +223,7 @@ mod tests {
         let save_path = path.to_str().unwrap();
 
         // 1. Setup DB with Stream data
-        let db = Arc::new(DashMap::new());
+        let db = Arc::new(vec![Db::default()]);
         let key = Bytes::from("mystream");
         
         let mut stream = Stream::new();
@@ -256,7 +266,7 @@ mod tests {
              }
         }
 
-        db.insert(key.clone(), crate::db::Entry::new(Value::Stream(stream), None));
+        db[0].insert(key.clone(), crate::db::Entry::new(Value::Stream(stream), None));
 
         // 2. Save RDB
         let mut encoder = RdbEncoder::new(save_path).unwrap();
@@ -265,11 +275,12 @@ mod tests {
 
         // 3. Load RDB
         let mut loader = RdbLoader::new(save_path).unwrap();
-        let loaded_db = loader.load().unwrap();
+        let loaded_db = Arc::new(vec![Db::default()]);
+        loader.load(&loaded_db).unwrap();
 
         // 4. Verify data
-        assert_eq!(loaded_db.len(), 1);
-        let entry = loaded_db.get(&key).unwrap();
+        assert_eq!(loaded_db[0].len(), 1);
+        let entry = loaded_db[0].get(&key).unwrap();
         match &entry.value {
             Value::Stream(s) => {
                 assert_eq!(s.len(), 2);

@@ -94,7 +94,8 @@ fn redis_call_handler<'lua>(
     lua: &'lua Lua,
     args: LuaMultiValue<'lua>,
     raise_error: bool,
-    db: &Db,
+    databases: &Arc<Vec<Db>>,
+    db_index: usize,
     aof: &Option<Arc<TokioMutex<Aof>>>,
     config: &Config,
     script_manager: &Arc<ScriptManager>,
@@ -120,7 +121,9 @@ fn redis_call_handler<'lua>(
     }
 
     let frame = Resp::Array(Some(resp_args));
-    let (res, _) = super::process_frame(frame, db, aof, config, script_manager);
+    // Use a local db_index to ensure SELECT in Lua doesn't affect the client connection
+    let mut local_db_index = db_index;
+    let (res, _) = super::process_frame(frame, databases, &mut local_db_index, aof, config, script_manager);
 
     if raise_error {
         if let Resp::Error(msg) = &res {
@@ -137,7 +140,8 @@ fn eval_script(
     keys_start: usize,
     keys_end: usize,
     args_start: usize,
-    db: &Db,
+    databases: &Arc<Vec<Db>>,
+    db_index: usize,
     aof: &Option<Arc<TokioMutex<Aof>>>,
     config: &Config,
     script_manager: &Arc<ScriptManager>,
@@ -174,7 +178,7 @@ fn eval_script(
     }
     globals.set("ARGV", lua_args).unwrap();
 
-    let db_clone = db.clone();
+    let databases_clone = databases.clone();
     let aof_clone = aof.clone();
     let config_clone = config.clone();
     let script_manager_clone = script_manager.clone();
@@ -184,7 +188,8 @@ fn eval_script(
                 lua,
                 args,
                 true,
-                &db_clone,
+                &databases_clone,
+                db_index,
                 &aof_clone,
                 &config_clone,
                 &script_manager_clone,
@@ -192,7 +197,7 @@ fn eval_script(
         })
         .unwrap();
 
-    let db_clone = db.clone();
+    let databases_clone = databases.clone();
     let aof_clone = aof.clone();
     let config_clone = config.clone();
     let script_manager_clone = script_manager.clone();
@@ -202,7 +207,8 @@ fn eval_script(
                 lua,
                 args,
                 false,
-                &db_clone,
+                &databases_clone,
+                db_index,
                 &aof_clone,
                 &config_clone,
                 &script_manager_clone,
@@ -224,7 +230,8 @@ fn eval_script(
 
 pub fn eval(
     items: &[Resp],
-    db: &Db,
+    databases: &Arc<Vec<Db>>,
+    db_index: usize,
     aof: &Option<Arc<TokioMutex<Aof>>>,
     config: &Config,
     script_manager: &Arc<ScriptManager>,
@@ -265,7 +272,8 @@ pub fn eval(
         keys_start,
         keys_end,
         args_start,
-        db,
+        databases,
+        db_index,
         aof,
         config,
         script_manager,
@@ -274,7 +282,8 @@ pub fn eval(
 
 pub fn evalsha(
     items: &[Resp],
-    db: &Db,
+    databases: &Arc<Vec<Db>>,
+    db_index: usize,
     aof: &Option<Arc<TokioMutex<Aof>>>,
     config: &Config,
     script_manager: &Arc<ScriptManager>,
@@ -321,7 +330,8 @@ pub fn evalsha(
         keys_start,
         keys_end,
         args_start,
-        db,
+        databases,
+        db_index,
         aof,
         config,
         script_manager,

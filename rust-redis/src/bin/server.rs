@@ -73,11 +73,16 @@ async fn run_server(
     }
 
     let listener = TcpListener::bind(&addr).await.unwrap();
-    //let db = Arc::new(db::Db::default());
-    let db = db::Db::default();
+    
+    // Initialize multiple databases
+    let mut dbs = Vec::with_capacity(cfg.databases as usize);
+    for _ in 0..cfg.databases {
+        dbs.push(db::Db::default());
+    }
+    let databases = Arc::new(dbs);
 
     if !cfg.appendonly {
-        if let Err(e) = rdb::rdb_load(&db, &cfg) {
+        if let Err(e) = rdb::rdb_load(&databases, &cfg) {
             warn!("Failed to load RDB: {}", e);
         }
     }
@@ -90,7 +95,7 @@ async fn run_server(
         let aof = aof::Aof::new(&cfg.appendfilename, cfg.appendfsync)
             .await
             .expect("failed to open AOF file");
-        aof.load(&cfg.appendfilename, &db, &cfg, &script_manager)
+        aof.load(&cfg.appendfilename, &databases, &cfg, &script_manager)
             .await
             .expect("failed to load AOF");
         Some(Arc::new(Mutex::new(aof)))
@@ -104,19 +109,21 @@ async fn run_server(
     let cfg_arc = Arc::new(cfg);
 
     // Background task to clean up expired keys
-    let db_for_cleanup = db.clone();
+    let databases_for_cleanup = databases.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
         loop {
             interval.tick().await;
-            db_for_cleanup.retain(|_, v| !v.is_expired());
+            for db in databases_for_cleanup.iter() {
+                db.retain(|_, v| !v.is_expired());
+            }
         }
     });
 
     loop {
         let (socket, addr) = listener.accept().await.unwrap();
         info!("accepted connection from {}", addr);
-        let db_cloned = db.clone();
+        let databases_cloned = databases.clone();
         let aof_cloned = aof.clone();
         let cfg_cloned = cfg_arc.clone();
         let script_manager_cloned = script_manager.clone();
@@ -125,6 +132,7 @@ async fn run_server(
             let (read_half, write_half) = socket.into_split();
             let mut reader = BufReader::new(read_half);
             let mut writer = BufWriter::new(write_half);
+            let mut db_index = 0;
 
             loop {
                 let frame = match resp::read_frame(&mut reader).await {
@@ -134,7 +142,8 @@ async fn run_server(
                 };
                 let (response, cmd_to_log) = cmd::process_frame(
                     frame,
-                    &db_cloned,
+                    &databases_cloned,
+                    &mut db_index,
                     &aof_cloned,
                     &cfg_cloned,
                     &script_manager_cloned,

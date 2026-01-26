@@ -84,6 +84,7 @@ enum Command {
     Eval,
     EvalSha,
     Script,
+    Select,
     Xadd,
     Xlen,
     Xrange,
@@ -98,11 +99,13 @@ enum Command {
 
 pub fn process_frame(
     frame: Resp,
-    db: &Db,
+    databases: &Arc<Vec<Db>>,
+    db_index: &mut usize,
     aof: &Option<Arc<Mutex<Aof>>>,
     cfg: &Config,
     script_manager: &Arc<ScriptManager>,
 ) -> (Resp, Option<Resp>) {
+    let db = &databases[*db_index];
     let mut cmd_to_log = if let Resp::Array(Some(ref items)) = frame {
         if !items.is_empty() {
             if let Some(b) = as_bytes(&items[0]) {
@@ -196,16 +199,53 @@ pub fn process_frame(
                 Command::Ttl => key::ttl(&items, db),
                 Command::Dbsize => key::dbsize(&items, db),
                 Command::Keys => key::keys(&items, db),
-                Command::Save => save::save(&items, db, cfg),
-                Command::Bgsave => save::bgsave(&items, db, cfg),
+                Command::Save => save::save(&items, databases, cfg),
+                Command::Bgsave => save::bgsave(&items, databases, cfg),
                 Command::Shutdown => {
                     std::process::exit(0);
                 }
                 Command::Command => command::command(&items),
                 Command::Config => config::config(&items, cfg),
-                Command::Eval => scripting::eval(&items, db, aof, cfg, script_manager),
-                Command::EvalSha => scripting::evalsha(&items, db, aof, cfg, script_manager),
+                Command::Eval => scripting::eval(&items, databases, *db_index, aof, cfg, script_manager),
+                Command::EvalSha => scripting::evalsha(&items, databases, *db_index, aof, cfg, script_manager),
                 Command::Script => scripting::script(&items, script_manager),
+                Command::Select => {
+                    if items.len() != 2 {
+                        Resp::Error("ERR wrong number of arguments for 'select' command".to_string())
+                    } else {
+                        match as_bytes(&items[1]) {
+                            Some(b) => match std::str::from_utf8(&b) {
+                                Ok(s) => match s.parse::<usize>() {
+                                    Ok(idx) => {
+                                        if idx < databases.len() {
+                                            *db_index = idx;
+                                            Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
+                                        } else {
+                                            cmd_to_log = None;
+                                            Resp::Error("ERR DB index is out of range".to_string())
+                                        }
+                                    }
+                                    Err(_) => {
+                                        cmd_to_log = None;
+                                        Resp::Error(
+                                            "ERR value is not an integer or out of range".to_string(),
+                                        )
+                                    }
+                                },
+                                Err(_) => {
+                                    cmd_to_log = None;
+                                    Resp::Error(
+                                        "ERR value is not an integer or out of range".to_string(),
+                                    )
+                                }
+                            },
+                            None => {
+                                cmd_to_log = None;
+                                Resp::Error("ERR value is not an integer or out of range".to_string())
+                            }
+                        }
+                    }
+                }
                 Command::Xadd => {
                     let (res, log) = stream::xadd(&items, db);
                     if let Some(l) = log {
@@ -248,9 +288,9 @@ pub fn process_frame(
                 Command::BgRewriteAof => {
                     if let Some(aof) = aof {
                         let aof = aof.clone();
-                        let db = db.clone();
+                        let databases = databases.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = aof.lock().await.rewrite(&db).await {
+                            if let Err(e) = aof.lock().await.rewrite(&databases).await {
                                 error!("Background AOF rewrite failed: {}", e);
                             }
                         });
@@ -384,6 +424,8 @@ fn command_name(raw: &[u8]) -> Command {
         Command::EvalSha
     } else if equals_ignore_ascii_case(raw, b"SCRIPT") {
         Command::Script
+    } else if equals_ignore_ascii_case(raw, b"SELECT") {
+        Command::Select
     } else if equals_ignore_ascii_case(raw, b"XADD") {
         Command::Xadd
     } else if equals_ignore_ascii_case(raw, b"XLEN") {

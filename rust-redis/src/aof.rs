@@ -73,7 +73,7 @@ impl Aof {
     pub async fn load(
         &self,
         path: &str,
-        db: &Db,
+        databases: &Arc<Vec<Db>>,
         cfg: &Config,
         script_manager: &Arc<ScriptManager>,
     ) -> io::Result<()> {
@@ -86,13 +86,14 @@ impl Aof {
 
         let file = tokio::fs::File::open(path).await?;
         let mut reader = tokio::io::BufReader::new(file);
+        let mut current_db_index = 0;
 
         loop {
             match read_frame(&mut reader).await {
                 Ok(Some(frame)) => {
                     // process_frame requires Aof option now, but during load we pass None
                     // to avoid recursive or circular dependency issues and because we don't want to log loaded commands
-                    let _ = process_frame(frame, db, &None, cfg, script_manager);
+                    let _ = process_frame(frame, databases, &mut current_db_index, &None, cfg, script_manager);
                 }
                 Ok(None) => break,
                 Err(e) => return Err(e),
@@ -101,7 +102,7 @@ impl Aof {
         Ok(())
     }
 
-    pub async fn rewrite(&mut self, db: &Db) -> io::Result<()> {
+    pub async fn rewrite(&mut self, databases: &Arc<Vec<Db>>) -> io::Result<()> {
         let temp_path = format!("{}.tmp", self.path);
         let file = OpenOptions::new()
             .write(true)
@@ -112,112 +113,125 @@ impl Aof {
         let mut writer = BufWriter::new(file);
 
         // Iterate over DB and write reconstruction commands
-        for entry in db.iter() {
-            let key = entry.key();
-            let val = entry.value();
-
-            // Check if expired
-            if val.is_expired() {
+        for (i, db) in databases.iter().enumerate() {
+            if db.is_empty() {
                 continue;
             }
 
-            let cmd = match &val.value {
-                Value::String(v) => Some(Resp::Array(Some(vec![
-                    Resp::BulkString(Some(Bytes::from("SET"))),
-                    Resp::BulkString(Some(key.clone())),
-                    Resp::BulkString(Some(v.clone())),
-                ]))),
-                Value::List(l) => {
-                    let mut args = Vec::with_capacity(2 + l.len());
-                    args.push(Resp::BulkString(Some(Bytes::from("RPUSH"))));
-                    args.push(Resp::BulkString(Some(key.clone())));
-                    for item in l {
-                        args.push(Resp::BulkString(Some(item.clone())));
-                    }
-                    Some(Resp::Array(Some(args)))
-                }
-                Value::Hash(h) => {
-                    let mut args = Vec::with_capacity(2 + h.len() * 2);
-                    args.push(Resp::BulkString(Some(Bytes::from("HMSET"))));
-                    args.push(Resp::BulkString(Some(key.clone())));
-                    for (f, v) in h {
-                        args.push(Resp::BulkString(Some(f.clone())));
-                        args.push(Resp::BulkString(Some(v.clone())));
-                    }
-                    Some(Resp::Array(Some(args)))
-                }
-                Value::Set(s) => {
-                    let mut args = Vec::with_capacity(2 + s.len());
-                    args.push(Resp::BulkString(Some(Bytes::from("SADD"))));
-                    args.push(Resp::BulkString(Some(key.clone())));
-                    for m in s {
-                        args.push(Resp::BulkString(Some(m.clone())));
-                    }
-                    Some(Resp::Array(Some(args)))
-                }
-                Value::ZSet(z) => {
-                    let mut args = Vec::with_capacity(2 + z.members.len() * 2);
-                    args.push(Resp::BulkString(Some(Bytes::from("ZADD"))));
-                    args.push(Resp::BulkString(Some(key.clone())));
-                    for (m, s) in &z.members {
-                        args.push(Resp::BulkString(Some(Bytes::from(s.to_string()))));
-                        args.push(Resp::BulkString(Some(m.clone())));
-                    }
-                    Some(Resp::Array(Some(args)))
-                }
-                Value::Stream(s) => {
-                    // 1. Reconstruct entries
-                    let start = crate::stream::StreamID::new(0, 0);
-                    let end = crate::stream::StreamID::new(u64::MAX, u64::MAX);
-                    let entries = s.range(&start, &end);
+            // Write SELECT command
+            let select_cmd = Resp::Array(Some(vec![
+                Resp::BulkString(Some(Bytes::from("SELECT"))),
+                Resp::BulkString(Some(Bytes::from(i.to_string()))),
+            ]));
+            write_resp(&mut writer, &select_cmd).await?;
 
-                    for entry in entries {
-                        let mut args = Vec::with_capacity(3 + entry.fields.len() * 2);
-                        args.push(Resp::BulkString(Some(Bytes::from("XADD"))));
+            for entry in db.iter() {
+                let key = entry.key();
+                let val = entry.value();
+
+                // Check if expired
+                if val.is_expired() {
+                    continue;
+                }
+
+                let cmd = match &val.value {
+                    Value::String(v) => Some(Resp::Array(Some(vec![
+                        Resp::BulkString(Some(Bytes::from("SET"))),
+                        Resp::BulkString(Some(key.clone())),
+                        Resp::BulkString(Some(v.clone())),
+                    ]))),
+                    Value::List(l) => {
+                        let mut args = Vec::with_capacity(2 + l.len());
+                        args.push(Resp::BulkString(Some(Bytes::from("RPUSH"))));
                         args.push(Resp::BulkString(Some(key.clone())));
-                        args.push(Resp::BulkString(Some(Bytes::from(entry.id.to_string()))));
-                        for (f, v) in entry.fields {
-                            args.push(Resp::BulkString(Some(f)));
-                            args.push(Resp::BulkString(Some(v)));
+                        for item in l {
+                            args.push(Resp::BulkString(Some(item.clone())));
                         }
-                        let cmd = Resp::Array(Some(args));
-                        write_resp(&mut writer, &cmd).await?;
+                        Some(Resp::Array(Some(args)))
                     }
-
-                    // 2. Reconstruct groups
-                    for (name, group) in &s.groups {
-                        let mut args = Vec::with_capacity(6);
-                        args.push(Resp::BulkString(Some(Bytes::from("XGROUP"))));
-                        args.push(Resp::BulkString(Some(Bytes::from("CREATE"))));
+                    Value::Hash(h) => {
+                        let mut args = Vec::with_capacity(2 + h.len() * 2);
+                        args.push(Resp::BulkString(Some(Bytes::from("HMSET"))));
                         args.push(Resp::BulkString(Some(key.clone())));
-                        args.push(Resp::BulkString(Some(Bytes::from(name.clone()))));
-                        args.push(Resp::BulkString(Some(Bytes::from(group.last_id.to_string()))));
-                        args.push(Resp::BulkString(Some(Bytes::from("MKSTREAM"))));
-                        
-                        let cmd = Resp::Array(Some(args));
-                        write_resp(&mut writer, &cmd).await?;
+                        for (f, v) in h {
+                            args.push(Resp::BulkString(Some(f.clone())));
+                            args.push(Resp::BulkString(Some(v.clone())));
+                        }
+                        Some(Resp::Array(Some(args)))
                     }
-                    None
+                    Value::Set(s) => {
+                        let mut args = Vec::with_capacity(2 + s.len());
+                        args.push(Resp::BulkString(Some(Bytes::from("SADD"))));
+                        args.push(Resp::BulkString(Some(key.clone())));
+                        for m in s {
+                            args.push(Resp::BulkString(Some(m.clone())));
+                        }
+                        Some(Resp::Array(Some(args)))
+                    }
+                    Value::ZSet(z) => {
+                        let mut args = Vec::with_capacity(2 + z.members.len() * 2);
+                        args.push(Resp::BulkString(Some(Bytes::from("ZADD"))));
+                        args.push(Resp::BulkString(Some(key.clone())));
+                        for (m, s) in &z.members {
+                            args.push(Resp::BulkString(Some(Bytes::from(s.to_string()))));
+                            args.push(Resp::BulkString(Some(m.clone())));
+                        }
+                        Some(Resp::Array(Some(args)))
+                    }
+                    Value::Stream(s) => {
+                        // 1. Reconstruct entries
+                        let start = crate::stream::StreamID::new(0, 0);
+                        let end = crate::stream::StreamID::new(u64::MAX, u64::MAX);
+                        let entries = s.range(&start, &end);
+
+                        for entry in entries {
+                            let mut args = Vec::with_capacity(3 + entry.fields.len() * 2);
+                            args.push(Resp::BulkString(Some(Bytes::from("XADD"))));
+                            args.push(Resp::BulkString(Some(key.clone())));
+                            args.push(Resp::BulkString(Some(Bytes::from(entry.id.to_string()))));
+                            for (f, v) in entry.fields {
+                                args.push(Resp::BulkString(Some(f)));
+                                args.push(Resp::BulkString(Some(v)));
+                            }
+                            let cmd = Resp::Array(Some(args));
+                            write_resp(&mut writer, &cmd).await?;
+                        }
+
+                        // 2. Reconstruct groups
+                        for (name, group) in &s.groups {
+                            let mut args = Vec::with_capacity(6);
+                            args.push(Resp::BulkString(Some(Bytes::from("XGROUP"))));
+                            args.push(Resp::BulkString(Some(Bytes::from("CREATE"))));
+                            args.push(Resp::BulkString(Some(key.clone())));
+                            args.push(Resp::BulkString(Some(Bytes::from(name.clone()))));
+                            args.push(Resp::BulkString(Some(Bytes::from(group.last_id.to_string()))));
+                            args.push(Resp::BulkString(Some(Bytes::from("MKSTREAM"))));
+                            
+                            let cmd = Resp::Array(Some(args));
+                            write_resp(&mut writer, &cmd).await?;
+                        }
+                        None
+                    }
+                    Value::HyperLogLog(hll) => Some(Resp::Array(Some(vec![
+                        Resp::BulkString(Some(Bytes::from("SET"))),
+                        Resp::BulkString(Some(key.clone())),
+                        Resp::BulkString(Some(Bytes::copy_from_slice(&hll.registers))),
+                    ]))),
+                };
+
+                if let Some(c) = cmd {
+                    write_resp(&mut writer, &c).await?;
                 }
-                Value::HyperLogLog(hll) => Some(Resp::Array(Some(vec![
-                    Resp::BulkString(Some(Bytes::from("SET"))),
-                    Resp::BulkString(Some(key.clone())),
-                    Resp::BulkString(Some(Bytes::copy_from_slice(&hll.registers))),
-                ]))),
-            };
 
-            if let Some(c) = cmd {
-                write_resp(&mut writer, &c).await?;
-            }
-
-            // Handle expiration
-            if let Some(expires_at) = val.expires_at {
-                let pexpireat_cmd = Resp::Array(Some(vec![
-                    Resp::BulkString(Some(Bytes::from("PEXPIREAT"))),
-                    Resp::BulkString(Some(key.clone())),
-                    Resp::BulkString(Some(Bytes::from(expires_at.to_string()))),
-                ]));
-                write_resp(&mut writer, &pexpireat_cmd).await?;
+                // Handle expiration
+                if let Some(expires_at) = val.expires_at {
+                    let pexpireat_cmd = Resp::Array(Some(vec![
+                        Resp::BulkString(Some(Bytes::from("PEXPIREAT"))),
+                        Resp::BulkString(Some(key.clone())),
+                        Resp::BulkString(Some(Bytes::from(expires_at.to_string()))),
+                    ]));
+                    write_resp(&mut writer, &pexpireat_cmd).await?;
+                }
             }
         }
 

@@ -20,6 +20,14 @@ const COMMAND_TABLE: &[CommandInfo] = &[
         step: 0,
     },
     CommandInfo {
+        name: "select",
+        arity: 2,
+        flags: &["fast", "loading", "stale"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
         name: "set",
         arity: -3,
         flags: &["write", "denyoom"],

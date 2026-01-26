@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 #[test]
 fn test_geo() {
-    let db = Db::default();
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
     let config = Config::default();
     let script_manager = scripting::create_script_manager();
 
@@ -24,7 +25,7 @@ fn test_geo() {
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
     
-    let (res, _) = process_frame(req, &db, &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
     match res {
         Resp::Integer(i) => assert_eq!(i, 2),
         _ => panic!("Expected Integer(2), got {:?}", res),
@@ -38,7 +39,7 @@ fn test_geo() {
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
     
-    let (res, _) = process_frame(req, &db, &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
     match res {
         Resp::BulkString(Some(b)) => {
             let s = std::str::from_utf8(&b).unwrap();
@@ -59,7 +60,7 @@ fn test_geo() {
         Resp::BulkString(Some(Bytes::from("km"))),
     ]));
     
-    let (res, _) = process_frame(req, &db, &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
     match res {
         Resp::BulkString(Some(b)) => {
             let s = std::str::from_utf8(&b).unwrap();
@@ -78,7 +79,7 @@ fn test_geo() {
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
     
-    let (res, _) = process_frame(req, &db, &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
     match res {
         Resp::Array(Some(arr)) => {
             assert_eq!(arr.len(), 2);
@@ -112,7 +113,7 @@ fn test_geo() {
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
     
-    let (res, _) = process_frame(req, &db, &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
     match res {
         Resp::Array(Some(arr)) => {
             assert_eq!(arr.len(), 2);
@@ -139,7 +140,8 @@ fn test_geo() {
 
 #[test]
 fn test_georadius() {
-    let db = Db::default();
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
     let config = Config::default();
     let script_manager = scripting::create_script_manager();
 
@@ -154,7 +156,7 @@ fn test_georadius() {
         Resp::BulkString(Some(Bytes::from("37.502669"))),
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
-    process_frame(req, &db, &None, &config, &script_manager);
+    process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
 
     // GEORADIUS Sicily 15 37 200 km WITHDIST
     let req = Resp::Array(Some(vec![
@@ -167,7 +169,7 @@ fn test_georadius() {
         Resp::BulkString(Some(Bytes::from("WITHDIST"))),
     ]));
     
-    let (res, _) = process_frame(req, &db, &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
     match res {
         Resp::Array(Some(arr)) => {
             // Should match Catania and Palermo
@@ -220,7 +222,7 @@ fn test_georadius() {
         Resp::BulkString(Some(Bytes::from("km"))),
     ]));
     
-    let (res, _) = process_frame(req, &db, &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
     match res {
         Resp::Array(Some(arr)) => {
             assert_eq!(arr.len(), 1);
@@ -234,7 +236,8 @@ fn test_georadius() {
 
 #[test]
 fn test_georadiusbymember() {
-    let db = Db::default();
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
     let config = Config::default();
     let script_manager = scripting::create_script_manager();
 
@@ -253,7 +256,7 @@ fn test_georadiusbymember() {
         Resp::BulkString(Some(Bytes::from("37.502669"))),
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
-    process_frame(req, &db, &None, &config, &script_manager);
+    process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
 
     // GEORADIUSBYMEMBER Sicily Agrigento 100 km
     // Agrigento (13.58, 37.31)
@@ -267,7 +270,7 @@ fn test_georadiusbymember() {
         Resp::BulkString(Some(Bytes::from("km"))),
     ]));
 
-    let (res, _) = process_frame(req, &db, &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
     match res {
         Resp::Array(Some(arr)) => {
             // Should match Agrigento (itself, dist 0) and Palermo (~90km)

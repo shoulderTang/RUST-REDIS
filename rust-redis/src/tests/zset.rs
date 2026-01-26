@@ -4,10 +4,12 @@ use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
 use bytes::Bytes;
+use std::sync::Arc;
 
 #[test]
 fn test_zset_ops() {
-    let db = Db::default();
+    let db = Arc::new(vec![Db::default()]);
+    let mut db_index = 0;
 
     // ZADD zset 1 m1 2 m2 -> 2
     let req = Resp::Array(Some(vec![
@@ -21,6 +23,7 @@ fn test_zset_ops() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -39,6 +42,7 @@ fn test_zset_ops() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -57,6 +61,7 @@ fn test_zset_ops() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -76,6 +81,7 @@ fn test_zset_ops() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -106,6 +112,7 @@ fn test_zset_ops() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -141,6 +148,7 @@ fn test_zset_ops() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -159,6 +167,7 @@ fn test_zset_ops() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -176,6 +185,7 @@ fn test_zset_ops() {
     let (res, _) = process_frame(
         req,
         &db,
+        &mut db_index,
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
