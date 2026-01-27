@@ -13,7 +13,7 @@ mod tests {
 
     use crate::aof::{Aof, AppendFsync};
     use crate::cmd::scripting::create_script_manager;
-    use crate::cmd::process_frame;
+    use crate::cmd::{process_frame, ConnectionContext, ServerContext};
     use crate::resp::Resp;
     use tokio::io::AsyncWriteExt; // For writing to AOF manually if needed, but Aof struct has write methods
 
@@ -77,47 +77,53 @@ mod tests {
         let path = path_str.to_str().unwrap();
 
         let db = Arc::new(vec![Db::default()]);
-        let _db_index = 0;
-        let config = Config::default();
+        let config = Arc::new(Config::default());
         let script_manager = create_script_manager();
-        
-        // Helper to run command and write log
-        let run_and_log = |cmd_args: Vec<&str>| {
-            let req = Resp::Array(Some(
-                cmd_args.iter().map(|s| Resp::BulkString(Some(Bytes::from(s.to_string())))).collect()
-            ));
-            
-            // Pass None for AOF to process_frame because we want to capture the log command manually
-            // Need to handle db_index mutable borrow in closure
-            // Since we can't easily capture mutable reference in this closure structure used repeatedly,
-            // we will just use a local db_index for the closure since these commands don't change DB.
-            // Wait, process_frame takes &mut db_index.
-            // We can just capture it. But FnMut?
-            // Let's rewrite the helper or just inline it if it's tricky.
-            // Or just use a RefCell? No, async.
-            // Let's just pass db_index explicitly or assume 0.
-            let mut _local_db_index = 0;
-            let mut authenticated = true;
-            let (_res, log_cmd) = process_frame(req, &db, &mut _local_db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
-            
-            log_cmd
+        let acl = Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
+
+        let server_ctx = ServerContext {
+            databases: db.clone(),
+            acl: acl,
+            aof: None,
+            config: config.clone(),
+            script_manager: script_manager,
+            blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         };
 
+        let mut conn_ctx = ConnectionContext {
+            db_index: 0,
+            authenticated: true,
+            current_username: "default".to_string(),
+        };
+        
+        // Helper to run command and write log
+        macro_rules! run_and_log {
+            ($args:expr, $conn:expr, $server:expr) => {
+                {
+                    let req = Resp::Array(Some(
+                        $args.iter().map(|s| Resp::BulkString(Some(Bytes::from(s.to_string())))).collect()
+                    ));
+                    let (_res, log_cmd) = process_frame(req, $conn, $server).await;
+                    log_cmd
+                }
+            }
+        }
+
         // 1. XADD
-        let log1 = run_and_log(vec!["XADD", "mystream", "*", "name", "alice"]).unwrap();
+        let log1 = run_and_log!(vec!["XADD", "mystream", "*", "name", "alice"], &mut conn_ctx, &server_ctx).unwrap();
         // Manually write log1 to file
         write_resp_to_file(path, &log1).await;
 
         // 2. XGROUP CREATE
-        let log2 = run_and_log(vec!["XGROUP", "CREATE", "mystream", "mygroup", "$", "MKSTREAM"]).unwrap();
+        let log2 = run_and_log!(vec!["XGROUP", "CREATE", "mystream", "mygroup", "$", "MKSTREAM"], &mut conn_ctx, &server_ctx).unwrap();
         write_resp_to_file(path, &log2).await;
 
         // 3. XREADGROUP (read new)
         // Need to add more data first so XREADGROUP has something to read and log
-        let log3 = run_and_log(vec!["XADD", "mystream", "*", "name", "bob"]).unwrap();
+        let log3 = run_and_log!(vec!["XADD", "mystream", "*", "name", "bob"], &mut conn_ctx, &server_ctx).unwrap();
         write_resp_to_file(path, &log3).await;
 
-        let log4 = run_and_log(vec!["XREADGROUP", "GROUP", "mygroup", "consumer1", "COUNT", "1", "STREAMS", "mystream", ">"]).unwrap();
+        let log4 = run_and_log!(vec!["XREADGROUP", "GROUP", "mygroup", "consumer1", "COUNT", "1", "STREAMS", "mystream", ">"], &mut conn_ctx, &server_ctx).unwrap();
         write_resp_to_file(path, &log4).await;
         
         // 4. XACK
@@ -129,7 +135,7 @@ mod tests {
             }
         };
         
-        let log5 = run_and_log(vec!["XACK", "mystream", "mygroup", &stream_id_bob]).unwrap();
+        let log5 = run_and_log!(vec!["XACK", "mystream", "mygroup", &stream_id_bob], &mut conn_ctx, &server_ctx).unwrap();
         write_resp_to_file(path, &log5).await;
 
         // 5. XDEL (delete alice)
@@ -142,7 +148,7 @@ mod tests {
             stream_ids[0].clone()
         };
         
-        let log6 = run_and_log(vec!["XDEL", "mystream", &alice_id]).unwrap();
+        let log6 = run_and_log!(vec!["XDEL", "mystream", &alice_id], &mut conn_ctx, &server_ctx).unwrap();
         write_resp_to_file(path, &log6).await;
 
 
@@ -151,7 +157,9 @@ mod tests {
         // We need to close the file/ensure it is flushed? write_resp_to_file opens and closes it each time.
         
         let loader = Aof::new(path, AppendFsync::No).await.unwrap();
-        loader.load(path, &new_db, &config, &script_manager).await.unwrap();
+        // create new script manager for loader
+        let script_manager_loader = create_script_manager();
+        loader.load(path, &new_db, &config, &script_manager_loader).await.unwrap();
 
         // 7. Verify
         let entry = new_db[0].get(&Bytes::from("mystream")).unwrap();

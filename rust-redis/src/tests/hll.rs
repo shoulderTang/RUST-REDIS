@@ -1,17 +1,32 @@
-use crate::cmd::process_frame;
+use crate::cmd::{process_frame, ConnectionContext, ServerContext};
 use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
 use crate::cmd::scripting;
 use bytes::Bytes;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
-#[test]
-fn test_hll() {
+#[tokio::test]
+async fn test_hll() {
     let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
     let config = Config::default();
     let script_manager = scripting::create_script_manager();
+    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
+
+    let server_ctx = ServerContext {
+        databases: db.clone(),
+        acl: acl.clone(),
+        aof: None,
+        config: Arc::new(config),
+        script_manager: script_manager,
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
+
+    let mut conn_ctx = ConnectionContext {
+        db_index: 0,
+        authenticated: true,
+        current_username: "default".to_string(),
+    };
 
     // PFADD hll1 a b c
     let req = Resp::Array(Some(vec![
@@ -21,8 +36,7 @@ fn test_hll() {
         Resp::BulkString(Some(Bytes::from("b"))),
         Resp::BulkString(Some(Bytes::from("c"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("Expected Integer(1)"),
@@ -33,8 +47,7 @@ fn test_hll() {
         Resp::BulkString(Some(Bytes::from("PFCOUNT"))),
         Resp::BulkString(Some(Bytes::from("hll1"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 3),
         _ => panic!("Expected Integer(3)"),
@@ -48,8 +61,7 @@ fn test_hll() {
         Resp::BulkString(Some(Bytes::from("d"))),
         Resp::BulkString(Some(Bytes::from("e"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     assert_eq!(res, Resp::Integer(1));
 
     // PFCOUNT hll2 -> 3
@@ -57,8 +69,7 @@ fn test_hll() {
         Resp::BulkString(Some(Bytes::from("PFCOUNT"))),
         Resp::BulkString(Some(Bytes::from("hll2"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     assert_eq!(res, Resp::Integer(3));
 
     // PFMERGE hll_merge hll1 hll2
@@ -68,8 +79,7 @@ fn test_hll() {
         Resp::BulkString(Some(Bytes::from("hll1"))),
         Resp::BulkString(Some(Bytes::from("hll2"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
         _ => panic!("Expected OK"),
@@ -80,23 +90,37 @@ fn test_hll() {
         Resp::BulkString(Some(Bytes::from("PFCOUNT"))),
         Resp::BulkString(Some(Bytes::from("hll_merge"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 5),
         _ => panic!("Expected Integer(5), got {:?}", res),
     }
 }
 
-#[test]
-fn test_hll_string_promotion() {
+#[tokio::test]
+async fn test_hll_string_promotion() {
     use crate::db::{Entry, Value};
     use crate::hll::HLL_REGISTERS;
     
     let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
     let config = Config::default();
     let script_manager = scripting::create_script_manager();
+    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
+
+    let server_ctx = ServerContext {
+        databases: db.clone(),
+        acl: acl.clone(),
+        aof: None,
+        config: Arc::new(config),
+        script_manager: script_manager,
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
+
+    let mut conn_ctx = ConnectionContext {
+        db_index: 0,
+        authenticated: true,
+        current_username: "default".to_string(),
+    };
 
     // Manually insert a String that looks like an HLL (16k zero bytes)
     let key = Bytes::from("hll_str");
@@ -108,8 +132,7 @@ fn test_hll_string_promotion() {
         Resp::BulkString(Some(Bytes::from("PFCOUNT"))),
         Resp::BulkString(Some(key.clone())),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 0),
         _ => panic!("Expected Integer(0) from string promotion"),
@@ -121,8 +144,7 @@ fn test_hll_string_promotion() {
         Resp::BulkString(Some(key.clone())),
         Resp::BulkString(Some(Bytes::from("foo"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     assert_eq!(res, Resp::Integer(1));
 
     // Verify it is now Value::HyperLogLog in DB

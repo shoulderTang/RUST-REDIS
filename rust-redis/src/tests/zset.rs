@@ -6,10 +6,24 @@ use crate::resp::Resp;
 use bytes::Bytes;
 use std::sync::Arc;
 
-#[test]
-fn test_zset_ops() {
+#[tokio::test]
+async fn test_zset_ops() {
     let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
+    let cfg = Arc::new(Config::default());
+    let acl = Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
+    let mut conn_ctx = crate::cmd::ConnectionContext {
+        db_index: 0,
+        authenticated: true,
+        current_username: "default".to_string(),
+    };
+    let server_ctx = crate::cmd::ServerContext {
+        databases: db.clone(),
+        acl: acl.clone(),
+        aof: None,
+        config: cfg.clone(),
+        script_manager: scripting::create_script_manager(),
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
 
     // ZADD zset 1 m1 2 m2 -> 2
     let req = Resp::Array(Some(vec![
@@ -20,15 +34,7 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("2"))),
         Resp::BulkString(Some(Bytes::from("m2"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 2),
         _ => panic!("expected Integer(2)"),
@@ -40,15 +46,7 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("zset"))),
         Resp::BulkString(Some(Bytes::from("m1"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("1")),
         _ => panic!("expected BulkString(1)"),
@@ -60,15 +58,7 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("zset"))),
         Resp::BulkString(Some(Bytes::from("m1"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 0),
         _ => panic!("expected Integer(0)"),
@@ -81,15 +71,7 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("0"))),
         Resp::BulkString(Some(Bytes::from("-1"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 2);
@@ -113,15 +95,7 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("-1"))),
         Resp::BulkString(Some(Bytes::from("WITHSCORES"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 4);
@@ -150,15 +124,7 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("ZCARD"))),
         Resp::BulkString(Some(Bytes::from("zset"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 2),
         _ => panic!("expected Integer(2)"),
@@ -170,15 +136,7 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("zset"))),
         Resp::BulkString(Some(Bytes::from("m1"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
@@ -189,15 +147,7 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("ZCARD"))),
         Resp::BulkString(Some(Bytes::from("zset"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),

@@ -1,3 +1,4 @@
+use super::{ConnectionContext, ServerContext};
 use crate::aof::Aof;
 use crate::conf::Config;
 use crate::db::Db;
@@ -8,7 +9,8 @@ use dashmap::DashMap;
 use mlua::prelude::*;
 use sha1::{Digest, Sha1};
 use std::sync::{Arc, Mutex, RwLock};
-use tokio::sync::Mutex as TokioMutex;
+use tokio::task::block_in_place;
+use tokio::runtime::Handle;
 
 pub struct ScriptManager {
     pub cache: DashMap<String, String>,
@@ -91,17 +93,12 @@ fn lua_to_resp(value: LuaValue) -> Resp {
     }
 }
 
-fn redis_call_handler<'lua>(
+async  fn redis_call_handler<'lua>(
     lua: &'lua Lua,
     args: LuaMultiValue<'lua>,
     raise_error: bool,
-    databases: &Arc<Vec<Db>>,
-    db_index: usize,
-    aof: &Option<Arc<TokioMutex<Aof>>>,
-    config: &Config,
-    script_manager: &Arc<ScriptManager>,
-    current_username: &str,
-    acl: &Arc<RwLock<Acl>>,
+    server_ctx: &ServerContext,
+    conn_ctx: &ConnectionContext,
 ) -> LuaResult<LuaValue<'lua>> {
     let mut resp_args = Vec::new();
     for arg in args {
@@ -125,10 +122,13 @@ fn redis_call_handler<'lua>(
 
     let frame = Resp::Array(Some(resp_args));
     // Use a local db_index to ensure SELECT in Lua doesn't affect the client connection
-    let mut local_db_index = db_index;
-    let mut authenticated = true;
-    let mut user = current_username.to_string();
-    let (res, _) = super::process_frame(frame, databases, &mut local_db_index, &mut authenticated, &mut user, acl, aof, config, script_manager);
+    let mut local_conn_ctx = ConnectionContext {
+        db_index: conn_ctx.db_index,
+        authenticated: true,
+        current_username: conn_ctx.current_username.clone(),
+    };
+    
+    let (res, _) = super::process_frame(frame, &mut local_conn_ctx, server_ctx).await;
 
     if raise_error {
         if let Resp::Error(msg) = &res {
@@ -139,19 +139,14 @@ fn redis_call_handler<'lua>(
     resp_to_lua(lua, &res)
 }
 
-fn eval_script(
+async fn eval_script(
     script: &str,
     items: &[Resp],
     keys_start: usize,
     keys_end: usize,
     args_start: usize,
-    databases: &Arc<Vec<Db>>,
-    db_index: usize,
-    aof: &Option<Arc<TokioMutex<Aof>>>,
-    config: &Config,
-    script_manager: &Arc<ScriptManager>,
-    current_username: &mut String,
-    acl: &Arc<RwLock<Acl>>,
+    conn_ctx: &mut ConnectionContext,
+    server_ctx: &ServerContext,
 ) -> Resp {
     let keys: Vec<String> = items[keys_start..keys_end]
         .iter()
@@ -169,89 +164,86 @@ fn eval_script(
         })
         .collect();
 
-    let lua_guard = script_manager.lua.lock().unwrap();
-    let lua = &*lua_guard;
+    let server_ctx = server_ctx.clone();
+    let conn_ctx = conn_ctx.clone();
+    let script = script.to_string();
 
-    let globals = lua.globals();
-    let lua_keys = lua.create_table().unwrap();
-    for (i, k) in keys.iter().enumerate() {
-        lua_keys.set(i + 1, k.as_str()).unwrap();
-    }
-    globals.set("KEYS", lua_keys).unwrap();
+    block_in_place(move || {
+        let lua_guard = server_ctx.script_manager.lua.lock().unwrap();
+        let lua = &*lua_guard;
 
-    let lua_args = lua.create_table().unwrap();
-    for (i, a) in args.iter().enumerate() {
-        lua_args.set(i + 1, a.as_str()).unwrap();
-    }
-    globals.set("ARGV", lua_args).unwrap();
+        {
+            let globals = lua.globals();
+            let lua_keys = lua.create_table().unwrap();
+            for (i, k) in keys.iter().enumerate() {
+                lua_keys.set(i + 1, k.as_str()).unwrap();
+            }
+            globals.set("KEYS", lua_keys).unwrap();
 
-    let databases_clone = databases.clone();
-    let aof_clone = aof.clone();
-    let config_clone = config.clone();
-    let script_manager_clone = script_manager.clone();
-    let user_clone = current_username.to_string();
-    let acl_clone = acl.clone();
-    let redis_call = lua
-        .create_function(move |lua, args| {
-            redis_call_handler(
-                lua,
-                args,
-                true,
-                &databases_clone,
-                db_index,
-                &aof_clone,
-                &config_clone,
-                &script_manager_clone,
-                &user_clone,
-                &acl_clone,
-            )
+            let lua_args = lua.create_table().unwrap();
+            for (i, a) in args.iter().enumerate() {
+                lua_args.set(i + 1, a.as_str()).unwrap();
+            }
+            globals.set("ARGV", lua_args).unwrap();
+
+            let server_ctx_clone = server_ctx.clone();
+            let conn_ctx_clone = conn_ctx.clone();
+            
+            let redis_call = lua
+                .create_async_function(move |lua, args| {
+                    let server_ctx = server_ctx_clone.clone();
+                    let conn_ctx = conn_ctx_clone.clone();
+                    async move {
+                        redis_call_handler(
+                            lua,
+                            args,
+                            true,
+                            &server_ctx,
+                            &conn_ctx,
+                        ).await
+                    }
+                })
+                .unwrap();
+
+            let server_ctx_clone = server_ctx.clone();
+            let conn_ctx_clone = conn_ctx.clone();
+            
+            let redis_pcall = lua
+                .create_async_function(move |lua, args| {
+                    let server_ctx = server_ctx_clone.clone();
+                    let conn_ctx = conn_ctx_clone.clone();
+                    async move {
+                        redis_call_handler(
+                            lua,
+                            args,
+                            false,
+                            &server_ctx,
+                            &conn_ctx,
+                        ).await
+                    }
+                })
+                .unwrap();
+
+            let redis_table = lua.create_table().unwrap();
+            redis_table.set("call", redis_call).unwrap();
+            redis_table.set("pcall", redis_pcall).unwrap();
+
+            globals.set("redis", redis_table).unwrap();
+        }
+
+        Handle::current().block_on(async move {
+            match lua.load(&script).eval_async::<LuaValue>().await {
+                Ok(val) => lua_to_resp(val),
+                Err(e) => Resp::Error(format!("ERR error running script: {}", e)),
+            }
         })
-        .unwrap();
-
-    let databases_clone = databases.clone();
-    let aof_clone = aof.clone();
-    let config_clone = config.clone();
-    let script_manager_clone = script_manager.clone();
-    let user_clone = current_username.to_string();
-    let acl_clone = acl.clone();
-    let redis_pcall = lua
-        .create_function(move |lua, args| {
-            redis_call_handler(
-                lua,
-                args,
-                false,
-                &databases_clone,
-                db_index,
-                &aof_clone,
-                &config_clone,
-                &script_manager_clone,
-                &user_clone,
-                &acl_clone,
-            )
-        })
-        .unwrap();
-
-    let redis_table = lua.create_table().unwrap();
-    redis_table.set("call", redis_call).unwrap();
-    redis_table.set("pcall", redis_pcall).unwrap();
-
-    globals.set("redis", redis_table).unwrap();
-
-    match lua.load(script).eval::<LuaValue>() {
-        Ok(val) => lua_to_resp(val),
-        Err(e) => Resp::Error(format!("ERR error running script: {}", e)),
-    }
+    })
 }
 
-pub fn eval(
+pub async fn eval(
     items: &[Resp],
-    databases: &Arc<Vec<Db>>,
-    db_index: usize,
-    aof: &Option<Arc<TokioMutex<Aof>>>,
-    config: &Config,
-    script_manager: &Arc<ScriptManager>,
-    current_username: &mut String,
-    acl: &Arc<RwLock<Acl>>,
+    conn_ctx: &mut ConnectionContext,
+    server_ctx: &ServerContext,
 ) -> (Resp, Option<Resp>) {
     if items.len() < 3 {
         return (Resp::Error("ERR wrong number of arguments for 'eval' command".to_string()), None);
@@ -284,26 +276,16 @@ pub fn eval(
         keys_start,
         keys_end,
         args_start,
-        databases,
-        db_index,
-        aof,
-        config,
-        script_manager,
-        current_username,
-        acl,
-    );
+        conn_ctx,
+        server_ctx,
+    ).await;
     (res, None)
 }
 
-pub fn evalsha(
+pub async fn evalsha(
     items: &[Resp],
-    databases: &Arc<Vec<Db>>,
-    db_index: usize,
-    aof: &Option<Arc<TokioMutex<Aof>>>,
-    config: &Config,
-    script_manager: &Arc<ScriptManager>,
-    current_username: &mut String,
-    acl: &Arc<RwLock<Acl>>,
+    conn_ctx: &mut ConnectionContext,
+    server_ctx: &ServerContext,
 ) -> (Resp, Option<Resp>) {
     if items.len() < 3 {
         return (Resp::Error("ERR wrong number of arguments for 'evalsha' command".to_string()), None);
@@ -314,7 +296,7 @@ pub fn evalsha(
         _ => return (Resp::Error("ERR invalid sha1".to_string()), None),
     };
 
-    let script = if let Some(s) = script_manager.cache.get(sha1) {
+    let script = if let Some(s) = server_ctx.script_manager.cache.get(sha1) {
         s.clone()
     } else {
         return (Resp::Error("NOSCRIPT No matching script. Please use EVAL.".to_string()), None);
@@ -342,14 +324,9 @@ pub fn evalsha(
         keys_start,
         keys_end,
         args_start,
-        databases,
-        db_index,
-        aof,
-        config,
-        script_manager,
-        current_username,
-        acl,
-    );
+        conn_ctx,
+        server_ctx,
+    ).await;
     (res, None)
 }
 

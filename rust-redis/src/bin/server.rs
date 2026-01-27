@@ -138,6 +138,15 @@ async fn run_server(
 
     let cfg_arc = Arc::new(cfg);
 
+    let server_ctx = cmd::ServerContext {
+        databases: databases.clone(),
+        acl: acl.clone(),
+        aof: aof.clone(),
+        config: cfg_arc.clone(),
+        script_manager: script_manager.clone(),
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
+
     // Background task to clean up expired keys
     let databases_for_cleanup = databases.clone();
     tokio::spawn(async move {
@@ -153,19 +162,13 @@ async fn run_server(
     loop {
         let (socket, addr) = listener.accept().await.unwrap();
         info!("accepted connection from {}", addr);
-        let databases_cloned = databases.clone();
-        let aof_cloned = aof.clone();
-        let cfg_cloned = cfg_arc.clone();
-        let script_manager_cloned = script_manager.clone();
-        let acl_cloned = acl.clone();
+        let server_ctx_cloned: cmd::ServerContext = server_ctx.clone();
 
         tokio::spawn(async move {
             let (read_half, write_half) = socket.into_split();
             let mut reader = BufReader::new(read_half);
             let mut writer = BufWriter::new(write_half);
-            let mut db_index = 0;
-            let mut authenticated = false;
-            let mut current_username = "default".to_string();
+            let mut conn_ctx = cmd::ConnectionContext::new();
 
             loop {
                 let frame = match resp::read_frame(&mut reader).await {
@@ -175,22 +178,16 @@ async fn run_server(
                 };
                 let (response, cmd_to_log) = cmd::process_frame(
                     frame,
-                    &databases_cloned,
-                    &mut db_index,
-                    &mut authenticated,
-                    &mut current_username,
-                    &acl_cloned,
-                    &aof_cloned,
-                    &cfg_cloned,
-                    &script_manager_cloned,
-                );
+                    &mut conn_ctx,
+                    &server_ctx_cloned,
+                ).await;
 
                 if resp::write_frame(&mut writer, &response).await.is_err() {
                     return;
                 }
 
                 if let Some(cmd) = cmd_to_log {
-                    if let Some(aof) = &aof_cloned {
+                    if let Some(aof) = &server_ctx_cloned.aof {
                         if let Err(e) = aof.lock().await.append(&cmd).await {
                             error!("failed to append to AOF: {}", e);
                         }

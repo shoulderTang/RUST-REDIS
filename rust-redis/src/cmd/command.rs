@@ -189,6 +189,22 @@ const COMMAND_TABLE: &[CommandInfo] = &[
         step: 1,
     },
     CommandInfo {
+        name: "blpop",
+        arity: -3,
+        flags: &["write", "noscript"],
+        first_key: 1,
+        last_key: -2,
+        step: 1,
+    },
+    CommandInfo {
+        name: "brpop",
+        arity: -3,
+        flags: &["write", "noscript"],
+        first_key: 1,
+        last_key: -2,
+        step: 1,
+    },
+    CommandInfo {
         name: "llen",
         arity: 2,
         flags: &["readonly", "fast"],

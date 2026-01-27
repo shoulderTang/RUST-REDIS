@@ -93,10 +93,27 @@ impl Aof {
                 Ok(Some(frame)) => {
                     // process_frame requires Aof option now, but during load we pass None
                     // to avoid recursive or circular dependency issues and because we don't want to log loaded commands
-                    let mut authenticated = true;
-                    let mut current_username = "default".to_string();
+                    
+                    let mut conn_ctx = crate::cmd::ConnectionContext {
+                        db_index: current_db_index,
+                        authenticated: true,
+                        current_username: "default".to_string(),
+                    };
+
                     let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
-                    let _ = process_frame(frame, databases, &mut current_db_index, &mut authenticated, &mut current_username, &acl, &None, cfg, script_manager);
+                    
+                    let server_ctx = crate::cmd::ServerContext {
+                        databases: databases.clone(),
+                        acl: acl,
+                        aof: None,
+                        config: std::sync::Arc::new(cfg.clone()),
+                        script_manager: script_manager.clone(),
+                        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+                    };
+
+                    let _ = process_frame(frame, &mut conn_ctx, &server_ctx).await;
+                    
+                    current_db_index = conn_ctx.db_index;
                 }
                 Ok(None) => break,
                 Err(e) => return Err(e),

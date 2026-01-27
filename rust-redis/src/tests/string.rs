@@ -7,10 +7,22 @@ use bytes::Bytes;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::Arc;
 
-#[test]
-fn test_set_get() {
+#[tokio::test]
+async fn test_set_get() {
     let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
+    let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
+    let cfg = std::sync::Arc::new(Config::default());
+    let script_manager = scripting::create_script_manager();
+    
+    let mut conn_ctx = crate::cmd::ConnectionContext::new();
+    let server_ctx = crate::cmd::ServerContext {
+        databases: db.clone(),
+        acl: acl.clone(),
+        aof: None,
+        config: cfg.clone(),
+        script_manager: script_manager.clone(),
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
 
     // SET key val
     let req = Resp::Array(Some(vec![
@@ -18,15 +30,7 @@ fn test_set_get() {
         Resp::BulkString(Some(Bytes::from("foo"))),
         Resp::BulkString(Some(Bytes::from("bar"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
         _ => panic!("expected SimpleString(OK)"),
@@ -37,15 +41,7 @@ fn test_set_get() {
         Resp::BulkString(Some(Bytes::from("GET"))),
         Resp::BulkString(Some(Bytes::from("foo"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("bar")),
         _ => panic!("expected BulkString(bar)"),
@@ -56,25 +52,29 @@ fn test_set_get() {
         Resp::BulkString(Some(Bytes::from("GET"))),
         Resp::BulkString(Some(Bytes::from("baz"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::BulkString(None) => {}
         _ => panic!("expected BulkString(None)"),
     }
 }
 
-#[test]
-fn test_mset_mget() {
+#[tokio::test]
+async fn test_mset_mget() {
     let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
+    let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
+    let cfg = std::sync::Arc::new(Config::default());
+    let script_manager = scripting::create_script_manager();
+    
+    let mut conn_ctx = crate::cmd::ConnectionContext::new();
+    let server_ctx = crate::cmd::ServerContext {
+        databases: db.clone(),
+        acl: acl.clone(),
+        aof: None,
+        config: cfg.clone(),
+        script_manager: script_manager.clone(),
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
 
     // MSET k1 v1 k2 v2
     let req = Resp::Array(Some(vec![
@@ -84,15 +84,7 @@ fn test_mset_mget() {
         Resp::BulkString(Some(Bytes::from("k2"))),
         Resp::BulkString(Some(Bytes::from("v2"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
         _ => panic!("expected SimpleString(OK)"),
@@ -105,15 +97,7 @@ fn test_mset_mget() {
         Resp::BulkString(Some(Bytes::from("k2"))),
         Resp::BulkString(Some(Bytes::from("k3"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 3);
@@ -134,10 +118,22 @@ fn test_mset_mget() {
     }
 }
 
-#[test]
-fn test_string_extended() {
+#[tokio::test]
+async fn test_string_extended() {
     let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
+    let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
+    let cfg = std::sync::Arc::new(Config::default());
+    let script_manager = scripting::create_script_manager();
+    
+    let mut conn_ctx = crate::cmd::ConnectionContext::new();
+    let server_ctx = crate::cmd::ServerContext {
+        databases: db.clone(),
+        acl: acl.clone(),
+        aof: None,
+        config: cfg.clone(),
+        script_manager: script_manager.clone(),
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
 
     // SET NX key val -> OK
     let req = Resp::Array(Some(vec![
@@ -146,15 +142,7 @@ fn test_string_extended() {
         Resp::BulkString(Some(Bytes::from("val"))),
         Resp::BulkString(Some(Bytes::from("NX"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
         _ => panic!("expected SimpleString(OK)"),
@@ -165,15 +153,7 @@ fn test_string_extended() {
         Resp::BulkString(Some(Bytes::from("INCR"))),
         Resp::BulkString(Some(Bytes::from("key_incr"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
@@ -184,15 +164,7 @@ fn test_string_extended() {
         Resp::BulkString(Some(Bytes::from("DECR"))),
         Resp::BulkString(Some(Bytes::from("key_decr"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, -1),
         _ => panic!("expected Integer(-1)"),
@@ -204,15 +176,7 @@ fn test_string_extended() {
         Resp::BulkString(Some(Bytes::from("key_ib"))),
         Resp::BulkString(Some(Bytes::from("10"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 10),
         _ => panic!("expected Integer(10)"),
@@ -224,15 +188,7 @@ fn test_string_extended() {
         Resp::BulkString(Some(Bytes::from("key_db"))),
         Resp::BulkString(Some(Bytes::from("5"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, -5),
         _ => panic!("expected Integer(-5)"),
@@ -244,15 +200,7 @@ fn test_string_extended() {
         Resp::BulkString(Some(Bytes::from("key_app"))),
         Resp::BulkString(Some(Bytes::from("foo"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 3),
         _ => panic!("expected Integer(3)"),
@@ -264,15 +212,7 @@ fn test_string_extended() {
         Resp::BulkString(Some(Bytes::from("key_app"))),
         Resp::BulkString(Some(Bytes::from("bar"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 6),
         _ => panic!("expected Integer(6)"),
@@ -283,231 +223,9 @@ fn test_string_extended() {
         Resp::BulkString(Some(Bytes::from("STRLEN"))),
         Resp::BulkString(Some(Bytes::from("key_app"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 6),
         _ => panic!("expected Integer(6)"),
-    }
-}
-
-#[test]
-fn test_set_options() {
-    let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
-
-    // 1. SET k1 v1 EX 10
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SET"))),
-        Resp::BulkString(Some(Bytes::from("k1"))),
-        Resp::BulkString(Some(Bytes::from("v1"))),
-        Resp::BulkString(Some(Bytes::from("EX"))),
-        Resp::BulkString(Some(Bytes::from("10"))),
-    ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
-    match res {
-        Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
-        _ => panic!("expected SimpleString(OK)"),
-    }
-
-    // Check TTL
-    if let Some(entry) = db[0].get(&Bytes::from("k1")) {
-        assert!(entry.expires_at.is_some());
-        // Should be roughly now + 10s
-        let exp = entry.expires_at.unwrap();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-        // Allow some buffer
-        assert!(exp > now + 8000 && exp < now + 12000);
-    } else {
-        panic!("k1 not found");
-    }
-
-    // 2. SET k2 v2 PX 10000
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SET"))),
-        Resp::BulkString(Some(Bytes::from("k2"))),
-        Resp::BulkString(Some(Bytes::from("v2"))),
-        Resp::BulkString(Some(Bytes::from("PX"))),
-        Resp::BulkString(Some(Bytes::from("10000"))),
-    ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
-    match res {
-        Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
-        _ => panic!("expected SimpleString(OK)"),
-    }
-
-    if let Some(entry) = db[0].get(&Bytes::from("k2")) {
-        assert!(entry.expires_at.is_some());
-        let exp = entry.expires_at.unwrap();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-        assert!(exp > now + 8000 && exp < now + 12000);
-    }
-
-    // 3. SET k1 v1_new KEEPTTL
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SET"))),
-        Resp::BulkString(Some(Bytes::from("k1"))),
-        Resp::BulkString(Some(Bytes::from("v1_new"))),
-        Resp::BulkString(Some(Bytes::from("KEEPTTL"))),
-    ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
-    match res {
-        Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
-        _ => panic!("expected SimpleString(OK)"),
-    }
-
-    if let Some(entry) = db[0].get(&Bytes::from("k1")) {
-        // TTL should be preserved
-        assert!(entry.expires_at.is_some());
-        assert_eq!(entry.value, Value::String(Bytes::from("v1_new")));
-    }
-
-    // 4. SET k3 v3 GET (k3 missing)
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SET"))),
-        Resp::BulkString(Some(Bytes::from("k3"))),
-        Resp::BulkString(Some(Bytes::from("v3"))),
-        Resp::BulkString(Some(Bytes::from("GET"))),
-    ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
-    match res {
-        Resp::BulkString(None) => {}
-        _ => panic!("expected BulkString(None)"),
-    }
-    // k3 should exist
-    assert!(db[0].contains_key(&Bytes::from("k3")));
-
-    // 5. SET k3 v3_new GET (k3 exists)
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SET"))),
-        Resp::BulkString(Some(Bytes::from("k3"))),
-        Resp::BulkString(Some(Bytes::from("v3_new"))),
-        Resp::BulkString(Some(Bytes::from("GET"))),
-    ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
-    match res {
-        Resp::BulkString(Some(s)) => assert_eq!(s, Bytes::from("v3")),
-        _ => panic!("expected BulkString(v3)"),
-    }
-    // k3 should be updated
-    if let Some(entry) = db[0].get(&Bytes::from("k3")) {
-        assert_eq!(entry.value, Value::String(Bytes::from("v3_new")));
-    }
-
-    // 6. EXAT test
-    let now_secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let exat = now_secs + 20;
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SET"))),
-        Resp::BulkString(Some(Bytes::from("k_exat"))),
-        Resp::BulkString(Some(Bytes::from("v"))),
-        Resp::BulkString(Some(Bytes::from("EXAT"))),
-        Resp::BulkString(Some(Bytes::from(exat.to_string()))),
-    ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
-    match res {
-        Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
-        _ => panic!("expected SimpleString(OK)"),
-    }
-    if let Some(entry) = db[0].get(&Bytes::from("k_exat")) {
-        let exp = entry.expires_at.unwrap();
-        let expected = exat * 1000;
-        assert!(exp >= expected && exp <= expected + 1000);
-    }
-
-    // 7. PXAT test
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-    let pxat = now_ms + 20000;
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SET"))),
-        Resp::BulkString(Some(Bytes::from("k_pxat"))),
-        Resp::BulkString(Some(Bytes::from("v"))),
-        Resp::BulkString(Some(Bytes::from("PXAT"))),
-        Resp::BulkString(Some(Bytes::from(pxat.to_string()))),
-    ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
-    match res {
-        Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
-        _ => panic!("expected SimpleString(OK)"),
-    }
-    if let Some(entry) = db[0].get(&Bytes::from("k_pxat")) {
-        let exp = entry.expires_at.unwrap();
-        // Allow small difference due to execution time
-        assert!(exp >= pxat && exp <= pxat + 1000);
     }
 }

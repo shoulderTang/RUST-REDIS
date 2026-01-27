@@ -6,12 +6,22 @@ use crate::conf::Config;
 use bytes::Bytes;
 use std::sync::Arc;
 
-#[test]
-fn test_geo() {
+#[tokio::test]
+async fn test_geo() {
     let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
-    let config = Config::default();
+    let config = Arc::new(Config::default());
     let script_manager = scripting::create_script_manager();
+    let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
+
+    let mut conn_ctx = crate::cmd::ConnectionContext::new();
+    let server_ctx = crate::cmd::ServerContext {
+        databases: db.clone(),
+        acl: acl.clone(),
+        aof: None,
+        config: config.clone(),
+        script_manager: script_manager.clone(),
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
 
     // GEOADD Sicily 13.361389 38.115556 "Palermo" 15.087269 37.502669 "Catania"
     let req = Resp::Array(Some(vec![
@@ -25,8 +35,7 @@ fn test_geo() {
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
     
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 2),
         _ => panic!("Expected Integer(2), got {:?}", res),
@@ -40,8 +49,7 @@ fn test_geo() {
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
     
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::BulkString(Some(b)) => {
             let s = std::str::from_utf8(&b).unwrap();
@@ -62,8 +70,7 @@ fn test_geo() {
         Resp::BulkString(Some(Bytes::from("km"))),
     ]));
     
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::BulkString(Some(b)) => {
             let s = std::str::from_utf8(&b).unwrap();
@@ -82,8 +89,7 @@ fn test_geo() {
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
     
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(arr)) => {
             assert_eq!(arr.len(), 2);
@@ -117,8 +123,7 @@ fn test_geo() {
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
     
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(arr)) => {
             assert_eq!(arr.len(), 2);
@@ -143,12 +148,22 @@ fn test_geo() {
     }
 }
 
-#[test]
-fn test_georadius() {
+#[tokio::test]
+async fn test_georadius() {
     let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
-    let config = Config::default();
+    let config = Arc::new(Config::default());
     let script_manager = scripting::create_script_manager();
+    let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
+
+    let mut conn_ctx = crate::cmd::ConnectionContext::new();
+    let server_ctx = crate::cmd::ServerContext {
+        databases: db.clone(),
+        acl: acl.clone(),
+        aof: None,
+        config: config.clone(),
+        script_manager: script_manager.clone(),
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
 
     // GEOADD Sicily 13.361389 38.115556 "Palermo" 15.087269 37.502669 "Catania"
     let req = Resp::Array(Some(vec![
@@ -161,8 +176,7 @@ fn test_georadius() {
         Resp::BulkString(Some(Bytes::from("37.502669"))),
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
-    let mut authenticated = true;
-    process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    process_frame(req, &mut conn_ctx, &server_ctx).await;
 
     // GEORADIUS Sicily 15 37 200 km WITHDIST
     let req = Resp::Array(Some(vec![
@@ -175,8 +189,7 @@ fn test_georadius() {
         Resp::BulkString(Some(Bytes::from("WITHDIST"))),
     ]));
     
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(arr)) => {
             // Should match Catania and Palermo
@@ -229,8 +242,7 @@ fn test_georadius() {
         Resp::BulkString(Some(Bytes::from("km"))),
     ]));
     
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(arr)) => {
             assert_eq!(arr.len(), 1);
@@ -242,12 +254,22 @@ fn test_georadius() {
     }
 }
 
-#[test]
-fn test_georadiusbymember() {
+#[tokio::test]
+async fn test_georadiusbymember() {
     let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
-    let config = Config::default();
+    let config = Arc::new(Config::default());
     let script_manager = scripting::create_script_manager();
+    let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
+
+    let mut conn_ctx = crate::cmd::ConnectionContext::new();
+    let server_ctx = crate::cmd::ServerContext {
+        databases: db.clone(),
+        acl: acl.clone(),
+        aof: None,
+        config: config.clone(),
+        script_manager: script_manager.clone(),
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
 
     // GEOADD Sicily 13.583333 37.316667 "Agrigento"
     // GEOADD Sicily 13.361389 38.115556 "Palermo" 15.087269 37.502669 "Catania"
@@ -264,8 +286,7 @@ fn test_georadiusbymember() {
         Resp::BulkString(Some(Bytes::from("37.502669"))),
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
-    let mut authenticated = true;
-    process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    process_frame(req, &mut conn_ctx, &server_ctx).await;
 
     // GEORADIUSBYMEMBER Sicily Agrigento 100 km
     // Agrigento (13.58, 37.31)
@@ -279,8 +300,7 @@ fn test_georadiusbymember() {
         Resp::BulkString(Some(Bytes::from("km"))),
     ]));
 
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(arr)) => {
             // Should match Agrigento (itself, dist 0) and Palermo (~90km)

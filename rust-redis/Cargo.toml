@@ -12,7 +12,7 @@ tracing-appender = "0.2.4"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 ahash = "0.8"
 dashmap = "6.1"
-mlua = { version = "0.9", features = ["lua54", "vendored", "send"] }
+mlua = { version = "0.9", features = ["lua54", "vendored", "send", "async"] }
 sha1 = "0.10.6"
 hex = "0.4.3"
 

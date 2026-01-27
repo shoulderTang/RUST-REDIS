@@ -1,15 +1,32 @@
-use crate::cmd::process_frame;
+use crate::cmd::{process_frame, ConnectionContext, ServerContext};
 use crate::cmd::scripting;
 use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
 use bytes::Bytes;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
-#[test]
-fn test_keys() {
+#[tokio::test]
+async fn test_keys() {
     let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
+    let config = Config::default();
+    let script_manager = scripting::create_script_manager();
+    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
+
+    let server_ctx = ServerContext {
+        databases: db.clone(),
+        acl: acl,
+        aof: None,
+        config: Arc::new(config),
+        script_manager: script_manager,
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
+
+    let mut conn_ctx = ConnectionContext {
+        db_index: 0,
+        authenticated: true,
+        current_username: "default".to_string(),
+    };
 
     // Setup keys
     let req = Resp::Array(Some(vec![
@@ -17,60 +34,28 @@ fn test_keys() {
         Resp::BulkString(Some(Bytes::from("key1"))),
         Resp::BulkString(Some(Bytes::from("val"))),
     ]));
-    let mut authenticated = true;
-    process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    process_frame(req, &mut conn_ctx, &server_ctx).await;
 
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("SET"))),
         Resp::BulkString(Some(Bytes::from("key2"))),
         Resp::BulkString(Some(Bytes::from("val"))),
     ]));
-    let mut authenticated = true;
-    process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    process_frame(req, &mut conn_ctx, &server_ctx).await;
 
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("SET"))),
         Resp::BulkString(Some(Bytes::from("other"))),
         Resp::BulkString(Some(Bytes::from("val"))),
     ]));
-    let mut authenticated = true;
-    process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    process_frame(req, &mut conn_ctx, &server_ctx).await;
 
     // KEYS *
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("KEYS"))),
         Resp::BulkString(Some(Bytes::from("*"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 3);
@@ -83,15 +68,7 @@ fn test_keys() {
         Resp::BulkString(Some(Bytes::from("KEYS"))),
         Resp::BulkString(Some(Bytes::from("key*"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 2);
@@ -104,15 +81,7 @@ fn test_keys() {
         Resp::BulkString(Some(Bytes::from("KEYS"))),
         Resp::BulkString(Some(Bytes::from("?ey?"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 2);
@@ -121,10 +90,27 @@ fn test_keys() {
     }
 }
 
-#[test]
-fn test_expire_ttl() {
+#[tokio::test]
+async fn test_expire_ttl() {
     let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
+    let config = Config::default();
+    let script_manager = scripting::create_script_manager();
+    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
+
+    let server_ctx = ServerContext {
+        databases: db.clone(),
+        acl: acl,
+        aof: None,
+        config: Arc::new(config),
+        script_manager: script_manager,
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
+
+    let mut conn_ctx = ConnectionContext {
+        db_index: 0,
+        authenticated: true,
+        current_username: "default".to_string(),
+    };
 
     // SET key val
     let req = Resp::Array(Some(vec![
@@ -132,30 +118,14 @@ fn test_expire_ttl() {
         Resp::BulkString(Some(Bytes::from("foo"))),
         Resp::BulkString(Some(Bytes::from("bar"))),
     ]));
-    let mut authenticated = true;
-    process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    process_frame(req, &mut conn_ctx, &server_ctx).await;
 
     // TTL key -> -1
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("TTL"))),
         Resp::BulkString(Some(Bytes::from("foo"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, -1),
         _ => panic!("expected Integer(-1)"),
@@ -167,15 +137,7 @@ fn test_expire_ttl() {
         Resp::BulkString(Some(Bytes::from("foo"))),
         Resp::BulkString(Some(Bytes::from("1"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
@@ -186,37 +148,21 @@ fn test_expire_ttl() {
         Resp::BulkString(Some(Bytes::from("TTL"))),
         Resp::BulkString(Some(Bytes::from("foo"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert!(i >= 0 && i <= 1),
         _ => panic!("expected Integer(>=0)"),
     }
 
     // Sleep 1.1s
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
 
     // GET key -> Nil
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("GET"))),
         Resp::BulkString(Some(Bytes::from("foo"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::BulkString(None) => {}
         _ => panic!("expected BulkString(None)"),
@@ -227,37 +173,38 @@ fn test_expire_ttl() {
         Resp::BulkString(Some(Bytes::from("TTL"))),
         Resp::BulkString(Some(Bytes::from("foo"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, -2),
         _ => panic!("expected Integer(-2)"),
     }
 }
 
-#[test]
-fn test_dbsize() {
+#[tokio::test]
+async fn test_dbsize() {
     let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
+    let config = Config::default();
+    let script_manager = scripting::create_script_manager();
+    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
+
+    let server_ctx = ServerContext {
+        databases: db.clone(),
+        acl: acl,
+        aof: None,
+        config: Arc::new(config),
+        script_manager: script_manager,
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
+
+    let mut conn_ctx = ConnectionContext {
+        db_index: 0,
+        authenticated: true,
+        current_username: "default".to_string(),
+    };
 
     // DBSIZE -> 0
     let req = Resp::Array(Some(vec![Resp::BulkString(Some(Bytes::from("DBSIZE")))]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 0),
         _ => panic!("expected Integer(0)"),
@@ -269,37 +216,38 @@ fn test_dbsize() {
         Resp::BulkString(Some(Bytes::from("foo"))),
         Resp::BulkString(Some(Bytes::from("bar"))),
     ]));
-    let mut authenticated = true;
-    process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    process_frame(req, &mut conn_ctx, &server_ctx).await;
 
     // DBSIZE -> 1
     let req = Resp::Array(Some(vec![Resp::BulkString(Some(Bytes::from("DBSIZE")))]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
     }
 }
 
-#[test]
-fn test_del() {
+#[tokio::test]
+async fn test_del() {
     let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
+    let config = Config::default();
+    let script_manager = scripting::create_script_manager();
+    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
+
+    let server_ctx = ServerContext {
+        databases: db.clone(),
+        acl: acl,
+        aof: None,
+        config: Arc::new(config),
+        script_manager: script_manager,
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
+
+    let mut conn_ctx = ConnectionContext {
+        db_index: 0,
+        authenticated: true,
+        current_username: "default".to_string(),
+    };
 
     // Setup keys
     let req = Resp::Array(Some(vec![
@@ -311,15 +259,7 @@ fn test_del() {
         Resp::BulkString(Some(Bytes::from("k3"))),
         Resp::BulkString(Some(Bytes::from("v3"))),
     ]));
-    let mut authenticated = true;
-    process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    process_frame(req, &mut conn_ctx, &server_ctx).await;
 
     // DEL k1 k2 k_missing
     let req = Resp::Array(Some(vec![
@@ -328,15 +268,7 @@ fn test_del() {
         Resp::BulkString(Some(Bytes::from("k2"))),
         Resp::BulkString(Some(Bytes::from("k_missing"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
 
     match res {
         Resp::Integer(i) => assert_eq!(i, 2),

@@ -1,17 +1,32 @@
-use crate::cmd::process_frame;
+use crate::cmd::{process_frame, ConnectionContext, ServerContext};
 use crate::aof::AppendFsync;
 use crate::conf::Config;
 use crate::db::{Db, Value};
 use bytes::Bytes;
 use crate::cmd::scripting;
 use crate::resp::Resp;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
-#[test]
-fn test_eval() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_eval() {
     let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
     let config = Config::default();
+    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
+
+    let server_ctx = ServerContext {
+        databases: db.clone(),
+        acl: acl.clone(),
+        aof: None,
+        config: Arc::new(config),
+        script_manager: scripting::create_script_manager(),
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
+
+    let mut conn_ctx = ConnectionContext {
+        db_index: 0,
+        authenticated: true,
+        current_username: "default".to_string(),
+    };
 
     // Script with keys and redis.call
     let req = Resp::Array(Some(vec![
@@ -19,15 +34,11 @@ fn test_eval() {
         Resp::BulkString(Some(Bytes::from("k1"))),
         Resp::BulkString(Some(Bytes::from("v1"))),
     ]));
-    let mut authenticated = true;
     process_frame(
         req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &config,
-        &scripting::create_script_manager(),
-    );
+        &mut conn_ctx,
+        &server_ctx,
+    ).await;
 
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("EVAL"))),
@@ -35,26 +46,37 @@ fn test_eval() {
         Resp::BulkString(Some(Bytes::from("1"))),
         Resp::BulkString(Some(Bytes::from("k1"))),
     ]));
-    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &config,
-        &scripting::create_script_manager(),
-    );
+        &mut conn_ctx,
+        &server_ctx,
+    ).await;
     match res {
         Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("v1")),
         _ => panic!("expected BulkString(v1)"),
     }
 }
 
-#[test]
-fn test_eval_pcall() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_eval_pcall() {
     let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
     let config = Config::default();
+    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
+
+    let server_ctx = ServerContext {
+        databases: db.clone(),
+        acl: acl.clone(),
+        aof: None,
+        config: Arc::new(config),
+        script_manager: scripting::create_script_manager(),
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
+
+    let mut conn_ctx = ConnectionContext {
+        db_index: 0,
+        authenticated: true,
+        current_username: "default".to_string(),
+    };
 
     // redis.call with error -> raises Lua error
     let req = Resp::Array(Some(vec![
@@ -62,15 +84,11 @@ fn test_eval_pcall() {
         Resp::BulkString(Some(Bytes::from("return redis.call('UNKNOWN_CMD')"))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
-    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &config,
-        &scripting::create_script_manager(),
-    );
+        &mut conn_ctx,
+        &server_ctx,
+    ).await;
     match res {
         Resp::Error(e) => assert!(e.contains("ERR error running script")),
         _ => panic!("expected Error, got {:?}", res),
@@ -82,27 +100,37 @@ fn test_eval_pcall() {
         Resp::BulkString(Some(Bytes::from("return redis.pcall('UNKNOWN_CMD')"))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
-    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
-        &db,
-        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        &None,
-        &config,
-        &scripting::create_script_manager(),
-    );
+        &mut conn_ctx,
+        &server_ctx,
+    ).await;
     match res {
         Resp::Error(e) => assert_eq!(e, "ERR unknown command"),
         _ => panic!("expected Error, got {:?}", res),
     }
 }
 
-#[test]
-fn test_script_commands() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_script_commands() {
     let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
     let config = Config::default();
-    let script_manager = scripting::create_script_manager();
+    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
+
+    let server_ctx = ServerContext {
+        databases: db.clone(),
+        acl: acl.clone(),
+        aof: None,
+        config: Arc::new(config),
+        script_manager: scripting::create_script_manager(),
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
+
+    let mut conn_ctx = ConnectionContext {
+        db_index: 0,
+        authenticated: true,
+        current_username: "default".to_string(),
+    };
 
     // SCRIPT LOAD "return 'hello'"
     let script = "return 'hello'";
@@ -111,8 +139,7 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from("LOAD"))),
         Resp::BulkString(Some(Bytes::from(script))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     let sha1 = match res {
         Resp::BulkString(Some(b)) => {
             let s = std::str::from_utf8(&b).unwrap();
@@ -128,8 +155,7 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from("EXISTS"))),
         Resp::BulkString(Some(Bytes::from(sha1.clone()))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 1);
@@ -147,8 +173,7 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from(sha1.clone()))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("hello")),
         _ => panic!("expected BulkString(hello)"),
@@ -159,8 +184,7 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from("SCRIPT"))),
         Resp::BulkString(Some(Bytes::from("FLUSH"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
         _ => panic!("expected SimpleString(OK)"),
@@ -172,8 +196,7 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from("EXISTS"))),
         Resp::BulkString(Some(Bytes::from(sha1.clone()))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(items)) => match items[0] {
             Resp::Integer(i) => assert_eq!(i, 0),
@@ -188,20 +211,33 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from(sha1))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
-    let mut authenticated = true;
-    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Error(e) => assert!(e.contains("NOSCRIPT")),
         _ => panic!("expected NOSCRIPT error"),
     }
 }
 
-#[test]
-fn test_lua_state_reuse() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_lua_state_reuse() {
     let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
     let config = Config::default();
-    let script_manager = scripting::create_script_manager();
+    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
+
+    let server_ctx = ServerContext {
+        databases: db.clone(),
+        acl: acl.clone(),
+        aof: None,
+        config: Arc::new(config),
+        script_manager: scripting::create_script_manager(),
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
+
+    let mut conn_ctx = ConnectionContext {
+        db_index: 0,
+        authenticated: true,
+        current_username: "default".to_string(),
+    };
 
     // Set a global variable
     let script1 = "my_global = 10; return my_global";
@@ -210,8 +246,7 @@ fn test_lua_state_reuse() {
         Resp::BulkString(Some(Bytes::from(script1))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
-    let mut authenticated = true;
-    let (res1, _) = process_frame(req1, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res1, _) = process_frame(req1, &mut conn_ctx, &server_ctx).await;
     match res1 {
         Resp::Integer(i) => assert_eq!(i, 10),
         _ => panic!("expected Integer(10), got {:?}", res1),
@@ -224,8 +259,7 @@ fn test_lua_state_reuse() {
         Resp::BulkString(Some(Bytes::from(script2))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
-    let mut authenticated = true;
-    let (res2, _) = process_frame(req2, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
+    let (res2, _) = process_frame(req2, &mut conn_ctx, &server_ctx).await;
     match res2 {
         Resp::Integer(i) => assert_eq!(i, 10), // Should still be 10 if reused
         _ => panic!("expected Integer(10), got {:?}", res2),
