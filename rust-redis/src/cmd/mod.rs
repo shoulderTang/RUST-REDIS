@@ -415,9 +415,9 @@ async fn dispatch_command(
         Command::Xrange => (stream::xrange(items, db), None),
         Command::Xrevrange => (stream::xrevrange(items, db), None),
         Command::Xdel => stream::xdel(items, db),
-        Command::Xread => (stream::xread(items, db), None),
+        Command::Xread => (stream::xread_cmd(items, conn_ctx, server_ctx).await, None),
         Command::Xgroup => stream::xgroup(items, db),
-        Command::Xreadgroup => stream::xreadgroup(items, db),
+        Command::Xreadgroup => stream::xreadgroup_cmd(items, conn_ctx, server_ctx).await,
         Command::Xack => stream::xack(items, db),
         Command::BgRewriteAof => {
             if let Some(aof) = &server_ctx.aof {

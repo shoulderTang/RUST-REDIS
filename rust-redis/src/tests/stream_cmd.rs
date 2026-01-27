@@ -547,3 +547,93 @@ async fn test_xread() {
         panic!("Expected Nil, got {:?}", resp);
     }
 }
+
+#[tokio::test]
+async fn test_xread_block() {
+    let db = Arc::new(vec![Db::default()]);
+    let config = Config::default();
+    let script_manager = crate::cmd::scripting::create_script_manager();
+    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
+
+    let server_ctx = ServerContext {
+        databases: db.clone(),
+        acl: acl.clone(),
+        aof: None,
+        config: Arc::new(config),
+        script_manager: script_manager,
+        blocking_waiters: Arc::new(DashMap::new()),
+        blocking_zset_waiters: Arc::new(DashMap::new()),
+    };
+
+    // 1. Start blocking XREAD
+    let server_ctx_clone = server_ctx.clone();
+    let handle = tokio::spawn(async move {
+        let mut conn_ctx = ConnectionContext {
+            db_index: 0,
+            authenticated: true,
+            current_username: "default".to_string(),
+        };
+        let args = vec![
+            Resp::BulkString(Some(Bytes::from("XREAD"))),
+            Resp::BulkString(Some(Bytes::from("BLOCK"))),
+            Resp::BulkString(Some(Bytes::from("1000"))),
+            Resp::BulkString(Some(Bytes::from("STREAMS"))),
+            Resp::BulkString(Some(Bytes::from("mystream_block"))),
+            Resp::BulkString(Some(Bytes::from("0-0"))),
+        ];
+        let frame = Resp::Array(Some(args));
+        let (resp, _) = process_frame(frame, &mut conn_ctx, &server_ctx_clone).await;
+        resp
+    });
+
+    // Wait a bit to ensure blocking
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    // 2. Push data to unblock
+    let mut conn_ctx = ConnectionContext {
+        db_index: 0,
+        authenticated: true,
+        current_username: "default".to_string(),
+    };
+    let args = vec![
+        Resp::BulkString(Some(Bytes::from("XADD"))),
+        Resp::BulkString(Some(Bytes::from("mystream_block"))),
+        Resp::BulkString(Some(Bytes::from("100-1"))),
+        Resp::BulkString(Some(Bytes::from("name"))),
+        Resp::BulkString(Some(Bytes::from("foo"))),
+    ];
+    let frame = Resp::Array(Some(args));
+    process_frame(frame, &mut conn_ctx, &server_ctx).await;
+
+    // 3. Verify XREAD result
+    let resp = handle.await.unwrap();
+    if let Resp::Array(Some(arr)) = resp {
+        assert_eq!(arr.len(), 1);
+        if let Resp::Array(Some(stream_res)) = &arr[0] {
+            assert_eq!(stream_res.len(), 2);
+            if let Resp::BulkString(Some(key)) = &stream_res[0] {
+                assert_eq!(key, &Bytes::from("mystream_block"));
+            } else {
+                panic!("Expected key mystream_block");
+            }
+            if let Resp::Array(Some(entries)) = &stream_res[1] {
+                assert_eq!(entries.len(), 1);
+                if let Resp::Array(Some(entry)) = &entries[0] {
+                    if let Resp::BulkString(Some(id)) = &entry[0] {
+                        assert_eq!(id, &Bytes::from("100-1"));
+                    } else {
+                        panic!("Expected ID 100-1");
+                    }
+                } else {
+                    panic!("Expected entry array");
+                }
+            } else {
+                panic!("Expected entries array");
+            }
+        } else {
+            panic!("Expected stream array");
+        }
+    } else {
+        panic!("Expected Array, got {:?}", resp);
+    }
+}

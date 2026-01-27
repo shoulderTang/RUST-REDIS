@@ -16,4 +16,4 @@ Rewrite the redis in Rust language and in Rust way.
 
 2026.1.26 1.增加lua脚本功能。2.实现Stream类型的命令。3.增加geo类型的命令实现。 4.增加loglog类型的命令实现。 5.增加select命令，用于切换数据库。
 
-2026.1.27 1.增加auth命令，用于认证客户端连接。 
+2026.1.27 1.增加auth命令，用于认证客户端连接。 2.增加acl功能，用于权限管理。3.list,zset阻塞性命令实现。 4.增加stream类型的阻塞性命令实现。

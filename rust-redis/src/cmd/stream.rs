@@ -1,9 +1,11 @@
+use crate::cmd::{ConnectionContext, ServerContext};
 use crate::db::{Db, Value};
 use crate::resp::Resp;
 use crate::stream::{Stream, StreamID, ConsumerGroup, Consumer, PendingEntry};
 use bytes::Bytes;
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH, Duration, Instant};
+use tokio::time::sleep;
 
 fn as_bytes(resp: &Resp) -> Option<Bytes> {
     match resp {
@@ -869,6 +871,176 @@ pub fn xreadgroup(args: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
         (response, Some(Resp::Array(Some(log_args))))
     } else {
         (response, None)
+    }
+}
+
+pub async fn xread_cmd(
+    args: &[Resp],
+    conn_ctx: &ConnectionContext,
+    server_ctx: &ServerContext,
+) -> Resp {
+    let mut arg_idx = 1;
+    let mut block_ms: Option<u64> = None;
+
+    while arg_idx < args.len() {
+        let arg = match as_bytes(&args[arg_idx]) {
+            Some(b) => String::from_utf8_lossy(&b).to_string().to_uppercase(),
+            None => break,
+        };
+
+        if arg == "COUNT" {
+            arg_idx += 2;
+        } else if arg == "BLOCK" {
+            if arg_idx + 1 < args.len() {
+                if let Some(val) = as_bytes(&args[arg_idx + 1]) {
+                    if let Ok(ms) = String::from_utf8_lossy(&val).parse::<u64>() {
+                        block_ms = Some(ms);
+                    }
+                }
+            }
+            break;
+        } else if arg == "STREAMS" {
+            break;
+        } else {
+            arg_idx += 1;
+        }
+    }
+
+    let db = &server_ctx.databases[conn_ctx.db_index];
+
+    match block_ms {
+        None => xread(args, db),
+        Some(ms) => {
+            if ms == 0 {
+                loop {
+                    let res = xread(args, db);
+                    match res {
+                        Resp::BulkString(None) => {
+                            sleep(Duration::from_millis(10)).await;
+                            continue;
+                        }
+                        _ => return res,
+                    }
+                }
+            } else {
+                let deadline = Instant::now() + Duration::from_millis(ms);
+                loop {
+                    let res = xread(args, db);
+                    match res {
+                        Resp::BulkString(None) => {
+                            let now = Instant::now();
+                            if now >= deadline {
+                                return Resp::BulkString(None);
+                            }
+                            let remaining = deadline - now;
+                            let sleep_dur = if remaining > Duration::from_millis(10) {
+                                Duration::from_millis(10)
+                            } else {
+                                remaining
+                            };
+                            sleep(sleep_dur).await;
+                        }
+                        _ => return res,
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub async fn xreadgroup_cmd(
+    args: &[Resp],
+    conn_ctx: &ConnectionContext,
+    server_ctx: &ServerContext,
+) -> (Resp, Option<Resp>) {
+    let mut arg_idx = 1;
+
+    if arg_idx >= args.len() {
+        let db = &server_ctx.databases[conn_ctx.db_index];
+        return xreadgroup(args, db);
+    }
+
+    let first = match as_bytes(&args[arg_idx]) {
+        Some(b) => String::from_utf8_lossy(&b).to_string().to_uppercase(),
+        None => {
+            let db = &server_ctx.databases[conn_ctx.db_index];
+            return xreadgroup(args, db);
+        }
+    };
+
+    if first != "GROUP" {
+        let db = &server_ctx.databases[conn_ctx.db_index];
+        return xreadgroup(args, db);
+    }
+
+    arg_idx += 3;
+    let mut block_ms: Option<u64> = None;
+
+    while arg_idx < args.len() {
+        let arg = match as_bytes(&args[arg_idx]) {
+            Some(b) => String::from_utf8_lossy(&b).to_string().to_uppercase(),
+            None => break,
+        };
+
+        if arg == "COUNT" {
+            arg_idx += 2;
+        } else if arg == "BLOCK" {
+            if arg_idx + 1 < args.len() {
+                if let Some(val) = as_bytes(&args[arg_idx + 1]) {
+                    if let Ok(ms) = String::from_utf8_lossy(&val).parse::<u64>() {
+                        block_ms = Some(ms);
+                    }
+                }
+            }
+            break;
+        } else if arg == "NOACK" {
+            arg_idx += 1;
+        } else if arg == "STREAMS" {
+            break;
+        } else {
+            arg_idx += 1;
+        }
+    }
+
+    let db = &server_ctx.databases[conn_ctx.db_index];
+
+    match block_ms {
+        None => xreadgroup(args, db),
+        Some(ms) => {
+            if ms == 0 {
+                loop {
+                    let (resp, log) = xreadgroup(args, db);
+                    match resp {
+                        Resp::BulkString(None) => {
+                            sleep(Duration::from_millis(10)).await;
+                            continue;
+                        }
+                        _ => return (resp, log),
+                    }
+                }
+            } else {
+                let deadline = Instant::now() + Duration::from_millis(ms);
+                loop {
+                    let (resp, log) = xreadgroup(args, db);
+                    match resp {
+                        Resp::BulkString(None) => {
+                            let now = Instant::now();
+                            if now >= deadline {
+                                return (Resp::BulkString(None), None);
+                            }
+                            let remaining = deadline - now;
+                            let sleep_dur = if remaining > Duration::from_millis(10) {
+                                Duration::from_millis(10)
+                            } else {
+                                remaining
+                            };
+                            sleep(sleep_dur).await;
+                        }
+                        _ => return (resp, log),
+                    }
+                }
+            }
+        }
     }
 }
 
