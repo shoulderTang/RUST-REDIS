@@ -27,6 +27,8 @@ async fn test_xgroup_create_and_xreadgroup() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // 1. Create a stream and add some entries
@@ -208,6 +210,8 @@ async fn test_xreadgroup_block() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     let args = vec![
@@ -231,6 +235,8 @@ async fn test_xreadgroup_block() {
             db_index: 0,
             authenticated: true,
             current_username: "default".to_string(),
+            in_multi: false,
+            multi_queue: Vec::new(),
         };
         let args = vec![
             Resp::BulkString(Some(Bytes::from("XREADGROUP"))),

@@ -15,6 +15,8 @@ async fn test_zset_ops() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
     let server_ctx = crate::cmd::ServerContext {
         databases: db.clone(),
@@ -164,6 +166,8 @@ async fn test_zpopmin_ops() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
     let server_ctx = crate::cmd::ServerContext {
         databases: db.clone(),
@@ -241,6 +245,8 @@ async fn test_bzpopmin_ops() {
             db_index: 0,
             authenticated: true,
             current_username: "default".to_string(),
+            in_multi: false,
+            multi_queue: Vec::new(),
         };
         let req = Resp::Array(Some(vec![
             Resp::BulkString(Some(Bytes::from("BZPOPMIN"))),
@@ -259,6 +265,8 @@ async fn test_bzpopmin_ops() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("ZADD"))),
@@ -299,6 +307,8 @@ async fn test_zpopmax_ops() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
     let server_ctx = crate::cmd::ServerContext {
         databases: db.clone(),
@@ -376,6 +386,8 @@ async fn test_bzpopmax_ops() {
             db_index: 0,
             authenticated: true,
             current_username: "default".to_string(),
+            in_multi: false,
+            multi_queue: Vec::new(),
         };
         let req = Resp::Array(Some(vec![
             Resp::BulkString(Some(Bytes::from("BZPOPMAX"))),
@@ -394,6 +406,8 @@ async fn test_bzpopmax_ops() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("ZADD"))),

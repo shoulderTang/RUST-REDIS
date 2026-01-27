@@ -27,6 +27,8 @@ async fn test_hash_ops() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // HSET hash f1 v1 -> 1

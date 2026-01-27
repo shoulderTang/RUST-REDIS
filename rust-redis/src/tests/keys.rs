@@ -27,6 +27,8 @@ async fn test_keys() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // Setup keys
@@ -112,6 +114,8 @@ async fn test_expire_ttl() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // SET key val
@@ -203,6 +207,8 @@ async fn test_dbsize() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // DBSIZE -> 0
@@ -251,6 +257,8 @@ async fn test_del() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // Setup keys

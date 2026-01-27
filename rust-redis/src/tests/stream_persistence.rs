@@ -95,6 +95,8 @@ mod tests {
             db_index: 0,
             authenticated: true,
             current_username: "default".to_string(),
+            in_multi: false,
+            multi_queue: Vec::new(),
         };
         
         // Helper to run command and write log

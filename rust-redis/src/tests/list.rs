@@ -27,6 +27,8 @@ async fn test_list_ops() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // LPUSH list 1 -> 1
@@ -184,6 +186,8 @@ async fn test_brpop_ops() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // LPUSH list a b c -> ["c", "b", "a"]
@@ -274,6 +278,8 @@ async fn test_blmove_ops() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     let req = Resp::Array(Some(vec![
@@ -373,6 +379,8 @@ async fn test_lmove_ops() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     let req = Resp::Array(Some(vec![

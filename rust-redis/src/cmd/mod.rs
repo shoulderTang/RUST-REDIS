@@ -31,6 +31,8 @@ pub struct ConnectionContext {
     pub db_index: usize,
     pub authenticated: bool,
     pub current_username: String,
+    pub in_multi: bool,
+    pub multi_queue: Vec<Vec<Resp>>,
 }
 
 impl ConnectionContext {
@@ -39,6 +41,8 @@ impl ConnectionContext {
             db_index: 0,
             authenticated: false,
             current_username: "default".to_string(),
+            in_multi: false,
+            multi_queue: Vec::new(),
         }
     }
 }
@@ -123,6 +127,9 @@ enum Command {
     Command,
     Config,
     BgRewriteAof,
+    Multi,
+    Exec,
+    Discard,
     Eval,
     EvalSha,
     Script,
@@ -209,32 +216,12 @@ pub async fn process_frame(
     conn_ctx: &mut ConnectionContext,
     server_ctx: &ServerContext,
 ) -> (Resp, Option<Resp>) {
-    let mut cmd_to_log = if let Resp::Array(Some(ref items)) = frame {
-        if !items.is_empty() {
-            if let Some(b) = as_bytes(&items[0]) {
-                if let Ok(s) = std::str::from_utf8(&b) {
-                    if command::is_write_command(s) {
-                        Some(frame.clone())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let original_frame = frame.clone();
 
-    let (res, custom_log) = match frame {
+    let (res, custom_log, cmd_name_opt) = match frame {
         Resp::Array(Some(items)) => {
             if items.is_empty() {
-                (Resp::Error("ERR empty command".to_string()), None)
+                (Resp::Error("ERR empty command".to_string()), None, None)
             } else {
                 let cmd_raw = match as_bytes(&items[0]) {
                     Some(b) => b,
@@ -248,24 +235,46 @@ pub async fn process_frame(
                      if let Command::Auth = cmd_name {
                          // allowed
                      } else {
-                         return (Resp::Error("NOAUTH Authentication required.".to_string()), None);
+                        return (Resp::Error("NOAUTH Authentication required.".to_string()), None);
                      }
                 }
 
                 // ACL Check
                 if let Err(e) = check_access(cmd_name, cmd_raw, &items, conn_ctx, server_ctx) {
-                    (e, None)
+                    (e, None, Some(cmd_name))
                 } else {
-                    dispatch_command(cmd_name, &items, conn_ctx, server_ctx).await
+                    let (res, log) = dispatch_command(cmd_name, &items, conn_ctx, server_ctx).await;
+                    (res, log, Some(cmd_name))
                 }
             }
         }
-        _ => (Resp::Error("ERR protocol error: expected array".to_string()), None),
+        _ => (Resp::Error("ERR protocol error: expected array".to_string()), None, None),
     };
 
-    if let Some(l) = custom_log {
-        cmd_to_log = Some(l);
-    }
+    let mut cmd_to_log = if let Some(l) = custom_log {
+        Some(l)
+    } else if let (Resp::Array(Some(items)), Some(cmd_name)) = (&original_frame, cmd_name_opt) {
+        if items.is_empty() {
+            None
+        } else if let Some(b) = as_bytes(&items[0]) {
+            if let Ok(s) = std::str::from_utf8(&b) {
+                if command::is_write_command(s) && !conn_ctx.in_multi {
+                    match cmd_name {
+                        Command::Multi | Command::Exec | Command::Discard => None,
+                        _ => Some(original_frame.clone()),
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     (res, cmd_to_log)
 }
@@ -304,8 +313,87 @@ async fn dispatch_command(
     conn_ctx: &mut ConnectionContext,
     server_ctx: &ServerContext,
 ) -> (Resp, Option<Resp>) {
+    if conn_ctx.in_multi {
+        match cmd {
+            Command::Multi => {
+                return (
+                    Resp::Error("ERR MULTI calls can not be nested".to_string()),
+                    None,
+                );
+            }
+            Command::Exec | Command::Discard => {}
+            _ => {
+                conn_ctx.multi_queue.push(items.to_vec());
+                return (
+                    Resp::SimpleString(bytes::Bytes::from_static(b"QUEUED")),
+                    None,
+                );
+            }
+        }
+    }
+
     let db = &server_ctx.databases[conn_ctx.db_index];
     match cmd {
+        Command::Multi => {
+            if items.len() != 1 {
+                return (
+                    Resp::Error(
+                        "ERR wrong number of arguments for 'multi' command".to_string(),
+                    ),
+                    None,
+                );
+            }
+            conn_ctx.in_multi = true;
+            conn_ctx.multi_queue.clear();
+            (Resp::SimpleString(bytes::Bytes::from_static(b"OK")), None)
+        }
+        Command::Exec => {
+            if !conn_ctx.in_multi {
+                return (
+                    Resp::Error("ERR EXEC without MULTI".to_string()),
+                    None,
+                );
+            }
+
+            conn_ctx.in_multi = false;
+            let queued = std::mem::take(&mut conn_ctx.multi_queue);
+            let mut results = Vec::with_capacity(queued.len());
+
+            for q in queued {
+                if q.is_empty() {
+                    results.push(Resp::Error("ERR empty command".to_string()));
+                    continue;
+                }
+                let cmd_raw = match as_bytes(&q[0]) {
+                    Some(b) => b,
+                    None => {
+                        results
+                            .push(Resp::Error("ERR invalid command".to_string()));
+                        continue;
+                    }
+                };
+                let inner_cmd = command_name(cmd_raw);
+                if let Err(e) = check_access(inner_cmd, cmd_raw, &q, conn_ctx, server_ctx) {
+                    results.push(e);
+                    continue;
+                }
+                let (res, _) = Box::pin(dispatch_command(inner_cmd, &q, conn_ctx, server_ctx)).await;
+                results.push(res);
+            }
+
+            (Resp::Array(Some(results)), None)
+        }
+        Command::Discard => {
+            if !conn_ctx.in_multi {
+                return (
+                    Resp::Error("ERR DISCARD without MULTI".to_string()),
+                    None,
+                );
+            }
+            conn_ctx.in_multi = false;
+            conn_ctx.multi_queue.clear();
+            (Resp::SimpleString(bytes::Bytes::from_static(b"OK")), None)
+        }
         Command::Auth => (acl::auth(items, conn_ctx, server_ctx), None),
         Command::Acl => (acl::acl(items, conn_ctx, server_ctx), None),
         Command::Ping => {
@@ -519,6 +607,9 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("XREADGROUP".to_string(), Command::Xreadgroup);
         m.insert("XACK".to_string(), Command::Xack);
         m.insert("BGREWRITEAOF".to_string(), Command::BgRewriteAof);
+        m.insert("MULTI".to_string(), Command::Multi);
+        m.insert("EXEC".to_string(), Command::Exec);
+        m.insert("DISCARD".to_string(), Command::Discard);
         m
     });
 

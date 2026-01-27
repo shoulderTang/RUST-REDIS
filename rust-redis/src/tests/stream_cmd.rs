@@ -27,6 +27,8 @@ async fn test_xadd() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // XADD key * field value
@@ -71,6 +73,8 @@ async fn test_xlen() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // XADD key * field value
@@ -116,6 +120,8 @@ async fn test_xlen_bug_repro() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // Scenario 1: One XADD with multiple fields
@@ -207,6 +213,8 @@ async fn test_xrevrange() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // XADD key 100-1 field value
@@ -277,6 +285,8 @@ async fn test_xrange() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // XADD key 100-1 field value
@@ -351,6 +361,8 @@ async fn test_xdel() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // XADD key 100-1 field value
@@ -418,6 +430,8 @@ async fn test_xread() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // XADD key 100-1 field value
@@ -572,6 +586,8 @@ async fn test_xread_block() {
             db_index: 0,
             authenticated: true,
             current_username: "default".to_string(),
+            in_multi: false,
+            multi_queue: Vec::new(),
         };
         let args = vec![
             Resp::BulkString(Some(Bytes::from("XREAD"))),
@@ -594,6 +610,8 @@ async fn test_xread_block() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
     let args = vec![
         Resp::BulkString(Some(Bytes::from("XADD"))),

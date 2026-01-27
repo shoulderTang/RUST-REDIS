@@ -98,6 +98,8 @@ impl Aof {
                         db_index: current_db_index,
                         authenticated: true,
                         current_username: "default".to_string(),
+                        in_multi: false,
+                        multi_queue: Vec::new(),
                     };
 
                     let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));

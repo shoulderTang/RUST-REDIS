@@ -126,6 +126,8 @@ async  fn redis_call_handler<'lua>(
         db_index: conn_ctx.db_index,
         authenticated: true,
         current_username: conn_ctx.current_username.clone(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
     
     let (res, _) = super::process_frame(frame, &mut local_conn_ctx, server_ctx).await;

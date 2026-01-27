@@ -27,6 +27,8 @@ async fn test_hll() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // PFADD hll1 a b c
@@ -122,6 +124,8 @@ async fn test_hll_string_promotion() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // Manually insert a String that looks like an HLL (16k zero bytes)

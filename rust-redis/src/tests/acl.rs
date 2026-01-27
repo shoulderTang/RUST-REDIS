@@ -16,6 +16,8 @@ async fn test_acl_key_permissions() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     let server_ctx = crate::cmd::ServerContext {
@@ -111,6 +113,8 @@ async fn test_acl_persistence() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     let server_ctx = crate::cmd::ServerContext {

@@ -27,6 +27,8 @@ async fn test_eval() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // Script with keys and redis.call
@@ -78,6 +80,8 @@ async fn test_eval_pcall() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // redis.call with error -> raises Lua error
@@ -133,6 +137,8 @@ async fn test_script_commands() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // SCRIPT LOAD "return 'hello'"
@@ -241,6 +247,8 @@ async fn test_lua_state_reuse() {
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
+        in_multi: false,
+        multi_queue: Vec::new(),
     };
 
     // Set a global variable
