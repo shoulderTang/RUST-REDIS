@@ -20,10 +20,11 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("2"))),
         Resp::BulkString(Some(Bytes::from("m2"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -39,10 +40,11 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("zset"))),
         Resp::BulkString(Some(Bytes::from("m1"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -58,10 +60,11 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("zset"))),
         Resp::BulkString(Some(Bytes::from("m1"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -78,10 +81,11 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("0"))),
         Resp::BulkString(Some(Bytes::from("-1"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -109,10 +113,11 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("-1"))),
         Resp::BulkString(Some(Bytes::from("WITHSCORES"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -145,10 +150,11 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("ZCARD"))),
         Resp::BulkString(Some(Bytes::from("zset"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -164,10 +170,11 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("zset"))),
         Resp::BulkString(Some(Bytes::from("m1"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -182,10 +189,11 @@ fn test_zset_ops() {
         Resp::BulkString(Some(Bytes::from("ZCARD"))),
         Resp::BulkString(Some(Bytes::from("zset"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),

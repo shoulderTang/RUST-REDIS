@@ -77,7 +77,7 @@ mod tests {
         let path = path_str.to_str().unwrap();
 
         let db = Arc::new(vec![Db::default()]);
-        let mut db_index = 0;
+        let _db_index = 0;
         let config = Config::default();
         let script_manager = create_script_manager();
         
@@ -96,8 +96,9 @@ mod tests {
             // Let's rewrite the helper or just inline it if it's tricky.
             // Or just use a RefCell? No, async.
             // Let's just pass db_index explicitly or assume 0.
-            let mut local_db_index = 0;
-            let (_res, log_cmd) = process_frame(req, &db, &mut local_db_index, &None, &config, &script_manager);
+            let mut _local_db_index = 0;
+            let mut authenticated = true;
+            let (_res, log_cmd) = process_frame(req, &db, &mut _local_db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
             
             log_cmd
         };

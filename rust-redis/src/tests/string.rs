@@ -18,10 +18,11 @@ fn test_set_get() {
         Resp::BulkString(Some(Bytes::from("foo"))),
         Resp::BulkString(Some(Bytes::from("bar"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -36,10 +37,11 @@ fn test_set_get() {
         Resp::BulkString(Some(Bytes::from("GET"))),
         Resp::BulkString(Some(Bytes::from("foo"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -54,10 +56,11 @@ fn test_set_get() {
         Resp::BulkString(Some(Bytes::from("GET"))),
         Resp::BulkString(Some(Bytes::from("baz"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -81,10 +84,11 @@ fn test_mset_mget() {
         Resp::BulkString(Some(Bytes::from("k2"))),
         Resp::BulkString(Some(Bytes::from("v2"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -101,10 +105,11 @@ fn test_mset_mget() {
         Resp::BulkString(Some(Bytes::from("k2"))),
         Resp::BulkString(Some(Bytes::from("k3"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -141,10 +146,11 @@ fn test_string_extended() {
         Resp::BulkString(Some(Bytes::from("val"))),
         Resp::BulkString(Some(Bytes::from("NX"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -159,10 +165,11 @@ fn test_string_extended() {
         Resp::BulkString(Some(Bytes::from("INCR"))),
         Resp::BulkString(Some(Bytes::from("key_incr"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -177,10 +184,11 @@ fn test_string_extended() {
         Resp::BulkString(Some(Bytes::from("DECR"))),
         Resp::BulkString(Some(Bytes::from("key_decr"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -196,10 +204,11 @@ fn test_string_extended() {
         Resp::BulkString(Some(Bytes::from("key_ib"))),
         Resp::BulkString(Some(Bytes::from("10"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -215,10 +224,11 @@ fn test_string_extended() {
         Resp::BulkString(Some(Bytes::from("key_db"))),
         Resp::BulkString(Some(Bytes::from("5"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -234,10 +244,11 @@ fn test_string_extended() {
         Resp::BulkString(Some(Bytes::from("key_app"))),
         Resp::BulkString(Some(Bytes::from("foo"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -253,10 +264,11 @@ fn test_string_extended() {
         Resp::BulkString(Some(Bytes::from("key_app"))),
         Resp::BulkString(Some(Bytes::from("bar"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -271,10 +283,11 @@ fn test_string_extended() {
         Resp::BulkString(Some(Bytes::from("STRLEN"))),
         Resp::BulkString(Some(Bytes::from("key_app"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -298,10 +311,11 @@ fn test_set_options() {
         Resp::BulkString(Some(Bytes::from("EX"))),
         Resp::BulkString(Some(Bytes::from("10"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -334,10 +348,11 @@ fn test_set_options() {
         Resp::BulkString(Some(Bytes::from("PX"))),
         Resp::BulkString(Some(Bytes::from("10000"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -364,10 +379,11 @@ fn test_set_options() {
         Resp::BulkString(Some(Bytes::from("v1_new"))),
         Resp::BulkString(Some(Bytes::from("KEEPTTL"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -390,10 +406,11 @@ fn test_set_options() {
         Resp::BulkString(Some(Bytes::from("v3"))),
         Resp::BulkString(Some(Bytes::from("GET"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -412,10 +429,11 @@ fn test_set_options() {
         Resp::BulkString(Some(Bytes::from("v3_new"))),
         Resp::BulkString(Some(Bytes::from("GET"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -442,10 +460,11 @@ fn test_set_options() {
         Resp::BulkString(Some(Bytes::from("EXAT"))),
         Resp::BulkString(Some(Bytes::from(exat.to_string()))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -473,10 +492,11 @@ fn test_set_options() {
         Resp::BulkString(Some(Bytes::from("PXAT"))),
         Resp::BulkString(Some(Bytes::from(pxat.to_string()))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),

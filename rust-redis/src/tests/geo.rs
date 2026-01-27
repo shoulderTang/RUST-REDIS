@@ -25,7 +25,8 @@ fn test_geo() {
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
     
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::Integer(i) => assert_eq!(i, 2),
         _ => panic!("Expected Integer(2), got {:?}", res),
@@ -39,7 +40,8 @@ fn test_geo() {
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
     
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::BulkString(Some(b)) => {
             let s = std::str::from_utf8(&b).unwrap();
@@ -60,7 +62,8 @@ fn test_geo() {
         Resp::BulkString(Some(Bytes::from("km"))),
     ]));
     
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::BulkString(Some(b)) => {
             let s = std::str::from_utf8(&b).unwrap();
@@ -79,7 +82,8 @@ fn test_geo() {
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
     
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::Array(Some(arr)) => {
             assert_eq!(arr.len(), 2);
@@ -113,7 +117,8 @@ fn test_geo() {
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
     
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::Array(Some(arr)) => {
             assert_eq!(arr.len(), 2);
@@ -156,7 +161,8 @@ fn test_georadius() {
         Resp::BulkString(Some(Bytes::from("37.502669"))),
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
-    process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
 
     // GEORADIUS Sicily 15 37 200 km WITHDIST
     let req = Resp::Array(Some(vec![
@@ -169,7 +175,8 @@ fn test_georadius() {
         Resp::BulkString(Some(Bytes::from("WITHDIST"))),
     ]));
     
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::Array(Some(arr)) => {
             // Should match Catania and Palermo
@@ -222,7 +229,8 @@ fn test_georadius() {
         Resp::BulkString(Some(Bytes::from("km"))),
     ]));
     
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::Array(Some(arr)) => {
             assert_eq!(arr.len(), 1);
@@ -256,7 +264,8 @@ fn test_georadiusbymember() {
         Resp::BulkString(Some(Bytes::from("37.502669"))),
         Resp::BulkString(Some(Bytes::from("Catania"))),
     ]));
-    process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
 
     // GEORADIUSBYMEMBER Sicily Agrigento 100 km
     // Agrigento (13.58, 37.31)
@@ -270,7 +279,8 @@ fn test_georadiusbymember() {
         Resp::BulkString(Some(Bytes::from("km"))),
     ]));
 
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::Array(Some(arr)) => {
             // Should match Agrigento (itself, dist 0) and Palermo (~90km)

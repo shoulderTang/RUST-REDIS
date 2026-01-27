@@ -14,4 +14,6 @@ Rewrite the redis in Rust language and in Rust way.
 
 2026.1.23 1.增加aof/rdb持久化功能。2.set命令增加过期时间参数。3.增加del,mset,mget,keys命令。4.增加相关的单元测试代码。
 
-2026.1.26 1.增加lua脚本功能。2.实现Stream类型的命令。3.增加geo类型的命令实现。 4.增加loglog类型的命令实现。
+2026.1.26 1.增加lua脚本功能。2.实现Stream类型的命令。3.增加geo类型的命令实现。 4.增加loglog类型的命令实现。 5.增加select命令，用于切换数据库。
+
+2026.1.27 1.增加auth命令，用于认证客户端连接。 

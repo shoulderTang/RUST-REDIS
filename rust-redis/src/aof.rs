@@ -93,7 +93,10 @@ impl Aof {
                 Ok(Some(frame)) => {
                     // process_frame requires Aof option now, but during load we pass None
                     // to avoid recursive or circular dependency issues and because we don't want to log loaded commands
-                    let _ = process_frame(frame, databases, &mut current_db_index, &None, cfg, script_manager);
+                    let mut authenticated = true;
+                    let mut current_username = "default".to_string();
+                    let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
+                    let _ = process_frame(frame, databases, &mut current_db_index, &mut authenticated, &mut current_username, &acl, &None, cfg, script_manager);
                 }
                 Ok(None) => break,
                 Err(e) => return Err(e),

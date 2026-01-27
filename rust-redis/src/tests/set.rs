@@ -17,10 +17,11 @@ fn test_set_ops() {
         Resp::BulkString(Some(Bytes::from("set"))),
         Resp::BulkString(Some(Bytes::from("m1"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -36,10 +37,11 @@ fn test_set_ops() {
         Resp::BulkString(Some(Bytes::from("set"))),
         Resp::BulkString(Some(Bytes::from("m1"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -55,10 +57,11 @@ fn test_set_ops() {
         Resp::BulkString(Some(Bytes::from("set"))),
         Resp::BulkString(Some(Bytes::from("m1"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -73,10 +76,11 @@ fn test_set_ops() {
         Resp::BulkString(Some(Bytes::from("SMEMBERS"))),
         Resp::BulkString(Some(Bytes::from("set"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -97,10 +101,11 @@ fn test_set_ops() {
         Resp::BulkString(Some(Bytes::from("SCARD"))),
         Resp::BulkString(Some(Bytes::from("set"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -116,10 +121,11 @@ fn test_set_ops() {
         Resp::BulkString(Some(Bytes::from("set"))),
         Resp::BulkString(Some(Bytes::from("m1"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),

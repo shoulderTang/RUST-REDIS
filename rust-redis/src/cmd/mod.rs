@@ -2,15 +2,16 @@ use crate::aof::Aof;
 use crate::cmd::scripting::ScriptManager;
 use crate::conf::Config;
 use crate::db::Db;
+use crate::acl::Acl;
 use crate::resp::{Resp, as_bytes};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio::sync::Mutex;
 use tracing::error;
 
 mod command;
 mod config;
 mod hash;
-mod key;
+pub mod key;
 mod list;
 pub mod scripting;
 mod save;
@@ -25,6 +26,7 @@ mod geo;
 
 
 
+#[derive(Debug, PartialEq, Copy, Clone)]
 enum Command {
     Ping,
     Set,
@@ -85,6 +87,8 @@ enum Command {
     EvalSha,
     Script,
     Select,
+    Auth,
+    Acl,
     Xadd,
     Xlen,
     Xrange,
@@ -97,10 +101,66 @@ enum Command {
     Unknown,
 }
 
+fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
+    let mut keys = Vec::new();
+    match cmd {
+        Command::Set | Command::Get | Command::Incr | Command::Decr | Command::IncrBy | Command::DecrBy |
+        Command::Append | Command::StrLen | Command::Lpush | Command::Rpush | Command::Lpop | Command::Rpop |
+        Command::Llen | Command::Lrange | Command::Hset | Command::Hget | Command::Hgetall | Command::Hmset |
+        Command::Hmget | Command::Hdel | Command::Hlen | Command::Sadd | Command::Srem | Command::Sismember |
+        Command::Smembers | Command::Scard | Command::Zadd | Command::Zrem | Command::Zscore | Command::Zcard |
+        Command::Zrank | Command::Zrange | Command::Pfadd | Command::Pfcount | Command::GeoAdd | Command::GeoDist |
+        Command::GeoHash | Command::GeoPos | Command::GeoRadius | Command::GeoRadiusByMember | Command::Expire |
+        Command::Ttl | Command::Xadd | Command::Xlen | Command::Xrange | Command::Xrevrange | Command::Xdel => {
+             if items.len() > 1 {
+                 if let Some(key) = as_bytes(&items[1]) {
+                     keys.push(key.to_vec());
+                 }
+             }
+        }
+        Command::Mset => {
+             for i in (1..items.len()).step_by(2) {
+                 if let Some(key) = as_bytes(&items[i]) {
+                     keys.push(key.to_vec());
+                 }
+             }
+        }
+        Command::Mget | Command::Del | Command::Pfmerge => {
+             for i in 1..items.len() {
+                 if let Some(key) = as_bytes(&items[i]) {
+                     keys.push(key.to_vec());
+                 }
+             }
+        }
+        Command::Eval | Command::EvalSha => {
+             if items.len() > 2 {
+                 if let Some(numkeys_bytes) = as_bytes(&items[2]) {
+                     if let Ok(numkeys_str) = std::str::from_utf8(&numkeys_bytes) {
+                         if let Ok(numkeys) = numkeys_str.parse::<usize>() {
+                             for i in 0..numkeys {
+                                 if 3 + i < items.len() {
+                                     if let Some(key) = as_bytes(&items[3+i]) {
+                                         keys.push(key.to_vec());
+                                     }
+                                 }
+                             }
+                         }
+                     }
+                 }
+             }
+        }
+        _ => {}
+    }
+    keys
+}
+
 pub fn process_frame(
     frame: Resp,
     databases: &Arc<Vec<Db>>,
     db_index: &mut usize,
+    authenticated: &mut bool,
+    current_username: &mut String,
+    acl: &Arc<RwLock<Acl>>,
     aof: &Option<Arc<Mutex<Aof>>>,
     cfg: &Config,
     script_manager: &Arc<ScriptManager>,
@@ -137,7 +197,184 @@ pub fn process_frame(
                 Some(b) => b,
                 None => return (Resp::Error("ERR invalid command".to_string()), None),
             };
-            match command_name(cmd_raw) {
+
+            let cmd_name = command_name(cmd_raw);
+
+            if cfg.requirepass.is_some() && !*authenticated {
+                match cmd_name {
+                    Command::Auth => {}
+                    _ => return (Resp::Error("NOAUTH Authentication required.".to_string()), None),
+                }
+            }
+            
+            // ACL Check
+            {
+                let acl_guard = acl.read().unwrap();
+                if let Some(user) = acl_guard.get_user(current_username) {
+                    let cmd_str = String::from_utf8_lossy(cmd_raw);
+                    if !user.can_execute(&cmd_str) {
+                         return (Resp::Error(format!("NOPERM this user has no permissions to run the '{}' command", cmd_str)), None);
+                    }
+                    
+                    if !user.all_keys {
+                        let keys = get_command_keys(cmd_name, &items);
+                        for key in keys {
+                             if !user.can_access_key(&key) {
+                                  return (Resp::Error(format!("NOPERM this user has no permissions to access the key '{}'", String::from_utf8_lossy(&key))), None);
+                             }
+                        }
+                    }
+                } else {
+                     // If user is not found, maybe they were deleted?
+                     return (Resp::Error("ERR User not found".to_string()), None);
+                }
+            }
+
+            match cmd_name {
+                Command::Auth => {
+                    if items.len() == 2 {
+                        match &items[1] {
+                            Resp::BulkString(Some(b)) => {
+                                let pass = String::from_utf8_lossy(b);
+                                // Try authenticate as default user
+                                let acl_guard = acl.read().unwrap();
+                                if let Some(_) = acl_guard.authenticate("default", &pass) {
+                                    *authenticated = true;
+                                    *current_username = "default".to_string();
+                                    Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
+                                } else {
+                                    // Fallback to legacy requirepass check if not handled by ACL (though ACL should handle it)
+                                    if let Some(ref required) = cfg.requirepass {
+                                        if pass == *required {
+                                            *authenticated = true;
+                                            *current_username = "default".to_string();
+                                            Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
+                                        } else {
+                                            Resp::Error("ERR invalid password".to_string())
+                                        }
+                                    } else {
+                                        Resp::Error("ERR invalid password".to_string())
+                                    }
+                                }
+                            }
+                            _ => Resp::Error("ERR invalid password".to_string()),
+                        }
+                    } else if items.len() == 3 {
+                         // AUTH username password
+                         let username = match as_bytes(&items[1]) {
+                             Some(b) => String::from_utf8_lossy(b).to_string(),
+                             None => return (Resp::Error("ERR invalid username".to_string()), None),
+                         };
+                         let password = match as_bytes(&items[2]) {
+                             Some(b) => String::from_utf8_lossy(b).to_string(),
+                             None => return (Resp::Error("ERR invalid password".to_string()), None),
+                         };
+                         
+                         let acl_guard = acl.read().unwrap();
+                         if let Some(_user) = acl_guard.authenticate(&username, &password) {
+                             *authenticated = true;
+                             *current_username = username;
+                             Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
+                         } else {
+                             Resp::Error("WRONGPASS invalid username-password pair".to_string())
+                         }
+                    } else {
+                        Resp::Error("ERR wrong number of arguments for 'auth' command".to_string())
+                    }
+                }
+                Command::Acl => {
+                    if items.len() < 2 {
+                         Resp::Error("ERR wrong number of arguments for 'acl' command".to_string())
+                    } else {
+                         let subcmd = match as_bytes(&items[1]) {
+                             Some(b) => String::from_utf8_lossy(b).to_string().to_uppercase(),
+                             None => return (Resp::Error("ERR invalid subcommand".to_string()), None),
+                         };
+                         match subcmd.as_str() {
+                             "WHOAMI" => Resp::BulkString(Some(bytes::Bytes::from(current_username.clone()))),
+                             "USERS" => {
+                                 let acl_guard = acl.read().unwrap();
+                                let users: Vec<Resp> = acl_guard.users.keys().map(|k| Resp::BulkString(Some(bytes::Bytes::from(k.clone())))).collect();
+                                Resp::Array(Some(users))
+                             },
+                             "SETUSER" => {
+                                // ACL SETUSER <username> [rules...]
+                                if items.len() < 3 {
+                                     Resp::Error("ERR wrong number of arguments for 'acl setuser' command".to_string())
+                                } else {
+                                    let username = match as_bytes(&items[2]) {
+                                        Some(b) => String::from_utf8_lossy(b).to_string(),
+                                        None => return (Resp::Error("ERR invalid username".to_string()), None),
+                                    };
+                                    
+                                    let mut acl_guard = acl.write().unwrap();
+                                    let mut user = if let Some(u) = acl_guard.get_user(&username) {
+                                        (*u).clone()
+                                    } else {
+                                        crate::acl::User::new(&username)
+                                    };
+                                    
+                                    let mut rules = Vec::new();
+                                    for item in items.iter().skip(3) {
+                                        if let Some(b) = as_bytes(item) {
+                                            rules.push(String::from_utf8_lossy(b).to_string());
+                                        }
+                                    }
+                                    user.parse_rules(&rules);
+                                    
+                                    acl_guard.set_user(user);
+                                    Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
+                                }
+                            },
+                            "SAVE" => {
+                                if let Some(acl_file) = &cfg.aclfile {
+                                    let acl_guard = acl.read().unwrap();
+                                    if let Err(e) = acl_guard.save_to_file(acl_file) {
+                                        Resp::Error(format!("ERR saving ACL: {}", e))
+                                    } else {
+                                         Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
+                                    }
+                                } else {
+                                     Resp::Error("ERR no aclfile configured".to_string())
+                                }
+                            },
+                            "LOAD" => {
+                                 if let Some(acl_file) = &cfg.aclfile {
+                                    let mut acl_guard = acl.write().unwrap();
+                                    if let Err(e) = acl_guard.load_from_file(acl_file) {
+                                         Resp::Error(format!("ERR loading ACL: {}", e))
+                                    } else {
+                                         Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
+                                    }
+                                 } else {
+                                     Resp::Error("ERR no aclfile configured".to_string())
+                                 }
+                            },
+                            "LIST" => {
+                                let acl_guard = acl.read().unwrap();
+                                let users: Vec<Resp> = acl_guard.users.values().map(|u| Resp::BulkString(Some(bytes::Bytes::from(u.to_string())))).collect();
+                                Resp::Array(Some(users))
+                            },
+                            "DELUSER" => {
+                                 if items.len() != 3 {
+                                      Resp::Error("ERR wrong number of arguments for 'acl deluser' command".to_string())
+                                 } else {
+                                      let username = match as_bytes(&items[2]) {
+                                         Some(b) => String::from_utf8_lossy(b).to_string(),
+                                         None => return (Resp::Error("ERR invalid username".to_string()), None),
+                                     };
+                                     let mut acl_guard = acl.write().unwrap();
+                                     if acl_guard.del_user(&username) {
+                                         Resp::Integer(1)
+                                     } else {
+                                         Resp::Integer(0)
+                                     }
+                                 }
+                             },
+                             _ => Resp::Error("ERR unknown or unsupported ACL subcommand".to_string()),
+                         }
+                    }
+                }
                 Command::Ping => {
                     if items.len() == 1 {
                         Resp::SimpleString(bytes::Bytes::from_static(b"PONG"))
@@ -206,8 +443,38 @@ pub fn process_frame(
                 }
                 Command::Command => command::command(&items),
                 Command::Config => config::config(&items, cfg),
-                Command::Eval => scripting::eval(&items, databases, *db_index, aof, cfg, script_manager),
-                Command::EvalSha => scripting::evalsha(&items, databases, *db_index, aof, cfg, script_manager),
+                Command::Eval => {
+                    let (res, log) = scripting::eval(
+                        &items,
+                        databases,
+                        *db_index,
+                        aof,
+                        cfg,
+                        script_manager,
+                        current_username,
+                        acl,
+                    );
+                    if let Some(l) = log {
+                        cmd_to_log = Some(l);
+                    }
+                    res
+                }
+                Command::EvalSha => {
+                    let (res, log) = scripting::evalsha(
+                        &items,
+                        databases,
+                        *db_index,
+                        aof,
+                        cfg,
+                        script_manager,
+                        current_username,
+                        acl,
+                    );
+                    if let Some(l) = log {
+                        cmd_to_log = Some(l);
+                    }
+                    res
+                }
                 Command::Script => scripting::script(&items, script_manager),
                 Command::Select => {
                     if items.len() != 2 {
@@ -426,6 +693,10 @@ fn command_name(raw: &[u8]) -> Command {
         Command::Script
     } else if equals_ignore_ascii_case(raw, b"SELECT") {
         Command::Select
+    } else if equals_ignore_ascii_case(raw, b"AUTH") {
+        Command::Auth
+    } else if equals_ignore_ascii_case(raw, b"ACL") {
+        Command::Acl
     } else if equals_ignore_ascii_case(raw, b"XADD") {
         Command::Xadd
     } else if equals_ignore_ascii_case(raw, b"XLEN") {

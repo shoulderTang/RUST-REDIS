@@ -17,10 +17,11 @@ fn test_list_ops() {
         Resp::BulkString(Some(Bytes::from("list"))),
         Resp::BulkString(Some(Bytes::from("1"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -36,10 +37,11 @@ fn test_list_ops() {
         Resp::BulkString(Some(Bytes::from("list"))),
         Resp::BulkString(Some(Bytes::from("2"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -56,10 +58,11 @@ fn test_list_ops() {
         Resp::BulkString(Some(Bytes::from("0"))),
         Resp::BulkString(Some(Bytes::from("-1"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -84,10 +87,11 @@ fn test_list_ops() {
         Resp::BulkString(Some(Bytes::from("LPOP"))),
         Resp::BulkString(Some(Bytes::from("list"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -102,10 +106,11 @@ fn test_list_ops() {
         Resp::BulkString(Some(Bytes::from("RPOP"))),
         Resp::BulkString(Some(Bytes::from("list"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -120,10 +125,11 @@ fn test_list_ops() {
         Resp::BulkString(Some(Bytes::from("LLEN"))),
         Resp::BulkString(Some(Bytes::from("list"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),

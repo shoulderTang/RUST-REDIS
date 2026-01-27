@@ -18,10 +18,11 @@ fn test_hash_ops() {
         Resp::BulkString(Some(Bytes::from("f1"))),
         Resp::BulkString(Some(Bytes::from("v1"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -37,10 +38,11 @@ fn test_hash_ops() {
         Resp::BulkString(Some(Bytes::from("hash"))),
         Resp::BulkString(Some(Bytes::from("f1"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -59,10 +61,11 @@ fn test_hash_ops() {
         Resp::BulkString(Some(Bytes::from("f3"))),
         Resp::BulkString(Some(Bytes::from("v3"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -79,10 +82,11 @@ fn test_hash_ops() {
         Resp::BulkString(Some(Bytes::from("f1"))),
         Resp::BulkString(Some(Bytes::from("f2"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -107,10 +111,11 @@ fn test_hash_ops() {
         Resp::BulkString(Some(Bytes::from("HLEN"))),
         Resp::BulkString(Some(Bytes::from("hash"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),
@@ -126,10 +131,11 @@ fn test_hash_ops() {
         Resp::BulkString(Some(Bytes::from("hash"))),
         Resp::BulkString(Some(Bytes::from("f1"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &Config::default(),
         &scripting::create_script_manager(),

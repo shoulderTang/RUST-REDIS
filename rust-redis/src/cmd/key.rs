@@ -131,7 +131,7 @@ pub fn keys(items: &[Resp], db: &Db) -> Resp {
     Resp::Array(Some(matched_keys))
 }
 
-fn match_pattern(pattern: &[u8], text: &[u8]) -> bool {
+pub fn match_pattern(pattern: &[u8], text: &[u8]) -> bool {
     let mut p_idx = 0;
     let mut t_idx = 0;
     let p_len = pattern.len();

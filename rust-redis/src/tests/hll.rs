@@ -21,7 +21,8 @@ fn test_hll() {
         Resp::BulkString(Some(Bytes::from("b"))),
         Resp::BulkString(Some(Bytes::from("c"))),
     ]));
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("Expected Integer(1)"),
@@ -32,7 +33,8 @@ fn test_hll() {
         Resp::BulkString(Some(Bytes::from("PFCOUNT"))),
         Resp::BulkString(Some(Bytes::from("hll1"))),
     ]));
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::Integer(i) => assert_eq!(i, 3),
         _ => panic!("Expected Integer(3)"),
@@ -46,7 +48,8 @@ fn test_hll() {
         Resp::BulkString(Some(Bytes::from("d"))),
         Resp::BulkString(Some(Bytes::from("e"))),
     ]));
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     assert_eq!(res, Resp::Integer(1));
 
     // PFCOUNT hll2 -> 3
@@ -54,7 +57,8 @@ fn test_hll() {
         Resp::BulkString(Some(Bytes::from("PFCOUNT"))),
         Resp::BulkString(Some(Bytes::from("hll2"))),
     ]));
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     assert_eq!(res, Resp::Integer(3));
 
     // PFMERGE hll_merge hll1 hll2
@@ -64,7 +68,8 @@ fn test_hll() {
         Resp::BulkString(Some(Bytes::from("hll1"))),
         Resp::BulkString(Some(Bytes::from("hll2"))),
     ]));
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
         _ => panic!("Expected OK"),
@@ -75,7 +80,8 @@ fn test_hll() {
         Resp::BulkString(Some(Bytes::from("PFCOUNT"))),
         Resp::BulkString(Some(Bytes::from("hll_merge"))),
     ]));
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::Integer(i) => assert_eq!(i, 5),
         _ => panic!("Expected Integer(5), got {:?}", res),
@@ -102,7 +108,8 @@ fn test_hll_string_promotion() {
         Resp::BulkString(Some(Bytes::from("PFCOUNT"))),
         Resp::BulkString(Some(key.clone())),
     ]));
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::Integer(i) => assert_eq!(i, 0),
         _ => panic!("Expected Integer(0) from string promotion"),
@@ -114,7 +121,8 @@ fn test_hll_string_promotion() {
         Resp::BulkString(Some(key.clone())),
         Resp::BulkString(Some(Bytes::from("foo"))),
     ]));
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     assert_eq!(res, Resp::Integer(1));
 
     // Verify it is now Value::HyperLogLog in DB

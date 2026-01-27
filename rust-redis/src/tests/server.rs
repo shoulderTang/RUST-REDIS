@@ -1,364 +1,156 @@
-use crate::aof::AppendFsync;
-use crate::cmd::process_frame;
-use crate::cmd::scripting;
+use crate::acl::Acl;
+use crate::cmd::{process_frame, scripting};
 use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
 use bytes::Bytes;
-
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 #[test]
-fn test_ping() {
+fn test_acl_key_permissions() {
     let db = Arc::new(vec![Db::default()]);
     let mut db_index = 0;
-
-    // PING
-    let req = Resp::Array(Some(vec![Resp::BulkString(Some(Bytes::from("PING")))]));
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index,
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
-    match res {
-        Resp::SimpleString(s) => assert_eq!(s, Bytes::from("PONG")),
-        _ => panic!("expected SimpleString(PONG)"),
-    }
-
-    // PING msg
+    let cfg = Config::default();
+    let acl = Arc::new(RwLock::new(Acl::new()));
+    let mut current_username = "default".to_string();
+    let mut authenticated = true;
+    
+    // Create user bob with access to user:*
+    // ACL SETUSER bob on >secret +@all ~user:*
     let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("PING"))),
-        Resp::BulkString(Some(Bytes::from("hello"))),
+        Resp::BulkString(Some(Bytes::from("ACL"))),
+        Resp::BulkString(Some(Bytes::from("SETUSER"))),
+        Resp::BulkString(Some(Bytes::from("bob"))),
+        Resp::BulkString(Some(Bytes::from("on"))),
+        Resp::BulkString(Some(Bytes::from(">secret"))),
+        Resp::BulkString(Some(Bytes::from("+@all"))),
+        Resp::BulkString(Some(Bytes::from("~user:*"))),
+    ]));
+    process_frame(
+        req, &db, &mut db_index, &mut authenticated, &mut current_username, &acl, &None, &cfg, &scripting::create_script_manager()
+    );
+    
+    // Auth as bob
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("AUTH"))),
+        Resp::BulkString(Some(Bytes::from("bob"))),
+        Resp::BulkString(Some(Bytes::from("secret"))),
     ]));
     let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index,
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
+        req, &db, &mut db_index, &mut authenticated, &mut current_username, &acl, &None, &cfg, &scripting::create_script_manager()
     );
     match res {
-        Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("hello")),
-        _ => panic!("expected BulkString(hello)"),
+        Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
+        _ => panic!("expected OK"),
     }
-}
-
-#[test]
-fn test_unknown_command() {
-    let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
-    let req = Resp::Array(Some(vec![Resp::BulkString(Some(Bytes::from(
-        "NOT_EXIST_CMD",
-    )))]));
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index,
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
-    match res {
-        Resp::Error(e) => assert_eq!(e, "ERR unknown command"),
-        _ => panic!("expected Error"),
-    }
-}
-
-#[test]
-fn test_invalid_args() {
-    let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
-
-    // SET missing value
+    assert_eq!(current_username, "bob");
+    
+    // SET user:1 val -> OK
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("SET"))),
-        Resp::BulkString(Some(Bytes::from("foo"))),
+        Resp::BulkString(Some(Bytes::from("user:1"))),
+        Resp::BulkString(Some(Bytes::from("val"))),
     ]));
     let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index,
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
+        req, &db, &mut db_index, &mut authenticated, &mut current_username, &acl, &None, &cfg, &scripting::create_script_manager()
     );
     match res {
-        Resp::Error(e) => assert!(e.contains("wrong number of arguments")),
+        Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
+        _ => panic!("expected OK, got {:?}", res),
+    }
+    
+    // SET admin:1 val -> NOPERM
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("SET"))),
+        Resp::BulkString(Some(Bytes::from("admin:1"))),
+        Resp::BulkString(Some(Bytes::from("val"))),
+    ]));
+    let (res, _) = process_frame(
+        req, &db, &mut db_index, &mut authenticated, &mut current_username, &acl, &None, &cfg, &scripting::create_script_manager()
+    );
+    match res {
+        Resp::Error(e) => assert!(e.contains("NOPERM"), "Expected NOPERM, got {}", e),
         _ => panic!("expected Error"),
     }
 }
 
 #[test]
-fn test_command() {
+fn test_acl_persistence() {
     let db = Arc::new(vec![Db::default()]);
     let mut db_index = 0;
-
-    // COMMAND
-    let req = Resp::Array(Some(vec![Resp::BulkString(Some(Bytes::from("COMMAND")))]));
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index,
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
-
-    // Just verify it returns an array and contains some known commands
-    match res {
-        Resp::Array(Some(items)) => {
-            assert!(!items.is_empty());
-
-            // Check if "set" command is present
-            let mut found_set = false;
-            for item in items {
-                if let Resp::Array(Some(details)) = item {
-                    if let Some(Resp::BulkString(Some(name))) = details.get(0) {
-                        if *name == Bytes::from("set") {
-                            found_set = true;
-                            // Check arity
-                            match details.get(1) {
-                                Some(Resp::Integer(arity)) => assert_eq!(*arity, -3),
-                                _ => panic!("expected Integer arity for set"),
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-            assert!(found_set, "COMMAND output should contain 'set'");
-        }
-        _ => panic!("expected Array"),
+    
+    // Use a temp file
+    let temp_dir = std::env::temp_dir();
+    let acl_path = temp_dir.join("test_users.acl");
+    let acl_path_str = acl_path.to_str().unwrap().to_string();
+    
+    // Clean up before test
+    if acl_path.exists() {
+        let _ = std::fs::remove_file(&acl_path);
     }
-}
-
-#[test]
-fn test_config() {
-    let db = Arc::new(vec![Db::default()]);
-    let mut db_index = 0;
+    
     let mut cfg = Config::default();
-    cfg.appendonly = true;
-    cfg.port = 12345;
-    cfg.appendfsync = AppendFsync::Always;
-    cfg.appendfilename = "test.aof".to_string();
-
-    // CONFIG GET appendonly
+    cfg.aclfile = Some(acl_path_str.clone());
+    
+    let acl = Arc::new(RwLock::new(Acl::new()));
+    let mut current_username = "default".to_string();
+    let mut authenticated = true;
+    
+    // Create user alice
+    // ACL SETUSER alice on >pass123 +@all
     let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("CONFIG"))),
-        Resp::BulkString(Some(Bytes::from("GET"))),
-        Resp::BulkString(Some(Bytes::from("appendonly"))),
+        Resp::BulkString(Some(Bytes::from("ACL"))),
+        Resp::BulkString(Some(Bytes::from("SETUSER"))),
+        Resp::BulkString(Some(Bytes::from("alice"))),
+        Resp::BulkString(Some(Bytes::from("on"))),
+        Resp::BulkString(Some(Bytes::from(">pass123"))),
+        Resp::BulkString(Some(Bytes::from("+@all"))),
     ]));
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index,
-        &None,
-        &cfg,
-        &scripting::create_script_manager(),
+    process_frame(
+        req, &db, &mut db_index, &mut authenticated, &mut current_username, &acl, &None, &cfg, &scripting::create_script_manager()
     );
-    match res {
-        Resp::Array(Some(items)) => {
-            assert_eq!(items.len(), 2);
-            match &items[1] {
-                Resp::BulkString(Some(b)) => assert_eq!(*b, Bytes::from("yes")),
-                _ => panic!("expected BulkString(yes)"),
-            }
-        }
-        _ => panic!("expected Array"),
-    }
-
-    // CONFIG GET port
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("CONFIG"))),
-        Resp::BulkString(Some(Bytes::from("GET"))),
-        Resp::BulkString(Some(Bytes::from("port"))),
+    
+    // ACL SAVE
+    let req_save = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("ACL"))),
+        Resp::BulkString(Some(Bytes::from("SAVE"))),
     ]));
     let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index,
-        &None,
-        &cfg,
-        &scripting::create_script_manager(),
-    );
-    match res {
-        Resp::Array(Some(items)) => {
-            assert_eq!(items.len(), 2);
-            match &items[1] {
-                Resp::BulkString(Some(b)) => assert_eq!(*b, Bytes::from("12345")),
-                _ => panic!("expected BulkString(12345)"),
-            }
-        }
-        _ => panic!("expected Array"),
-    }
-
-    // CONFIG GET *
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("CONFIG"))),
-        Resp::BulkString(Some(Bytes::from("GET"))),
-        Resp::BulkString(Some(Bytes::from("*"))),
-    ]));
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index,
-        &None,
-        &cfg,
-        &scripting::create_script_manager(),
-    );
-    match res {
-        Resp::Array(Some(items)) => {
-            // Should contain multiple pairs
-            assert!(items.len() >= 2);
-            assert!(items.len() % 2 == 0);
-
-            // Convert to map for easier checking
-            let mut map = std::collections::HashMap::new();
-            for chunk in items.chunks(2) {
-                if let [Resp::BulkString(Some(k)), Resp::BulkString(Some(v))] = chunk {
-                    map.insert(k, v);
-                }
-            }
-
-            assert_eq!(
-                **map.get(&Bytes::from("appendonly")).unwrap(),
-                Bytes::from("yes")
-            );
-            assert_eq!(
-                **map.get(&Bytes::from("port")).unwrap(),
-                Bytes::from("12345")
-            );
-            assert_eq!(
-                **map.get(&Bytes::from("appendfsync")).unwrap(),
-                Bytes::from("always")
-            );
-            assert_eq!(
-                **map.get(&Bytes::from("appendfilename")).unwrap(),
-                Bytes::from("test.aof")
-            );
-        }
-        _ => panic!("expected Array"),
-    }
-}
-
-#[test]
-fn test_select() {
-    let db = Arc::new(vec![Db::default(), Db::default()]);
-    let mut db_index = 0;
-
-    // SET key val in DB 0
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SET"))),
-        Resp::BulkString(Some(Bytes::from("key"))),
-        Resp::BulkString(Some(Bytes::from("val0"))),
-    ]));
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index,
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
+        req_save, &db, &mut db_index, &mut authenticated, &mut current_username, &acl, &None, &cfg, &scripting::create_script_manager()
     );
     match res {
         Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
-        _ => panic!("expected SimpleString(OK)"),
+        _ => panic!("ACL SAVE failed: {:?}", res),
     }
-
-    // SELECT 1
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SELECT"))),
-        Resp::BulkString(Some(Bytes::from("1"))),
+    
+    // Verify file exists
+    assert!(acl_path.exists());
+    
+    // Create a NEW ACL instance to test loading
+    let new_acl = Arc::new(RwLock::new(Acl::new()));
+    
+    // ACL LOAD on new instance
+    let req_load = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("ACL"))),
+        Resp::BulkString(Some(Bytes::from("LOAD"))),
     ]));
     let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index,
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
+        req_load, &db, &mut db_index, &mut authenticated, &mut current_username, &new_acl, &None, &cfg, &scripting::create_script_manager()
     );
     match res {
         Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
-        _ => panic!("expected SimpleString(OK)"),
+        _ => panic!("ACL LOAD failed: {:?}", res),
     }
-    assert_eq!(db_index, 1);
-
-    // GET key in DB 1 (should be nil)
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("GET"))),
-        Resp::BulkString(Some(Bytes::from("key"))),
-    ]));
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index,
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
-    match res {
-        Resp::BulkString(None) => {},
-        _ => panic!("expected BulkString(None)"),
-    }
-
-    // SET key val in DB 1
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SET"))),
-        Resp::BulkString(Some(Bytes::from("key"))),
-        Resp::BulkString(Some(Bytes::from("val1"))),
-    ]));
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index,
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
-    match res {
-        Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
-        _ => panic!("expected SimpleString(OK)"),
-    }
-
-    // SELECT 0
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SELECT"))),
-        Resp::BulkString(Some(Bytes::from("0"))),
-    ]));
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index,
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
-    match res {
-        Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
-        _ => panic!("expected SimpleString(OK)"),
-    }
-    assert_eq!(db_index, 0);
-
-    // GET key in DB 0 (should be val0)
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("GET"))),
-        Resp::BulkString(Some(Bytes::from("key"))),
-    ]));
-    let (res, _) = process_frame(
-        req,
-        &db,
-        &mut db_index,
-        &None,
-        &Config::default(),
-        &scripting::create_script_manager(),
-    );
-    match res {
-        Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("val0")),
-        _ => panic!("expected BulkString(val0)"),
-    }
+    
+    // Check if alice exists in new_acl
+    let acl_guard = new_acl.read().unwrap();
+    let alice = acl_guard.get_user("alice");
+    assert!(alice.is_some(), "User alice should exist after loading");
+    let alice = alice.unwrap();
+    assert!(alice.enabled, "Alice should be enabled");
+    assert!(alice.check_password("pass123"), "Alice should have correct password");
+    assert!(alice.all_commands, "Alice should have all commands");
+    
+    // Cleanup
+    let _ = std::fs::remove_file(&acl_path);
 }

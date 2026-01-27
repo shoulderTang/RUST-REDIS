@@ -26,6 +26,8 @@ mod stream;
 mod resp;
 #[path = "../geo.rs"]
 mod geo;
+#[path = "../acl.rs"]
+pub mod acl;
 
 #[cfg(test)]
 #[path = "../tests/mod.rs"]
@@ -89,6 +91,34 @@ async fn run_server(
 
     // Create script cache
     let script_manager = cmd::scripting::create_script_manager();
+    
+    // Initialize ACL
+    let mut acl_store = acl::Acl::new();
+    
+    // Load from ACL file if configured
+    if let Some(acl_file) = &cfg.aclfile {
+        // If the file doesn't exist, we just start with default ACL.
+        // If it exists, we try to load it.
+        if std::path::Path::new(acl_file).exists() {
+            if let Err(e) = acl_store.load_from_file(acl_file) {
+                warn!("Failed to load ACL file {}: {}", acl_file, e);
+            } else {
+                info!("Loaded ACL from file: {}", acl_file);
+            }
+        }
+    }
+
+    // Apply requirepass to default user if set (compatibility)
+    if let Some(pass) = &cfg.requirepass {
+        if let Some(default_user_arc) = acl_store.users.get("default") {
+             let mut default_user = (**default_user_arc).clone();
+             // Add the password
+             default_user.passwords.insert(pass.clone());
+             acl_store.set_user(default_user);
+        }
+    }
+
+    let acl = Arc::new(std::sync::RwLock::new(acl_store));
 
     let aof = if cfg.appendonly {
         info!("AOF enabled, file: {}", cfg.appendfilename);
@@ -127,12 +157,15 @@ async fn run_server(
         let aof_cloned = aof.clone();
         let cfg_cloned = cfg_arc.clone();
         let script_manager_cloned = script_manager.clone();
+        let acl_cloned = acl.clone();
 
         tokio::spawn(async move {
             let (read_half, write_half) = socket.into_split();
             let mut reader = BufReader::new(read_half);
             let mut writer = BufWriter::new(write_half);
             let mut db_index = 0;
+            let mut authenticated = false;
+            let mut current_username = "default".to_string();
 
             loop {
                 let frame = match resp::read_frame(&mut reader).await {
@@ -144,6 +177,9 @@ async fn run_server(
                     frame,
                     &databases_cloned,
                     &mut db_index,
+                    &mut authenticated,
+                    &mut current_username,
+                    &acl_cloned,
                     &aof_cloned,
                     &cfg_cloned,
                     &script_manager_cloned,

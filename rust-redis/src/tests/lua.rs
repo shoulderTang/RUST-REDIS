@@ -19,10 +19,11 @@ fn test_eval() {
         Resp::BulkString(Some(Bytes::from("k1"))),
         Resp::BulkString(Some(Bytes::from("v1"))),
     ]));
+    let mut authenticated = true;
     process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &config,
         &scripting::create_script_manager(),
@@ -34,10 +35,11 @@ fn test_eval() {
         Resp::BulkString(Some(Bytes::from("1"))),
         Resp::BulkString(Some(Bytes::from("k1"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &config,
         &scripting::create_script_manager(),
@@ -60,10 +62,11 @@ fn test_eval_pcall() {
         Resp::BulkString(Some(Bytes::from("return redis.call('UNKNOWN_CMD')"))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &config,
         &scripting::create_script_manager(),
@@ -79,10 +82,11 @@ fn test_eval_pcall() {
         Resp::BulkString(Some(Bytes::from("return redis.pcall('UNKNOWN_CMD')"))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
+    let mut authenticated = true;
     let (res, _) = process_frame(
         req,
         &db,
-        &mut db_index,
+        &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
         &None,
         &config,
         &scripting::create_script_manager(),
@@ -107,7 +111,8 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from("LOAD"))),
         Resp::BulkString(Some(Bytes::from(script))),
     ]));
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     let sha1 = match res {
         Resp::BulkString(Some(b)) => {
             let s = std::str::from_utf8(&b).unwrap();
@@ -123,7 +128,8 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from("EXISTS"))),
         Resp::BulkString(Some(Bytes::from(sha1.clone()))),
     ]));
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 1);
@@ -141,7 +147,8 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from(sha1.clone()))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("hello")),
         _ => panic!("expected BulkString(hello)"),
@@ -152,7 +159,8 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from("SCRIPT"))),
         Resp::BulkString(Some(Bytes::from("FLUSH"))),
     ]));
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
         _ => panic!("expected SimpleString(OK)"),
@@ -164,7 +172,8 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from("EXISTS"))),
         Resp::BulkString(Some(Bytes::from(sha1.clone()))),
     ]));
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::Array(Some(items)) => match items[0] {
             Resp::Integer(i) => assert_eq!(i, 0),
@@ -179,7 +188,8 @@ fn test_script_commands() {
         Resp::BulkString(Some(Bytes::from(sha1))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
-    let (res, _) = process_frame(req, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res, _) = process_frame(req, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res {
         Resp::Error(e) => assert!(e.contains("NOSCRIPT")),
         _ => panic!("expected NOSCRIPT error"),
@@ -200,7 +210,8 @@ fn test_lua_state_reuse() {
         Resp::BulkString(Some(Bytes::from(script1))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
-    let (res1, _) = process_frame(req1, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res1, _) = process_frame(req1, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res1 {
         Resp::Integer(i) => assert_eq!(i, 10),
         _ => panic!("expected Integer(10), got {:?}", res1),
@@ -213,7 +224,8 @@ fn test_lua_state_reuse() {
         Resp::BulkString(Some(Bytes::from(script2))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
-    let (res2, _) = process_frame(req2, &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (res2, _) = process_frame(req2, &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match res2 {
         Resp::Integer(i) => assert_eq!(i, 10), // Should still be 10 if reused
         _ => panic!("expected Integer(10), got {:?}", res2),

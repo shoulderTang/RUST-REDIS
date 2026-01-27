@@ -2,11 +2,12 @@ use crate::aof::Aof;
 use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
+use crate::acl::Acl;
 use bytes::Bytes;
 use dashmap::DashMap;
 use mlua::prelude::*;
 use sha1::{Digest, Sha1};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::Mutex as TokioMutex;
 
 pub struct ScriptManager {
@@ -99,6 +100,8 @@ fn redis_call_handler<'lua>(
     aof: &Option<Arc<TokioMutex<Aof>>>,
     config: &Config,
     script_manager: &Arc<ScriptManager>,
+    current_username: &str,
+    acl: &Arc<RwLock<Acl>>,
 ) -> LuaResult<LuaValue<'lua>> {
     let mut resp_args = Vec::new();
     for arg in args {
@@ -123,7 +126,9 @@ fn redis_call_handler<'lua>(
     let frame = Resp::Array(Some(resp_args));
     // Use a local db_index to ensure SELECT in Lua doesn't affect the client connection
     let mut local_db_index = db_index;
-    let (res, _) = super::process_frame(frame, databases, &mut local_db_index, aof, config, script_manager);
+    let mut authenticated = true;
+    let mut user = current_username.to_string();
+    let (res, _) = super::process_frame(frame, databases, &mut local_db_index, &mut authenticated, &mut user, acl, aof, config, script_manager);
 
     if raise_error {
         if let Resp::Error(msg) = &res {
@@ -145,6 +150,8 @@ fn eval_script(
     aof: &Option<Arc<TokioMutex<Aof>>>,
     config: &Config,
     script_manager: &Arc<ScriptManager>,
+    current_username: &mut String,
+    acl: &Arc<RwLock<Acl>>,
 ) -> Resp {
     let keys: Vec<String> = items[keys_start..keys_end]
         .iter()
@@ -182,6 +189,8 @@ fn eval_script(
     let aof_clone = aof.clone();
     let config_clone = config.clone();
     let script_manager_clone = script_manager.clone();
+    let user_clone = current_username.to_string();
+    let acl_clone = acl.clone();
     let redis_call = lua
         .create_function(move |lua, args| {
             redis_call_handler(
@@ -193,6 +202,8 @@ fn eval_script(
                 &aof_clone,
                 &config_clone,
                 &script_manager_clone,
+                &user_clone,
+                &acl_clone,
             )
         })
         .unwrap();
@@ -201,6 +212,8 @@ fn eval_script(
     let aof_clone = aof.clone();
     let config_clone = config.clone();
     let script_manager_clone = script_manager.clone();
+    let user_clone = current_username.to_string();
+    let acl_clone = acl.clone();
     let redis_pcall = lua
         .create_function(move |lua, args| {
             redis_call_handler(
@@ -212,6 +225,8 @@ fn eval_script(
                 &aof_clone,
                 &config_clone,
                 &script_manager_clone,
+                &user_clone,
+                &acl_clone,
             )
         })
         .unwrap();
@@ -235,38 +250,35 @@ pub fn eval(
     aof: &Option<Arc<TokioMutex<Aof>>>,
     config: &Config,
     script_manager: &Arc<ScriptManager>,
-) -> Resp {
+    current_username: &mut String,
+    acl: &Arc<RwLock<Acl>>,
+) -> (Resp, Option<Resp>) {
     if items.len() < 3 {
-        return Resp::Error("ERR wrong number of arguments for 'eval' command".to_string());
+        return (Resp::Error("ERR wrong number of arguments for 'eval' command".to_string()), None);
     }
 
     let script = match &items[1] {
-        Resp::BulkString(Some(b)) => match std::str::from_utf8(b) {
-            Ok(s) => s,
-            Err(_) => return Resp::Error("ERR script is not valid utf8".to_string()),
-        },
-        _ => return Resp::Error("ERR script must be a string".to_string()),
+        Resp::BulkString(Some(b)) => std::str::from_utf8(b).unwrap_or(""),
+        _ => return (Resp::Error("ERR invalid script".to_string()), None),
     };
 
     let numkeys = match &items[2] {
-        Resp::BulkString(Some(b)) => match std::str::from_utf8(b).unwrap_or("0").parse::<usize>() {
-            Ok(n) => n,
-            Err(_) => {
-                return Resp::Error("ERR value is not an integer or out of range".to_string());
-            }
-        },
-        _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        Resp::BulkString(Some(b)) => std::str::from_utf8(b)
+            .unwrap_or("0")
+            .parse::<usize>()
+            .unwrap_or(0),
+        _ => return (Resp::Error("ERR invalid numkeys".to_string()), None),
     };
 
-    if items.len() < 3 + numkeys {
-        return Resp::Error("ERR wrong number of arguments for 'eval' command".to_string());
+    let keys_start = 3;
+    let keys_end = keys_start + numkeys;
+    if items.len() < keys_end {
+        return (Resp::Error("ERR wrong number of arguments for 'eval' command".to_string()), None);
     }
 
-    let keys_start = 3;
-    let keys_end = 3 + numkeys;
     let args_start = keys_end;
 
-    eval_script(
+    let res = eval_script(
         script,
         items,
         keys_start,
@@ -277,7 +289,10 @@ pub fn eval(
         aof,
         config,
         script_manager,
-    )
+        current_username,
+        acl,
+    );
+    (res, None)
 }
 
 pub fn evalsha(
@@ -287,44 +302,41 @@ pub fn evalsha(
     aof: &Option<Arc<TokioMutex<Aof>>>,
     config: &Config,
     script_manager: &Arc<ScriptManager>,
-) -> Resp {
+    current_username: &mut String,
+    acl: &Arc<RwLock<Acl>>,
+) -> (Resp, Option<Resp>) {
     if items.len() < 3 {
-        return Resp::Error("ERR wrong number of arguments for 'evalsha' command".to_string());
+        return (Resp::Error("ERR wrong number of arguments for 'evalsha' command".to_string()), None);
     }
 
-    let sha = match &items[1] {
-        Resp::BulkString(Some(b)) => match std::str::from_utf8(b) {
-            Ok(s) => s,
-            Err(_) => return Resp::Error("ERR sha1 is not valid utf8".to_string()),
-        },
-        _ => return Resp::Error("ERR sha1 must be a string".to_string()),
+    let sha1 = match &items[1] {
+        Resp::BulkString(Some(b)) => std::str::from_utf8(b).unwrap_or(""),
+        _ => return (Resp::Error("ERR invalid sha1".to_string()), None),
     };
 
-    let script = if let Some(s) = script_manager.cache.get(sha) {
+    let script = if let Some(s) = script_manager.cache.get(sha1) {
         s.clone()
     } else {
-        return Resp::Error("NOSCRIPT No matching script. Please use EVAL.".to_string());
+        return (Resp::Error("NOSCRIPT No matching script. Please use EVAL.".to_string()), None);
     };
 
     let numkeys = match &items[2] {
-        Resp::BulkString(Some(b)) => match std::str::from_utf8(b).unwrap_or("0").parse::<usize>() {
-            Ok(n) => n,
-            Err(_) => {
-                return Resp::Error("ERR value is not an integer or out of range".to_string());
-            }
-        },
-        _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        Resp::BulkString(Some(b)) => std::str::from_utf8(b)
+            .unwrap_or("0")
+            .parse::<usize>()
+            .unwrap_or(0),
+        _ => return (Resp::Error("ERR invalid numkeys".to_string()), None),
     };
 
-    if items.len() < 3 + numkeys {
-        return Resp::Error("ERR wrong number of arguments for 'evalsha' command".to_string());
+    let keys_start = 3;
+    let keys_end = keys_start + numkeys;
+    if items.len() < keys_end {
+        return (Resp::Error("ERR wrong number of arguments for 'evalsha' command".to_string()), None);
     }
 
-    let keys_start = 3;
-    let keys_end = 3 + numkeys;
     let args_start = keys_end;
 
-    eval_script(
+    let res = eval_script(
         &script,
         items,
         keys_start,
@@ -335,7 +347,10 @@ pub fn evalsha(
         aof,
         config,
         script_manager,
-    )
+        current_username,
+        acl,
+    );
+    (res, None)
 }
 
 pub fn script(items: &[Resp], script_manager: &Arc<ScriptManager>) -> Resp {

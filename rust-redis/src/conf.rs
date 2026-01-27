@@ -14,6 +14,8 @@ pub struct Config {
     pub appendfsync: AppendFsync,
     pub dbfilename: String,
     pub dir: String,
+    pub requirepass: Option<String>,
+    pub aclfile: Option<String>,
     pub save_params: Vec<(u64, u64)>,
 }
 
@@ -29,6 +31,8 @@ impl Default for Config {
             appendfsync: AppendFsync::EverySec,
             dbfilename: "dump.rdb".to_string(),
             dir: ".".to_string(),
+            requirepass: None,
+            aclfile: None,
             save_params: vec![(3600, 1), (300, 100), (60, 10000)],
         }
     }
@@ -98,7 +102,22 @@ pub fn load_config(path: Option<&str>) -> io::Result<Config> {
                 cfg.appendonly = parts[1].eq_ignore_ascii_case("yes");
             }
             "appendfilename" if parts.len() >= 2 => {
-                cfg.appendfilename = parts[1].trim_matches('"').to_string();
+                let filename = parts[1].trim_matches('"').to_string();
+                if !filename.is_empty() {
+                    cfg.appendfilename = filename;
+                }
+            }
+            "requirepass" if parts.len() >= 2 => {
+                let pass = parts[1].trim_matches('"').to_string();
+                if !pass.is_empty() {
+                    cfg.requirepass = Some(pass);
+                }
+            }
+            "aclfile" if parts.len() >= 2 => {
+                let file = parts[1].trim_matches('"').to_string();
+                if !file.is_empty() {
+                    cfg.aclfile = Some(file);
+                }
             }
             "appendfsync" if parts.len() >= 2 => match parts[1].to_lowercase().as_str() {
                 "always" => cfg.appendfsync = AppendFsync::Always,

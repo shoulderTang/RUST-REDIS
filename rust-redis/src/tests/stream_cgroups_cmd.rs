@@ -21,7 +21,8 @@ async fn test_xgroup_create_and_xreadgroup() {
         Resp::BulkString(Some(Bytes::from("field1"))),
         Resp::BulkString(Some(Bytes::from("value1"))),
     ];
-    process_frame(Resp::Array(Some(args)), &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    process_frame(Resp::Array(Some(args)), &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
 
     let args = vec![
         Resp::BulkString(Some(Bytes::from("XADD"))),
@@ -30,7 +31,8 @@ async fn test_xgroup_create_and_xreadgroup() {
         Resp::BulkString(Some(Bytes::from("field2"))),
         Resp::BulkString(Some(Bytes::from("value2"))),
     ];
-    process_frame(Resp::Array(Some(args)), &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    process_frame(Resp::Array(Some(args)), &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
 
     // 2. Create a consumer group
     // XGROUP CREATE mystream mygroup 0
@@ -41,7 +43,8 @@ async fn test_xgroup_create_and_xreadgroup() {
         Resp::BulkString(Some(Bytes::from("mygroup"))),
         Resp::BulkString(Some(Bytes::from("0-0"))),
     ];
-    let (resp, _) = process_frame(Resp::Array(Some(args)), &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (resp, _) = process_frame(Resp::Array(Some(args)), &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     match resp {
         Resp::SimpleString(s) => assert_eq!(s, Bytes::from("OK")),
         _ => panic!("Expected OK"),
@@ -60,7 +63,8 @@ async fn test_xgroup_create_and_xreadgroup() {
         Resp::BulkString(Some(Bytes::from("mystream"))),
         Resp::BulkString(Some(Bytes::from(">"))),
     ];
-    let (resp, _) = process_frame(Resp::Array(Some(args)), &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (resp, _) = process_frame(Resp::Array(Some(args)), &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
 
     // Expecting 100-1
     if let Resp::Array(Some(arr)) = resp {
@@ -91,7 +95,8 @@ async fn test_xgroup_create_and_xreadgroup() {
         Resp::BulkString(Some(Bytes::from("mystream"))),
         Resp::BulkString(Some(Bytes::from(">"))),
     ];
-    let (resp, _) = process_frame(Resp::Array(Some(args)), &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (resp, _) = process_frame(Resp::Array(Some(args)), &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     
     // Expecting 100-2
     if let Resp::Array(Some(arr)) = resp {
@@ -119,7 +124,8 @@ async fn test_xgroup_create_and_xreadgroup() {
         Resp::BulkString(Some(Bytes::from("mystream"))),
         Resp::BulkString(Some(Bytes::from("0-0"))),
     ];
-    let (resp, _) = process_frame(Resp::Array(Some(args)), &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (resp, _) = process_frame(Resp::Array(Some(args)), &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
 
     // Expecting 2 entries (100-1 and 100-2) in PEL
     if let Resp::Array(Some(arr)) = resp {
@@ -138,7 +144,8 @@ async fn test_xgroup_create_and_xreadgroup() {
         Resp::BulkString(Some(Bytes::from("mygroup"))),
         Resp::BulkString(Some(Bytes::from("100-1"))),
     ];
-    let (resp, _) = process_frame(Resp::Array(Some(args)), &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (resp, _) = process_frame(Resp::Array(Some(args)), &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
     if let Resp::Integer(count) = resp {
         assert_eq!(count, 1);
     } else {
@@ -155,7 +162,8 @@ async fn test_xgroup_create_and_xreadgroup() {
         Resp::BulkString(Some(Bytes::from("mystream"))),
         Resp::BulkString(Some(Bytes::from("0-0"))),
     ];
-    let (resp, _) = process_frame(Resp::Array(Some(args)), &db, &mut db_index, &None, &config, &script_manager);
+    let mut authenticated = true;
+    let (resp, _) = process_frame(Resp::Array(Some(args)), &db, &mut db_index, &mut authenticated, &mut "default".to_string(), &std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())), &None, &config, &script_manager);
 
     if let Resp::Array(Some(arr)) = resp {
          if let Resp::Array(Some(stream_res)) = &arr[0] {
