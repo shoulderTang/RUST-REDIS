@@ -15,6 +15,7 @@ dashmap = "6.1"
 mlua = { version = "0.9", features = ["lua54", "vendored", "send", "async"] }
 sha1 = "0.10.6"
 hex = "0.4.3"
+glob = "0.3"
 
 [profile.release]
 # 优化级别：0(无) < 1(轻量) < 2(中度) < 3(最高) < "s"(尺寸优化) < "z"(极致尺寸优化)

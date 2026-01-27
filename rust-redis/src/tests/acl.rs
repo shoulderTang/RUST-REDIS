@@ -13,11 +13,15 @@ async fn test_acl_key_permissions() {
     let acl = Arc::new(RwLock::new(Acl::new()));
     
     let mut conn_ctx = crate::cmd::ConnectionContext {
+        id: 0,
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
         in_multi: false,
         multi_queue: Vec::new(),
+        msg_sender: None,
+        subscriptions: std::collections::HashSet::new(),
+        psubscriptions: std::collections::HashSet::new(),
     };
 
     let server_ctx = crate::cmd::ServerContext {
@@ -28,6 +32,8 @@ async fn test_acl_key_permissions() {
         script_manager: scripting::create_script_manager(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
     
     // Create user bob with access to user:*
@@ -110,11 +116,15 @@ async fn test_acl_persistence() {
     let acl = Arc::new(RwLock::new(Acl::new()));
     
     let mut conn_ctx = crate::cmd::ConnectionContext {
+        id: 0,
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
         in_multi: false,
         multi_queue: Vec::new(),
+        msg_sender: None,
+        subscriptions: std::collections::HashSet::new(),
+        psubscriptions: std::collections::HashSet::new(),
     };
 
     let server_ctx = crate::cmd::ServerContext {
@@ -125,6 +135,8 @@ async fn test_acl_persistence() {
         script_manager: scripting::create_script_manager(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
     
     // Create user alice
@@ -168,6 +180,8 @@ async fn test_acl_persistence() {
         script_manager: scripting::create_script_manager(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
     
     // ACL LOAD on new instance

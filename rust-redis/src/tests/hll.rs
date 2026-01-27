@@ -21,14 +21,20 @@ async fn test_hll() {
         script_manager: script_manager,
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
+        id: 0,
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
         in_multi: false,
         multi_queue: Vec::new(),
+        msg_sender: None,
+        subscriptions: std::collections::HashSet::new(),
+        psubscriptions: std::collections::HashSet::new(),
     };
 
     // PFADD hll1 a b c
@@ -118,14 +124,20 @@ async fn test_hll_string_promotion() {
         script_manager: script_manager,
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
+        id: 0,
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
         in_multi: false,
         multi_queue: Vec::new(),
+        msg_sender: None,
+        subscriptions: std::collections::HashSet::new(),
+        psubscriptions: std::collections::HashSet::new(),
     };
 
     // Manually insert a String that looks like an HLL (16k zero bytes)

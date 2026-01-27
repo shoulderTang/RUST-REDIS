@@ -14,3 +14,4 @@ mod stream_cgroups_cmd;
 mod stream_persistence;
 mod hll;
 mod geo;
+mod pubsub;

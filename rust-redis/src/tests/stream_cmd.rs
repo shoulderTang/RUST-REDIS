@@ -21,14 +21,20 @@ async fn test_xadd() {
         script_manager: script_manager,
         blocking_waiters: Arc::new(DashMap::new()),
         blocking_zset_waiters: Arc::new(DashMap::new()),
+        pubsub_channels: Arc::new(DashMap::new()),
+        pubsub_patterns: Arc::new(DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
+        id: 0,
         db_index: 0,
         authenticated: true,
         current_username: "default".to_string(),
         in_multi: false,
         multi_queue: Vec::new(),
+        msg_sender: None,
+        subscriptions: std::collections::HashSet::new(),
+        psubscriptions: std::collections::HashSet::new(),
     };
 
     // XADD key * field value
@@ -67,6 +73,8 @@ async fn test_xlen() {
         script_manager: script_manager,
         blocking_waiters: Arc::new(DashMap::new()),
         blocking_zset_waiters: Arc::new(DashMap::new()),
+        pubsub_channels: Arc::new(DashMap::new()),
+        pubsub_patterns: Arc::new(DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -75,6 +83,10 @@ async fn test_xlen() {
         current_username: "default".to_string(),
         in_multi: false,
         multi_queue: Vec::new(),
+        id: 0,
+        msg_sender: None,
+        subscriptions: std::collections::HashSet::new(),
+        psubscriptions: std::collections::HashSet::new(),
     };
 
     // XADD key * field value
@@ -114,6 +126,8 @@ async fn test_xlen_bug_repro() {
         script_manager: script_manager,
         blocking_waiters: Arc::new(DashMap::new()),
         blocking_zset_waiters: Arc::new(DashMap::new()),
+        pubsub_channels: Arc::new(DashMap::new()),
+        pubsub_patterns: Arc::new(DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -122,6 +136,10 @@ async fn test_xlen_bug_repro() {
         current_username: "default".to_string(),
         in_multi: false,
         multi_queue: Vec::new(),
+        id: 0,
+        msg_sender: None,
+        subscriptions: std::collections::HashSet::new(),
+        psubscriptions: std::collections::HashSet::new(),
     };
 
     // Scenario 1: One XADD with multiple fields
@@ -207,6 +225,8 @@ async fn test_xrevrange() {
         script_manager: script_manager,
         blocking_waiters: Arc::new(DashMap::new()),
         blocking_zset_waiters: Arc::new(DashMap::new()),
+        pubsub_channels: Arc::new(DashMap::new()),
+        pubsub_patterns: Arc::new(DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -215,6 +235,10 @@ async fn test_xrevrange() {
         current_username: "default".to_string(),
         in_multi: false,
         multi_queue: Vec::new(),
+        id: 0,
+        msg_sender: None,
+        subscriptions: std::collections::HashSet::new(),
+        psubscriptions: std::collections::HashSet::new(),
     };
 
     // XADD key 100-1 field value
@@ -279,6 +303,8 @@ async fn test_xrange() {
         script_manager: script_manager,
         blocking_waiters: Arc::new(DashMap::new()),
         blocking_zset_waiters: Arc::new(DashMap::new()),
+        pubsub_channels: Arc::new(DashMap::new()),
+        pubsub_patterns: Arc::new(DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -287,6 +313,10 @@ async fn test_xrange() {
         current_username: "default".to_string(),
         in_multi: false,
         multi_queue: Vec::new(),
+        id: 0,
+        msg_sender: None,
+        subscriptions: std::collections::HashSet::new(),
+        psubscriptions: std::collections::HashSet::new(),
     };
 
     // XADD key 100-1 field value
@@ -355,6 +385,8 @@ async fn test_xdel() {
         script_manager: script_manager,
         blocking_waiters: Arc::new(DashMap::new()),
         blocking_zset_waiters: Arc::new(DashMap::new()),
+        pubsub_channels: Arc::new(DashMap::new()),
+        pubsub_patterns: Arc::new(DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -363,6 +395,10 @@ async fn test_xdel() {
         current_username: "default".to_string(),
         in_multi: false,
         multi_queue: Vec::new(),
+        id: 0,
+        msg_sender: None,
+        subscriptions: std::collections::HashSet::new(),
+        psubscriptions: std::collections::HashSet::new(),
     };
 
     // XADD key 100-1 field value
@@ -424,6 +460,8 @@ async fn test_xread() {
         script_manager: script_manager,
         blocking_waiters: Arc::new(DashMap::new()),
         blocking_zset_waiters: Arc::new(DashMap::new()),
+        pubsub_channels: Arc::new(DashMap::new()),
+        pubsub_patterns: Arc::new(DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -432,6 +470,10 @@ async fn test_xread() {
         current_username: "default".to_string(),
         in_multi: false,
         multi_queue: Vec::new(),
+        id: 0,
+        msg_sender: None,
+        subscriptions: std::collections::HashSet::new(),
+        psubscriptions: std::collections::HashSet::new(),
     };
 
     // XADD key 100-1 field value
@@ -577,6 +619,8 @@ async fn test_xread_block() {
         script_manager: script_manager,
         blocking_waiters: Arc::new(DashMap::new()),
         blocking_zset_waiters: Arc::new(DashMap::new()),
+        pubsub_channels: Arc::new(DashMap::new()),
+        pubsub_patterns: Arc::new(DashMap::new()),
     };
 
     // 1. Start blocking XREAD
@@ -588,6 +632,10 @@ async fn test_xread_block() {
             current_username: "default".to_string(),
             in_multi: false,
             multi_queue: Vec::new(),
+        id: 0,
+        msg_sender: None,
+        subscriptions: std::collections::HashSet::new(),
+        psubscriptions: std::collections::HashSet::new(),
         };
         let args = vec![
             Resp::BulkString(Some(Bytes::from("XREAD"))),
@@ -612,6 +660,10 @@ async fn test_xread_block() {
         current_username: "default".to_string(),
         in_multi: false,
         multi_queue: Vec::new(),
+        id: 0,
+        msg_sender: None,
+        subscriptions: std::collections::HashSet::new(),
+        psubscriptions: std::collections::HashSet::new(),
     };
     let args = vec![
         Resp::BulkString(Some(Bytes::from("XADD"))),

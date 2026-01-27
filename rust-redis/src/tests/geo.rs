@@ -13,7 +13,7 @@ async fn test_geo() {
     let script_manager = scripting::create_script_manager();
     let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
 
-    let mut conn_ctx = crate::cmd::ConnectionContext::new();
+    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
     let server_ctx = crate::cmd::ServerContext {
         databases: db.clone(),
         acl: acl.clone(),
@@ -22,6 +22,8 @@ async fn test_geo() {
         script_manager: script_manager.clone(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     // GEOADD Sicily 13.361389 38.115556 "Palermo" 15.087269 37.502669 "Catania"
@@ -156,7 +158,7 @@ async fn test_georadius() {
     let script_manager = scripting::create_script_manager();
     let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
 
-    let mut conn_ctx = crate::cmd::ConnectionContext::new();
+    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
     let server_ctx = crate::cmd::ServerContext {
         databases: db.clone(),
         acl: acl.clone(),
@@ -165,6 +167,8 @@ async fn test_georadius() {
         script_manager: script_manager.clone(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     // GEOADD Sicily 13.361389 38.115556 "Palermo" 15.087269 37.502669 "Catania"
@@ -263,7 +267,7 @@ async fn test_georadiusbymember() {
     let script_manager = scripting::create_script_manager();
     let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
 
-    let mut conn_ctx = crate::cmd::ConnectionContext::new();
+    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
     let server_ctx = crate::cmd::ServerContext {
         databases: db.clone(),
         acl: acl.clone(),
@@ -272,6 +276,8 @@ async fn test_georadiusbymember() {
         script_manager: script_manager.clone(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     // GEOADD Sicily 13.583333 37.316667 "Agrigento"

@@ -21,15 +21,12 @@ async fn test_keys() {
         script_manager: script_manager,
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
-    let mut conn_ctx = ConnectionContext {
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-    };
+    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
+    conn_ctx.authenticated = true;
 
     // Setup keys
     let req = Resp::Array(Some(vec![
@@ -108,15 +105,12 @@ async fn test_expire_ttl() {
         script_manager: script_manager,
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
-    let mut conn_ctx = ConnectionContext {
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-    };
+    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
+    conn_ctx.authenticated = true;
 
     // SET key val
     let req = Resp::Array(Some(vec![
@@ -201,15 +195,12 @@ async fn test_dbsize() {
         script_manager: script_manager,
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
-    let mut conn_ctx = ConnectionContext {
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-    };
+    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
+    conn_ctx.authenticated = true;
 
     // DBSIZE -> 0
     let req = Resp::Array(Some(vec![Resp::BulkString(Some(Bytes::from("DBSIZE")))]));
@@ -251,15 +242,12 @@ async fn test_del() {
         script_manager: script_manager,
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
-    let mut conn_ctx = ConnectionContext {
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-    };
+    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
+    conn_ctx.authenticated = true;
 
     // Setup keys
     let req = Resp::Array(Some(vec![

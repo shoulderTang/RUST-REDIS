@@ -5,7 +5,7 @@ use crate::db::Db;
 use crate::acl::Acl;
 use crate::resp::{Resp, as_bytes};
 use std::sync::{Arc, RwLock, OnceLock};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque, HashSet};
 use tokio::sync::Mutex;
 use dashmap::DashMap;
 use tracing::error;
@@ -24,25 +24,34 @@ mod zset;
 mod hll;
 mod geo;
 mod acl;
+pub mod pubsub;
 
 
 #[derive(Debug, Clone)]
 pub struct ConnectionContext {
+    pub id: u64,
     pub db_index: usize,
     pub authenticated: bool,
     pub current_username: String,
     pub in_multi: bool,
     pub multi_queue: Vec<Vec<Resp>>,
+    pub msg_sender: Option<tokio::sync::mpsc::Sender<Resp>>,
+    pub subscriptions: HashSet<String>,
+    pub psubscriptions: HashSet<String>,
 }
 
 impl ConnectionContext {
-    pub fn new() -> Self {
+    pub fn new(id: u64, msg_sender: Option<tokio::sync::mpsc::Sender<Resp>>) -> Self {
         Self {
+            id,
             db_index: 0,
             authenticated: false,
             current_username: "default".to_string(),
             in_multi: false,
             multi_queue: Vec::new(),
+            msg_sender,
+            subscriptions: HashSet::new(),
+            psubscriptions: HashSet::new(),
         }
     }
 }
@@ -56,6 +65,8 @@ pub struct ServerContext {
     pub script_manager: Arc<ScriptManager>,
     pub blocking_waiters: Arc<DashMap<(usize, Vec<u8>), VecDeque<tokio::sync::mpsc::Sender<(Vec<u8>, Vec<u8>)>>>>,
     pub blocking_zset_waiters: Arc<DashMap<(usize, Vec<u8>), VecDeque<(tokio::sync::mpsc::Sender<(Vec<u8>, Vec<u8>, f64)>, bool)>>>,
+    pub pubsub_channels: Arc<DashMap<String, DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>>,
+    pub pubsub_patterns: Arc<DashMap<String, DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>>,
 }
 
 
@@ -145,6 +156,12 @@ enum Command {
     Xgroup,
     Xreadgroup,
     Xack,
+    Subscribe,
+    Unsubscribe,
+    Publish,
+    Psubscribe,
+    Punsubscribe,
+    PubSub,
     Unknown,
 }
 
@@ -251,7 +268,7 @@ pub async fn process_frame(
         _ => (Resp::Error("ERR protocol error: expected array".to_string()), None, None),
     };
 
-    let mut cmd_to_log = if let Some(l) = custom_log {
+    let cmd_to_log = if let Some(l) = custom_log {
         Some(l)
     } else if let (Resp::Array(Some(items)), Some(cmd_name)) = (&original_frame, cmd_name_opt) {
         if items.is_empty() {
@@ -328,6 +345,15 @@ async fn dispatch_command(
                     Resp::SimpleString(bytes::Bytes::from_static(b"QUEUED")),
                     None,
                 );
+            }
+        }
+    }
+
+    if !conn_ctx.subscriptions.is_empty() {
+        match cmd {
+            Command::Subscribe | Command::Unsubscribe | Command::Ping => {},
+            _ => {
+                 return (Resp::Error("ERR only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT allowed in this context".to_string()), None);
             }
         }
     }
@@ -507,6 +533,12 @@ async fn dispatch_command(
         Command::Xgroup => stream::xgroup(items, db),
         Command::Xreadgroup => stream::xreadgroup_cmd(items, conn_ctx, server_ctx).await,
         Command::Xack => stream::xack(items, db),
+        Command::Publish => (pubsub::publish(items.to_vec(), conn_ctx, server_ctx).await, None),
+        Command::Subscribe => (pubsub::subscribe(items.to_vec(), conn_ctx, server_ctx).await, None),
+        Command::Unsubscribe => (pubsub::unsubscribe(items.to_vec(), conn_ctx, server_ctx).await, None),
+        Command::Psubscribe => (pubsub::psubscribe(items.to_vec(), conn_ctx, server_ctx).await, None),
+        Command::Punsubscribe => (pubsub::punsubscribe(items.to_vec(), conn_ctx, server_ctx).await, None),
+        Command::PubSub => (pubsub::pubsub_command(items.to_vec(), conn_ctx, server_ctx).await, None),
         Command::BgRewriteAof => {
             if let Some(aof) = &server_ctx.aof {
                 let aof = aof.clone();
@@ -610,6 +642,12 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("MULTI".to_string(), Command::Multi);
         m.insert("EXEC".to_string(), Command::Exec);
         m.insert("DISCARD".to_string(), Command::Discard);
+        m.insert("SUBSCRIBE".to_string(), Command::Subscribe);
+        m.insert("UNSUBSCRIBE".to_string(), Command::Unsubscribe);
+        m.insert("PUBLISH".to_string(), Command::Publish);
+        m.insert("PSUBSCRIBE".to_string(), Command::Psubscribe);
+        m.insert("PUNSUBSCRIBE".to_string(), Command::Punsubscribe);
+        m.insert("PUBSUB".to_string(), Command::PubSub);
         m
     });
 

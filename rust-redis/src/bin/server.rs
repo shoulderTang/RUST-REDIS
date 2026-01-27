@@ -2,6 +2,7 @@
 #![allow(unused_imports)]
 #![allow(dead_code)]
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -146,6 +147,8 @@ async fn run_server(
         script_manager: script_manager.clone(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     // Background task to clean up expired keys
@@ -160,22 +163,41 @@ async fn run_server(
         }
     });
 
+    let next_connection_id = Arc::new(AtomicU64::new(1));
+
     loop {
         let (socket, addr) = listener.accept().await.unwrap();
         info!("accepted connection from {}", addr);
         let server_ctx_cloned: cmd::ServerContext = server_ctx.clone();
+        let connection_id = next_connection_id.fetch_add(1, Ordering::Relaxed);
 
         tokio::spawn(async move {
             let (read_half, write_half) = socket.into_split();
             let mut reader = BufReader::new(read_half);
-            let mut writer = BufWriter::new(write_half);
-            let mut conn_ctx = cmd::ConnectionContext::new();
+            
+            let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+            let tx_for_conn = tx.clone();
+
+            // Writer task
+            tokio::spawn(async move {
+                let mut writer = BufWriter::new(write_half);
+                while let Some(resp) = rx.recv().await {
+                    if resp::write_frame(&mut writer, &resp).await.is_err() {
+                        break;
+                    }
+                    if writer.flush().await.is_err() {
+                        break;
+                    }
+                }
+            });
+
+            let mut conn_ctx = cmd::ConnectionContext::new(connection_id, Some(tx_for_conn));
 
             loop {
                 let frame = match resp::read_frame(&mut reader).await {
                     Ok(Some(f)) => f,
-                    Ok(None) => return,
-                    Err(_) => return,
+                    Ok(None) => break,
+                    Err(_) => break,
                 };
                 let (response, cmd_to_log) = cmd::process_frame(
                     frame,
@@ -183,8 +205,8 @@ async fn run_server(
                     &server_ctx_cloned,
                 ).await;
 
-                if resp::write_frame(&mut writer, &response).await.is_err() {
-                    return;
+                if tx.send(response).await.is_err() {
+                    break;
                 }
 
                 if let Some(cmd) = cmd_to_log {
@@ -194,13 +216,17 @@ async fn run_server(
                         }
                     }
                 }
-
-                // Smart flush: only flush if the buffer is empty, meaning we might wait for IO.
-                // If the buffer is not empty, we have more pipelined requests to process immediately.
-                if reader.buffer().is_empty() {
-                    if writer.flush().await.is_err() {
-                        return;
-                    }
+            }
+            
+            // Cleanup subscriptions on disconnect
+            for channel in conn_ctx.subscriptions.iter() {
+                if let Some(subscribers) = server_ctx_cloned.pubsub_channels.get(channel) {
+                    subscribers.remove(&conn_ctx.id);
+                }
+            }
+            for pattern in conn_ctx.psubscriptions.iter() {
+                if let Some(subscribers) = server_ctx_cloned.pubsub_patterns.get(pattern) {
+                    subscribers.remove(&conn_ctx.id);
                 }
             }
         });

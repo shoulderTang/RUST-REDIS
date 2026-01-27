@@ -14,7 +14,7 @@ async fn test_set_get() {
     let cfg = std::sync::Arc::new(Config::default());
     let script_manager = scripting::create_script_manager();
     
-    let mut conn_ctx = crate::cmd::ConnectionContext::new();
+    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
     let server_ctx = crate::cmd::ServerContext {
         databases: db.clone(),
         acl: acl.clone(),
@@ -23,6 +23,8 @@ async fn test_set_get() {
         script_manager: script_manager.clone(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     // SET key val
@@ -67,7 +69,7 @@ async fn test_mset_mget() {
     let cfg = std::sync::Arc::new(Config::default());
     let script_manager = scripting::create_script_manager();
     
-    let mut conn_ctx = crate::cmd::ConnectionContext::new();
+    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
     let server_ctx = crate::cmd::ServerContext {
         databases: db.clone(),
         acl: acl.clone(),
@@ -76,6 +78,8 @@ async fn test_mset_mget() {
         script_manager: script_manager.clone(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     // MSET k1 v1 k2 v2
@@ -127,7 +131,7 @@ async fn test_string_extended() {
     let cfg = std::sync::Arc::new(Config::default());
     let script_manager = scripting::create_script_manager();
     
-    let mut conn_ctx = crate::cmd::ConnectionContext::new();
+    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
     let server_ctx = crate::cmd::ServerContext {
         databases: db.clone(),
         acl: acl.clone(),
@@ -136,6 +140,8 @@ async fn test_string_extended() {
         script_manager: script_manager.clone(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     // SET NX key val -> OK

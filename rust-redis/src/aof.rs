@@ -95,11 +95,15 @@ impl Aof {
                     // to avoid recursive or circular dependency issues and because we don't want to log loaded commands
                     
                     let mut conn_ctx = crate::cmd::ConnectionContext {
+                        id: 0,
                         db_index: current_db_index,
                         authenticated: true,
                         current_username: "default".to_string(),
                         in_multi: false,
                         multi_queue: Vec::new(),
+                        msg_sender: None,
+                        subscriptions: std::collections::HashSet::new(),
+        psubscriptions: std::collections::HashSet::new(),
                     };
 
                     let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
@@ -111,8 +115,10 @@ impl Aof {
                         config: std::sync::Arc::new(cfg.clone()),
                         script_manager: script_manager.clone(),
                         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
+                        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+                        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+                        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
+                    };
 
                     let _ = process_frame(frame, &mut conn_ctx, &server_ctx).await;
                     
