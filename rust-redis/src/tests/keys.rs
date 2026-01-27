@@ -20,6 +20,7 @@ async fn test_keys() {
         config: Arc::new(config),
         script_manager: script_manager,
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -104,6 +105,7 @@ async fn test_expire_ttl() {
         config: Arc::new(config),
         script_manager: script_manager,
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -194,6 +196,7 @@ async fn test_dbsize() {
         config: Arc::new(config),
         script_manager: script_manager,
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -241,6 +244,7 @@ async fn test_del() {
         config: Arc::new(config),
         script_manager: script_manager,
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {

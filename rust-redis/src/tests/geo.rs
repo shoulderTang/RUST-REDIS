@@ -21,6 +21,7 @@ async fn test_geo() {
         config: config.clone(),
         script_manager: script_manager.clone(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     // GEOADD Sicily 13.361389 38.115556 "Palermo" 15.087269 37.502669 "Catania"
@@ -163,6 +164,7 @@ async fn test_georadius() {
         config: config.clone(),
         script_manager: script_manager.clone(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     // GEOADD Sicily 13.361389 38.115556 "Palermo" 15.087269 37.502669 "Catania"
@@ -269,6 +271,7 @@ async fn test_georadiusbymember() {
         config: config.clone(),
         script_manager: script_manager.clone(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     // GEOADD Sicily 13.583333 37.316667 "Agrigento"

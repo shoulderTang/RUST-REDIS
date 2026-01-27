@@ -346,6 +346,7 @@ pub fn lrange(items: &[Resp], db: &Db) -> Resp {
     }
 }
 
+#[derive(Copy, Clone)]
 enum PopDirection {
     Left,
     Right,
@@ -448,4 +449,323 @@ pub async fn blpop(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &Se
 
 pub async fn brpop(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerContext) -> Resp {
     blocking_pop_generic(items, conn_ctx, server_ctx, PopDirection::Right).await
+}
+
+fn parse_direction(arg: &Resp) -> Result<PopDirection, Resp> {
+    let bytes = match arg {
+        Resp::BulkString(Some(b)) => b,
+        Resp::SimpleString(s) => s,
+        _ => return Err(Resp::Error("ERR syntax error".to_string())),
+    };
+    let s = String::from_utf8_lossy(bytes).to_ascii_uppercase();
+    match s.as_str() {
+        "LEFT" => Ok(PopDirection::Left),
+        "RIGHT" => Ok(PopDirection::Right),
+        _ => Err(Resp::Error("ERR syntax error".to_string())),
+    }
+}
+
+pub fn lmove(items: &[Resp], db: &Db) -> Resp {
+    if items.len() != 5 {
+        return Resp::Error("ERR wrong number of arguments for 'LMOVE'".to_string());
+    }
+
+    let src_key = match &items[1] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid key".to_string()),
+    };
+
+    let dst_key = match &items[2] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid key".to_string()),
+    };
+
+    let where_from = match parse_direction(&items[3]) {
+        Ok(d) => d,
+        Err(e) => return e,
+    };
+
+    let where_to = match parse_direction(&items[4]) {
+        Ok(d) => d,
+        Err(e) => return e,
+    };
+
+    let db_ref = db;
+
+    match lmove_execute(db_ref, &src_key, &dst_key, where_from, where_to) {
+        Ok(Some(v)) => Resp::BulkString(Some(v)),
+        Ok(None) => Resp::BulkString(None),
+        Err(e) => e,
+    }
+}
+
+fn lmove_execute(
+    db: &Db,
+    src_key: &bytes::Bytes,
+    dst_key: &bytes::Bytes,
+    where_from: PopDirection,
+    where_to: PopDirection,
+) -> Result<Option<bytes::Bytes>, Resp> {
+    let src = src_key.clone();
+    let dst = dst_key.clone();
+
+    if src == dst {
+        if let Some(mut entry) = db.get_mut(&src) {
+            if entry.is_expired() {
+                drop(entry);
+                db.remove(&src);
+                return Ok(None);
+            }
+            match &mut entry.value {
+                Value::List(list) => {
+                    let val = match where_from {
+                        PopDirection::Left => list.pop_front(),
+                        PopDirection::Right => list.pop_back(),
+                    };
+                    match val {
+                        Some(v) => {
+                            let pushed = v.clone();
+                            match where_to {
+                                PopDirection::Left => list.push_front(pushed),
+                                PopDirection::Right => list.push_back(pushed),
+                            }
+                            Ok(Some(v))
+                        }
+                        None => Ok(None),
+                    }
+                }
+                _ => Err(Resp::Error(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+                )),
+            }
+        } else {
+            Ok(None)
+        }
+    } else {
+        {
+            if let Some(entry) = db.get(&dst) {
+                if !entry.is_expired() {
+                    match &entry.value {
+                        Value::List(_) => {}
+                        _ => {
+                            return Err(Resp::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            ))
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut val: Option<bytes::Bytes> = None;
+
+        {
+            if let Some(mut entry) = db.get_mut(&src) {
+                if entry.is_expired() {
+                    drop(entry);
+                    db.remove(&src);
+                } else {
+                    match &mut entry.value {
+                        Value::List(list) => {
+                            let v = match where_from {
+                                PopDirection::Left => list.pop_front(),
+                                PopDirection::Right => list.pop_back(),
+                            };
+                            if let Some(v) = v {
+                                val = Some(v);
+                            } else {
+                                return Ok(None);
+                            }
+                        }
+                        _ => {
+                            return Err(Resp::Error(
+                                "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                    .to_string(),
+                            ))
+                        }
+                    }
+                }
+            } else {
+                return Ok(None);
+            }
+        }
+
+        let v = match val {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+
+        let mut need_new_entry = false;
+        let mut expired = false;
+        {
+            if let Some(entry) = db.get(&dst) {
+                if entry.is_expired() {
+                    expired = true;
+                }
+            } else {
+                need_new_entry = true;
+            }
+        }
+
+        if expired {
+            db.remove(&dst);
+            need_new_entry = true;
+        }
+
+        let mut entry = if need_new_entry {
+            db.entry(dst.clone())
+                .or_insert_with(|| Entry::new(Value::List(VecDeque::new()), None))
+        } else {
+            db.get_mut(&dst).unwrap()
+        };
+
+        match &mut entry.value {
+            Value::List(list) => {
+                let pushed = v.clone();
+                match where_to {
+                    PopDirection::Left => list.push_front(pushed),
+                    PopDirection::Right => list.push_back(pushed),
+                }
+                Ok(Some(v))
+            }
+            _ => Err(Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            )),
+        }
+    }
+}
+
+fn blmove_push_to_dest(
+    db: &Db,
+    dst_key: &bytes::Bytes,
+    where_to: PopDirection,
+    value: bytes::Bytes,
+) -> Result<(), Resp> {
+    let dst = dst_key.clone();
+
+    let mut need_new_entry = false;
+    let mut expired = false;
+    {
+        if let Some(entry) = db.get(&dst) {
+            if entry.is_expired() {
+                expired = true;
+            }
+        } else {
+            need_new_entry = true;
+        }
+    }
+
+    if expired {
+        db.remove(&dst);
+        need_new_entry = true;
+    }
+
+    let mut entry = if need_new_entry {
+        db.entry(dst.clone())
+            .or_insert_with(|| Entry::new(Value::List(VecDeque::new()), None))
+    } else {
+        db.get_mut(&dst).unwrap()
+    };
+
+    match &mut entry.value {
+        Value::List(list) => {
+            match where_to {
+                PopDirection::Left => list.push_front(value),
+                PopDirection::Right => list.push_back(value),
+            }
+            Ok(())
+        }
+        _ => Err(Resp::Error(
+            "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+        )),
+    }
+}
+
+pub async fn blmove(
+    items: &[Resp],
+    conn_ctx: &ConnectionContext,
+    server_ctx: &ServerContext,
+) -> Resp {
+    if items.len() != 6 {
+        return Resp::Error("ERR wrong number of arguments for 'BLMOVE'".to_string());
+    }
+
+    let src_key = match &items[1] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid key".to_string()),
+    };
+
+    let dst_key = match &items[2] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid key".to_string()),
+    };
+
+    let where_from = match parse_direction(&items[3]) {
+        Ok(d) => d,
+        Err(e) => return e,
+    };
+
+    let where_to = match parse_direction(&items[4]) {
+        Ok(d) => d,
+        Err(e) => return e,
+    };
+
+    let timeout_arg = match &items[5] {
+        Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).parse::<f64>(),
+        Resp::SimpleString(s) => String::from_utf8_lossy(s).parse::<f64>(),
+        _ => return Resp::Error("ERR timeout is not a float or out of range".to_string()),
+    };
+
+    let timeout_secs = match timeout_arg {
+        Ok(v) => v,
+        Err(_) => return Resp::Error("ERR timeout is not a float or out of range".to_string()),
+    };
+
+    let db = &server_ctx.databases[conn_ctx.db_index];
+
+    match lmove_execute(db, &src_key, &dst_key, where_from, where_to) {
+        Ok(Some(v)) => return Resp::BulkString(Some(v)),
+        Ok(None) => {}
+        Err(e) => return e,
+    }
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<(Vec<u8>, Vec<u8>)>(1);
+
+    let map_key = (conn_ctx.db_index, src_key.to_vec());
+    let mut queue = server_ctx
+        .blocking_waiters
+        .entry(map_key)
+        .or_insert_with(VecDeque::new);
+    queue.push_back(tx);
+
+    let result = if timeout_secs > 0.0 {
+        let duration = Duration::from_secs_f64(timeout_secs);
+        match timeout(duration, rx.recv()).await {
+            Ok(Some((_key, val))) => Some(val),
+            Ok(None) => None,
+            Err(_) => None,
+        }
+    } else {
+        match rx.recv().await {
+            Some((_key, val)) => Some(val),
+            None => None,
+        }
+    };
+
+    match result {
+        Some(v) => {
+            let value = bytes::Bytes::from(v);
+            let db = &server_ctx.databases[conn_ctx.db_index];
+            match blmove_push_to_dest(db, &dst_key, where_to, value.clone()) {
+                Ok(()) => Resp::BulkString(Some(value)),
+                Err(e) => e,
+            }
+        }
+        None => Resp::BulkString(None),
+    }
 }

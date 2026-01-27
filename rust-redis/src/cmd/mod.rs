@@ -51,6 +51,7 @@ pub struct ServerContext {
     pub config: Arc<Config>,
     pub script_manager: Arc<ScriptManager>,
     pub blocking_waiters: Arc<DashMap<(usize, Vec<u8>), VecDeque<tokio::sync::mpsc::Sender<(Vec<u8>, Vec<u8>)>>>>,
+    pub blocking_zset_waiters: Arc<DashMap<(usize, Vec<u8>), VecDeque<(tokio::sync::mpsc::Sender<(Vec<u8>, Vec<u8>, f64)>, bool)>>>,
 }
 
 
@@ -77,6 +78,8 @@ enum Command {
     Rpop,
     Blpop,
     Brpop,
+    Blmove,
+    Lmove,
     Llen,
     Lrange,
     Hset,
@@ -97,6 +100,10 @@ enum Command {
     Zcard,
     Zrank,
     Zrange,
+    Zpopmin,
+    Bzpopmin,
+    Zpopmax,
+    Bzpopmax,
     Pfadd,
     Pfcount,
     Pfmerge,
@@ -142,7 +149,7 @@ fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
         Command::Llen | Command::Lrange | Command::Hset | Command::Hget | Command::Hgetall | Command::Hmset |
         Command::Hmget | Command::Hdel | Command::Hlen | Command::Sadd | Command::Srem | Command::Sismember |
         Command::Smembers | Command::Scard | Command::Zadd | Command::Zrem | Command::Zscore | Command::Zcard |
-        Command::Zrank | Command::Zrange | Command::Pfadd | Command::Pfcount | Command::GeoAdd | Command::GeoDist |
+        Command::Zrank | Command::Zrange | Command::Zpopmin | Command::Bzpopmin | Command::Zpopmax | Command::Bzpopmax | Command::Pfadd | Command::Pfcount | Command::GeoAdd | Command::GeoDist |
         Command::GeoHash | Command::GeoPos | Command::GeoRadius | Command::GeoRadiusByMember | Command::Expire |
         Command::Ttl | Command::Xadd | Command::Xlen | Command::Xrange | Command::Xrevrange | Command::Xdel => {
              if items.len() > 1 {
@@ -181,6 +188,16 @@ fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
                      }
                  }
              }
+        }
+        Command::Blmove | Command::Lmove => {
+            if items.len() > 2 {
+                if let Some(key) = as_bytes(&items[1]) {
+                    keys.push(key.to_vec());
+                }
+                if let Some(key) = as_bytes(&items[2]) {
+                    keys.push(key.to_vec());
+                }
+            }
         }
         _ => {}
     }
@@ -321,6 +338,8 @@ async fn dispatch_command(
         Command::Rpop => (list::rpop(items, db), None),
         Command::Blpop => (list::blpop(items, conn_ctx, server_ctx).await, None),
         Command::Brpop => (list::brpop(items, conn_ctx, server_ctx).await, None),
+        Command::Blmove => (list::blmove(items, conn_ctx, server_ctx).await, None),
+        Command::Lmove => (list::lmove(items, db), None),
         Command::Llen => (list::llen(items, db), None),
         Command::Lrange => (list::lrange(items, db), None),
         Command::Hset => (hash::hset(items, db), None),
@@ -335,12 +354,16 @@ async fn dispatch_command(
         Command::Sismember => (set::sismember(items, db), None),
         Command::Smembers => (set::smembers(items, db), None),
         Command::Scard => (set::scard(items, db), None),
-        Command::Zadd => (zset::zadd(items, db), None),
+        Command::Zadd => (zset::zadd(items, conn_ctx, server_ctx), None),
         Command::Zrem => (zset::zrem(items, db), None),
         Command::Zscore => (zset::zscore(items, db), None),
         Command::Zcard => (zset::zcard(items, db), None),
         Command::Zrank => (zset::zrank(items, db), None),
         Command::Zrange => (zset::zrange(items, db), None),
+        Command::Zpopmin => (zset::zpopmin(items, db), None),
+        Command::Bzpopmin => (zset::bzpopmin(items, conn_ctx, server_ctx).await, None),
+        Command::Zpopmax => (zset::zpopmax(items, db), None),
+        Command::Bzpopmax => (zset::bzpopmax(items, conn_ctx, server_ctx).await, None),
         Command::Pfadd => (hll::pfadd(items, db), None),
         Command::Pfcount => (hll::pfcount(items, db), None),
         Command::Pfmerge => (hll::pfmerge(items, db), None),
@@ -436,6 +459,8 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("RPOP".to_string(), Command::Rpop);
         m.insert("BLPOP".to_string(), Command::Blpop);
         m.insert("BRPOP".to_string(), Command::Brpop);
+        m.insert("BLMOVE".to_string(), Command::Blmove);
+        m.insert("LMOVE".to_string(), Command::Lmove);
         m.insert("LLEN".to_string(), Command::Llen);
         m.insert("LRANGE".to_string(), Command::Lrange);
         m.insert("HSET".to_string(), Command::Hset);
@@ -456,6 +481,10 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("ZCARD".to_string(), Command::Zcard);
         m.insert("ZRANK".to_string(), Command::Zrank);
         m.insert("ZRANGE".to_string(), Command::Zrange);
+        m.insert("ZPOPMIN".to_string(), Command::Zpopmin);
+        m.insert("BZPOPMIN".to_string(), Command::Bzpopmin);
+        m.insert("ZPOPMAX".to_string(), Command::Zpopmax);
+        m.insert("BZPOPMAX".to_string(), Command::Bzpopmax);
         m.insert("PFADD".to_string(), Command::Pfadd);
         m.insert("PFCOUNT".to_string(), Command::Pfcount);
         m.insert("PFMERGE".to_string(), Command::Pfmerge);

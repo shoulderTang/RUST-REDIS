@@ -20,6 +20,7 @@ async fn test_hll() {
         config: Arc::new(config),
         script_manager: script_manager,
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -114,6 +115,7 @@ async fn test_hll_string_promotion() {
         config: Arc::new(config),
         script_manager: script_manager,
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {

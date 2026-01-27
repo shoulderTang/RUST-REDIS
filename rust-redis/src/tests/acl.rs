@@ -25,6 +25,7 @@ async fn test_acl_key_permissions() {
         config: cfg.clone(),
         script_manager: scripting::create_script_manager(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
     
     // Create user bob with access to user:*
@@ -119,6 +120,7 @@ async fn test_acl_persistence() {
         config: cfg_arc.clone(),
         script_manager: scripting::create_script_manager(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
     
     // Create user alice
@@ -161,6 +163,7 @@ async fn test_acl_persistence() {
         config: cfg_arc.clone(),
         script_manager: scripting::create_script_manager(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
     
     // ACL LOAD on new instance

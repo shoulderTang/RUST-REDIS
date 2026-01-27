@@ -109,7 +109,8 @@ impl Aof {
                         config: std::sync::Arc::new(cfg.clone()),
                         script_manager: script_manager.clone(),
                         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-                    };
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
 
                     let _ = process_frame(frame, &mut conn_ctx, &server_ctx).await;
                     

@@ -20,6 +20,7 @@ async fn test_list_ops() {
         config: Arc::new(config),
         script_manager: script_manager,
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -176,6 +177,7 @@ async fn test_brpop_ops() {
         config: Arc::new(config),
         script_manager: script_manager,
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -247,6 +249,199 @@ async fn test_brpop_ops() {
     assert!(elapsed.as_millis() >= 100);
     match res {
         Resp::BulkString(None) => {}, // timeout
+        _ => panic!("expected BulkString(None)"),
+    }
+}
+
+#[tokio::test]
+async fn test_blmove_ops() {
+    let db = Arc::new(vec![Db::default()]);
+    let config = Config::default();
+    let script_manager = scripting::create_script_manager();
+    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
+
+    let server_ctx = ServerContext {
+        databases: db.clone(),
+        acl: acl,
+        aof: None,
+        config: Arc::new(config),
+        script_manager: script_manager,
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
+
+    let mut conn_ctx = ConnectionContext {
+        db_index: 0,
+        authenticated: true,
+        current_username: "default".to_string(),
+    };
+
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("LPUSH"))),
+        Resp::BulkString(Some(Bytes::from("src"))),
+        Resp::BulkString(Some(Bytes::from("a"))),
+        Resp::BulkString(Some(Bytes::from("b"))),
+    ]));
+    let (_res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("BLMOVE"))),
+        Resp::BulkString(Some(Bytes::from("src"))),
+        Resp::BulkString(Some(Bytes::from("dst"))),
+        Resp::BulkString(Some(Bytes::from("LEFT"))),
+        Resp::BulkString(Some(Bytes::from("RIGHT"))),
+        Resp::BulkString(Some(Bytes::from("1"))),
+    ]));
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    match res {
+        Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("b")),
+        _ => panic!("expected BulkString(b), got {:?}", res),
+    }
+
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("LRANGE"))),
+        Resp::BulkString(Some(Bytes::from("src"))),
+        Resp::BulkString(Some(Bytes::from("0"))),
+        Resp::BulkString(Some(Bytes::from("-1"))),
+    ]));
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    match res {
+        Resp::Array(Some(items)) => {
+            assert_eq!(items.len(), 1);
+            match &items[0] {
+                Resp::BulkString(Some(b)) => assert_eq!(*b, Bytes::from("a")),
+                _ => panic!("expected BulkString(a)"),
+            }
+        }
+        _ => panic!("expected Array, got {:?}", res),
+    }
+
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("LRANGE"))),
+        Resp::BulkString(Some(Bytes::from("dst"))),
+        Resp::BulkString(Some(Bytes::from("0"))),
+        Resp::BulkString(Some(Bytes::from("-1"))),
+    ]));
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    match res {
+        Resp::Array(Some(items)) => {
+            assert_eq!(items.len(), 1);
+            match &items[0] {
+                Resp::BulkString(Some(b)) => assert_eq!(*b, Bytes::from("b")),
+                _ => panic!("expected BulkString(b)"),
+            }
+        }
+        _ => panic!("expected Array, got {:?}", res),
+    }
+
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("BLMOVE"))),
+        Resp::BulkString(Some(Bytes::from("empty_src"))),
+        Resp::BulkString(Some(Bytes::from("empty_dst"))),
+        Resp::BulkString(Some(Bytes::from("LEFT"))),
+        Resp::BulkString(Some(Bytes::from("RIGHT"))),
+        Resp::BulkString(Some(Bytes::from("0.1"))),
+    ]));
+    let start = std::time::Instant::now();
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let elapsed = start.elapsed();
+    assert!(elapsed.as_millis() >= 100);
+    match res {
+        Resp::BulkString(None) => {}
+        _ => panic!("expected BulkString(None)"),
+    }
+}
+
+#[tokio::test]
+async fn test_lmove_ops() {
+    let db = Arc::new(vec![Db::default()]);
+    let config = Config::default();
+    let script_manager = scripting::create_script_manager();
+    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
+
+    let server_ctx = ServerContext {
+        databases: db.clone(),
+        acl: acl,
+        aof: None,
+        config: Arc::new(config),
+        script_manager: script_manager,
+        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    };
+
+    let mut conn_ctx = ConnectionContext {
+        db_index: 0,
+        authenticated: true,
+        current_username: "default".to_string(),
+    };
+
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("LPUSH"))),
+        Resp::BulkString(Some(Bytes::from("src"))),
+        Resp::BulkString(Some(Bytes::from("a"))),
+        Resp::BulkString(Some(Bytes::from("b"))),
+    ]));
+    let (_res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("LMOVE"))),
+        Resp::BulkString(Some(Bytes::from("src"))),
+        Resp::BulkString(Some(Bytes::from("dst"))),
+        Resp::BulkString(Some(Bytes::from("LEFT"))),
+        Resp::BulkString(Some(Bytes::from("RIGHT"))),
+    ]));
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    match res {
+        Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("b")),
+        _ => panic!("expected BulkString(b), got {:?}", res),
+    }
+
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("LRANGE"))),
+        Resp::BulkString(Some(Bytes::from("src"))),
+        Resp::BulkString(Some(Bytes::from("0"))),
+        Resp::BulkString(Some(Bytes::from("-1"))),
+    ]));
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    match res {
+        Resp::Array(Some(items)) => {
+            assert_eq!(items.len(), 1);
+            match &items[0] {
+                Resp::BulkString(Some(b)) => assert_eq!(*b, Bytes::from("a")),
+                _ => panic!("expected BulkString(a)"),
+            }
+        }
+        _ => panic!("expected Array, got {:?}", res),
+    }
+
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("LRANGE"))),
+        Resp::BulkString(Some(Bytes::from("dst"))),
+        Resp::BulkString(Some(Bytes::from("0"))),
+        Resp::BulkString(Some(Bytes::from("-1"))),
+    ]));
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    match res {
+        Resp::Array(Some(items)) => {
+            assert_eq!(items.len(), 1);
+            match &items[0] {
+                Resp::BulkString(Some(b)) => assert_eq!(*b, Bytes::from("b")),
+                _ => panic!("expected BulkString(b)"),
+            }
+        }
+        _ => panic!("expected Array, got {:?}", res),
+    }
+
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("LMOVE"))),
+        Resp::BulkString(Some(Bytes::from("empty_src"))),
+        Resp::BulkString(Some(Bytes::from("empty_dst"))),
+        Resp::BulkString(Some(Bytes::from("LEFT"))),
+        Resp::BulkString(Some(Bytes::from("RIGHT"))),
+    ]));
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    match res {
+        Resp::BulkString(None) => {}
         _ => panic!("expected BulkString(None)"),
     }
 }

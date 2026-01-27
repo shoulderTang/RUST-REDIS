@@ -20,6 +20,7 @@ async fn test_eval() {
         config: Arc::new(config),
         script_manager: scripting::create_script_manager(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -70,6 +71,7 @@ async fn test_eval_pcall() {
         config: Arc::new(config),
         script_manager: scripting::create_script_manager(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -124,6 +126,7 @@ async fn test_script_commands() {
         config: Arc::new(config),
         script_manager: scripting::create_script_manager(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -231,6 +234,7 @@ async fn test_lua_state_reuse() {
         config: Arc::new(config),
         script_manager: scripting::create_script_manager(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {

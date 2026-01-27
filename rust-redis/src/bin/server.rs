@@ -145,6 +145,7 @@ async fn run_server(
         config: cfg_arc.clone(),
         script_manager: script_manager.clone(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     // Background task to clean up expired keys

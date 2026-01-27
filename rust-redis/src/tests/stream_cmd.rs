@@ -20,6 +20,7 @@ async fn test_xadd() {
         config: Arc::new(config),
         script_manager: script_manager,
         blocking_waiters: Arc::new(DashMap::new()),
+        blocking_zset_waiters: Arc::new(DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -63,6 +64,7 @@ async fn test_xlen() {
         config: Arc::new(config),
         script_manager: script_manager,
         blocking_waiters: Arc::new(DashMap::new()),
+        blocking_zset_waiters: Arc::new(DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -107,6 +109,7 @@ async fn test_xlen_bug_repro() {
         config: Arc::new(config),
         script_manager: script_manager,
         blocking_waiters: Arc::new(DashMap::new()),
+        blocking_zset_waiters: Arc::new(DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -197,6 +200,7 @@ async fn test_xrevrange() {
         config: Arc::new(config),
         script_manager: script_manager,
         blocking_waiters: Arc::new(DashMap::new()),
+        blocking_zset_waiters: Arc::new(DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -266,6 +270,7 @@ async fn test_xrange() {
         config: Arc::new(config),
         script_manager: script_manager,
         blocking_waiters: Arc::new(DashMap::new()),
+        blocking_zset_waiters: Arc::new(DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -339,6 +344,7 @@ async fn test_xdel() {
         config: Arc::new(config),
         script_manager: script_manager,
         blocking_waiters: Arc::new(DashMap::new()),
+        blocking_zset_waiters: Arc::new(DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {
@@ -405,6 +411,7 @@ async fn test_xread() {
         config: Arc::new(config),
         script_manager: script_manager,
         blocking_waiters: Arc::new(DashMap::new()),
+        blocking_zset_waiters: Arc::new(DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext {

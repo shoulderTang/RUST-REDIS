@@ -22,6 +22,7 @@ async fn test_set_get() {
         config: cfg.clone(),
         script_manager: script_manager.clone(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     // SET key val
@@ -74,6 +75,7 @@ async fn test_mset_mget() {
         config: cfg.clone(),
         script_manager: script_manager.clone(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     // MSET k1 v1 k2 v2
@@ -133,6 +135,7 @@ async fn test_string_extended() {
         config: cfg.clone(),
         script_manager: script_manager.clone(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     // SET NX key val -> OK

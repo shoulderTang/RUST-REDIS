@@ -88,6 +88,7 @@ mod tests {
             config: config.clone(),
             script_manager: script_manager,
             blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+            blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         };
 
         let mut conn_ctx = ConnectionContext {
