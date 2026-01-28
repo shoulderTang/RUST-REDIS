@@ -84,6 +84,46 @@ const COMMAND_TABLE: &[CommandInfo] = &[
         step: 1,
     },
     CommandInfo {
+        name: "exists",
+        arity: -2,
+        flags: &["readonly", "fast"],
+        first_key: 1,
+        last_key: -1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "type",
+        arity: 2,
+        flags: &["readonly", "fast"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "rename",
+        arity: 3,
+        flags: &["write"],
+        first_key: 1,
+        last_key: 2,
+        step: 1,
+    },
+    CommandInfo {
+        name: "renamenx",
+        arity: 3,
+        flags: &["write", "fast"],
+        first_key: 1,
+        last_key: 2,
+        step: 1,
+    },
+    CommandInfo {
+        name: "persist",
+        arity: 2,
+        flags: &["write", "fast"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
         name: "get",
         arity: 2,
         flags: &["readonly", "fast"],
@@ -148,39 +188,6 @@ const COMMAND_TABLE: &[CommandInfo] = &[
         step: 1,
     },
     CommandInfo {
-        name: "expire",
-        arity: 3,
-        flags: &["write", "fast"],
-        first_key: 1,
-        last_key: 1,
-        step: 1,
-    },
-    CommandInfo {
-        name: "ttl",
-        arity: 2,
-        flags: &["readonly", "fast", "random"],
-        first_key: 1,
-        last_key: 1,
-        step: 1,
-    },
-    CommandInfo {
-        name: "dbsize",
-        arity: 1,
-        flags: &["readonly", "fast"],
-        first_key: 0,
-        last_key: 0,
-        step: 0,
-    },
-    CommandInfo {
-        name: "keys",
-        arity: 2,
-        flags: &["readonly", "sort_for_script"],
-        first_key: 0,
-        last_key: 0,
-        step: 0,
-    },
-    // List
-    CommandInfo {
         name: "lpush",
         arity: -3,
         flags: &["write", "denyoom", "fast"],
@@ -198,7 +205,7 @@ const COMMAND_TABLE: &[CommandInfo] = &[
     },
     CommandInfo {
         name: "lpop",
-        arity: 2,
+        arity: -2,
         flags: &["write", "fast"],
         first_key: 1,
         last_key: 1,
@@ -206,7 +213,7 @@ const COMMAND_TABLE: &[CommandInfo] = &[
     },
     CommandInfo {
         name: "rpop",
-        arity: 2,
+        arity: -2,
         flags: &["write", "fast"],
         first_key: 1,
         last_key: 1,
@@ -239,7 +246,7 @@ const COMMAND_TABLE: &[CommandInfo] = &[
     CommandInfo {
         name: "lmove",
         arity: 5,
-        flags: &["write", "fast"],
+        flags: &["write", "denyoom"],
         first_key: 1,
         last_key: 2,
         step: 1,
@@ -260,10 +267,9 @@ const COMMAND_TABLE: &[CommandInfo] = &[
         last_key: 1,
         step: 1,
     },
-    // Hash
     CommandInfo {
         name: "hset",
-        arity: 4,
+        arity: -4,
         flags: &["write", "denyoom", "fast"],
         first_key: 1,
         last_key: 1,
@@ -280,7 +286,7 @@ const COMMAND_TABLE: &[CommandInfo] = &[
     CommandInfo {
         name: "hgetall",
         arity: 2,
-        flags: &["readonly", "random"],
+        flags: &["readonly"],
         first_key: 1,
         last_key: 1,
         step: 1,
@@ -317,7 +323,14 @@ const COMMAND_TABLE: &[CommandInfo] = &[
         last_key: 1,
         step: 1,
     },
-    // Set
+    CommandInfo {
+        name: "hscan",
+        arity: -3,
+        flags: &["readonly", "random"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
     CommandInfo {
         name: "sadd",
         arity: -3,
@@ -345,7 +358,7 @@ const COMMAND_TABLE: &[CommandInfo] = &[
     CommandInfo {
         name: "smembers",
         arity: 2,
-        flags: &["readonly", "sort_for_script"],
+        flags: &["readonly"],
         first_key: 1,
         last_key: 1,
         step: 1,
@@ -358,7 +371,14 @@ const COMMAND_TABLE: &[CommandInfo] = &[
         last_key: 1,
         step: 1,
     },
-    // ZSet
+    CommandInfo {
+        name: "sscan",
+        arity: -3,
+        flags: &["readonly", "random"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
     CommandInfo {
         name: "zadd",
         arity: -4,
@@ -439,35 +459,170 @@ const COMMAND_TABLE: &[CommandInfo] = &[
         last_key: -2,
         step: 1,
     },
-    // System
     CommandInfo {
-        name: "shutdown",
-        arity: 1,
-        flags: &["admin", "loading", "stale"],
-        first_key: 0,
-        last_key: 0,
-        step: 0,
+        name: "zscan",
+        arity: -3,
+        flags: &["readonly", "random"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
     },
     CommandInfo {
-        name: "command",
-        arity: 1,
-        flags: &["random", "loading", "stale"],
-        first_key: 0,
-        last_key: 0,
-        step: 0,
+        name: "pfadd",
+        arity: -3,
+        flags: &["write", "denyoom", "fast"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
     },
     CommandInfo {
-        name: "config",
+        name: "pfcount",
         arity: -2,
-        flags: &["admin", "loading", "stale"],
+        flags: &["readonly"],
+        first_key: 1,
+        last_key: -1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "pfmerge",
+        arity: -3,
+        flags: &["write", "denyoom"],
+        first_key: 1,
+        last_key: -1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "geoadd",
+        arity: -5,
+        flags: &["write", "denyoom"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "geodist",
+        arity: -4,
+        flags: &["readonly"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "geohash",
+        arity: -2,
+        flags: &["readonly"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "geopos",
+        arity: -2,
+        flags: &["readonly"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "georadius",
+        arity: -6,
+        flags: &["write", "movablekeys"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "georadiusbymember",
+        arity: -5,
+        flags: &["write", "movablekeys"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "expire",
+        arity: 3,
+        flags: &["write", "fast"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "pexpire",
+        arity: 3,
+        flags: &["write", "fast"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "expireat",
+        arity: 3,
+        flags: &["write", "fast"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "pexpireat",
+        arity: 3,
+        flags: &["write", "fast"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "ttl",
+        arity: 2,
+        flags: &["readonly", "fast"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "pttl",
+        arity: 2,
+        flags: &["readonly", "fast"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "flushdb",
+        arity: -1,
+        flags: &["write"],
         first_key: 0,
         last_key: 0,
         step: 0,
     },
     CommandInfo {
-        name: "bgrewriteaof",
+        name: "flushall",
+        arity: -1,
+        flags: &["write"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
+        name: "dbsize",
         arity: 1,
-        flags: &["admin", "loading", "stale"],
+        flags: &["readonly", "fast"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
+        name: "keys",
+        arity: 2,
+        flags: &["readonly", "sort_for_script"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
+        name: "scan",
+        arity: -2,
+        flags: &["readonly", "random"],
         first_key: 0,
         last_key: 0,
         step: 0,
@@ -482,8 +637,32 @@ const COMMAND_TABLE: &[CommandInfo] = &[
     },
     CommandInfo {
         name: "bgsave",
-        arity: 1,
+        arity: -1,
         flags: &["admin", "noscript"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
+        name: "shutdown",
+        arity: -1,
+        flags: &["admin", "loading", "stale"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
+        name: "command",
+        arity: -1,
+        flags: &["random", "loading", "stale"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
+        name: "config",
+        arity: -2,
+        flags: &["admin", "loading", "stale"],
         first_key: 0,
         last_key: 0,
         step: 0,
@@ -555,10 +734,10 @@ const COMMAND_TABLE: &[CommandInfo] = &[
     CommandInfo {
         name: "xread",
         arity: -4,
-        flags: &["readonly"],
-        first_key: 0,
-        last_key: 0,
-        step: 0,
+        flags: &["readonly", "blocking"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
     },
     CommandInfo {
         name: "xgroup",
@@ -566,15 +745,15 @@ const COMMAND_TABLE: &[CommandInfo] = &[
         flags: &["write", "denyoom"],
         first_key: 2,
         last_key: 2,
-        step: 0,
+        step: 1,
     },
     CommandInfo {
         name: "xreadgroup",
         arity: -7,
-        flags: &["write", "denyoom"],
-        first_key: 0,
-        last_key: 0,
-        step: 0,
+        flags: &["write", "blocking"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
     },
     CommandInfo {
         name: "xack",
@@ -582,34 +761,103 @@ const COMMAND_TABLE: &[CommandInfo] = &[
         flags: &["write", "fast"],
         first_key: 1,
         last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "publish",
+        arity: 3,
+        flags: &["pubsub", "fast", "loading", "stale"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
+        name: "subscribe",
+        arity: -2,
+        flags: &["pubsub", "noscript", "loading", "stale"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
+        name: "unsubscribe",
+        arity: -1,
+        flags: &["pubsub", "noscript", "loading", "stale"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
+        name: "psubscribe",
+        arity: -2,
+        flags: &["pubsub", "noscript", "loading", "stale"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
+        name: "punsubscribe",
+        arity: -1,
+        flags: &["pubsub", "noscript", "loading", "stale"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
+        name: "pubsub",
+        arity: -2,
+        flags: &["pubsub", "random", "loading", "stale"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
+        name: "bgrewriteaof",
+        arity: 1,
+        flags: &["admin"],
+        first_key: 0,
+        last_key: 0,
         step: 0,
     },
 ];
 
-pub fn is_write_command(name: &str) -> bool {
-    COMMAND_TABLE
-        .iter()
-        .any(|c| c.name.eq_ignore_ascii_case(name) && c.flags.contains(&"write"))
-}
-
-pub fn command(_items: &[Resp]) -> Resp {
-    let mut cmd_resps = Vec::with_capacity(COMMAND_TABLE.len());
-    for info in COMMAND_TABLE {
-        let mut flag_resps = Vec::with_capacity(info.flags.len());
-        for f in info.flags {
-            flag_resps.push(Resp::SimpleString(Bytes::from(*f)));
-        }
-
-        let cmd_info = vec![
-            Resp::BulkString(Some(Bytes::from(info.name))),
-            Resp::Integer(info.arity),
-            Resp::Array(Some(flag_resps)),
-            Resp::Integer(info.first_key),
-            Resp::Integer(info.last_key),
-            Resp::Integer(info.step),
-        ];
-        cmd_resps.push(Resp::Array(Some(cmd_info)));
+pub fn command(items: &[Resp]) -> Resp {
+    if items.len() != 1 {
+        return Resp::Error("ERR wrong number of arguments for 'command'".to_string());
     }
 
-    Resp::Array(Some(cmd_resps))
+    let mut commands = Vec::new();
+    for cmd in COMMAND_TABLE {
+        let mut info = Vec::new();
+        info.push(Resp::SimpleString(Bytes::from(cmd.name)));
+        info.push(Resp::Integer(cmd.arity));
+        
+        let mut flags = Vec::new();
+        for flag in cmd.flags {
+            flags.push(Resp::SimpleString(Bytes::from(*flag)));
+        }
+        info.push(Resp::Array(Some(flags)));
+
+        info.push(Resp::Integer(cmd.first_key));
+        info.push(Resp::Integer(cmd.last_key));
+        info.push(Resp::Integer(cmd.step));
+
+        commands.push(Resp::Array(Some(info)));
+    }
+
+    Resp::Array(Some(commands))
+}
+
+pub fn is_write_command(name: &str) -> bool {
+    let name_lower = name.to_lowercase();
+    for cmd in COMMAND_TABLE {
+        if cmd.name == name_lower {
+            for flag in cmd.flags {
+                if *flag == "write" {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }

@@ -1,5 +1,9 @@
 mod acl;
 mod keys;
+mod keys_cmd;
+mod hscan_cmd;
+mod sscan_cmd;
+mod zscan_cmd;
 mod string;
 mod list;
 mod hash;

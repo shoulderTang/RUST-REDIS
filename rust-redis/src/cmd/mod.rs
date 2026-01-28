@@ -104,11 +104,13 @@ enum Command {
     Hmget,
     Hdel,
     Hlen,
+    HScan,
     Sadd,
     Srem,
     Sismember,
     Smembers,
     Scard,
+    SScan,
     Zadd,
     Zrem,
     Zscore,
@@ -119,6 +121,7 @@ enum Command {
     Bzpopmin,
     Zpopmax,
     Bzpopmax,
+    ZScan,
     Pfadd,
     Pfcount,
     Pfmerge,
@@ -129,9 +132,21 @@ enum Command {
     GeoRadius,
     GeoRadiusByMember,
     Expire,
+    PExpire,
+    ExpireAt,
+    PExpireAt,
     Ttl,
+    PTtl,
+    Exists,
+    Type,
+    Rename,
+    RenameNx,
+    Persist,
+    FlushDb,
+    FlushAll,
     Dbsize,
     Keys,
+    Scan,
     Save,
     Bgsave,
     Shutdown,
@@ -171,19 +186,36 @@ fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
         Command::Set | Command::Get | Command::Incr | Command::Decr | Command::IncrBy | Command::DecrBy |
         Command::Append | Command::StrLen | Command::Lpush | Command::Rpush | Command::Lpop | Command::Rpop | Command::Blpop | Command::Brpop |
         Command::Llen | Command::Lrange | Command::Hset | Command::Hget | Command::Hgetall | Command::Hmset |
-        Command::Hmget | Command::Hdel | Command::Hlen | Command::Sadd | Command::Srem | Command::Sismember |
-        Command::Smembers | Command::Scard | Command::Zadd | Command::Zrem | Command::Zscore | Command::Zcard |
-        Command::Zrank | Command::Zrange | Command::Zpopmin | Command::Bzpopmin | Command::Zpopmax | Command::Bzpopmax | Command::Pfadd | Command::Pfcount | Command::GeoAdd | Command::GeoDist |
-        Command::GeoHash | Command::GeoPos | Command::GeoRadius | Command::GeoRadiusByMember | Command::Expire |
-        Command::Ttl | Command::Xadd | Command::Xlen | Command::Xrange | Command::Xrevrange | Command::Xdel => {
+        Command::Hmget | Command::Hdel | Command::Hlen | Command::HScan | Command::Sadd | Command::Srem | Command::Sismember |
+        Command::Smembers | Command::Scard | Command::SScan | Command::Zadd | Command::Zrem | Command::Zscore | Command::Zcard |
+        Command::Zrank | Command::Zrange | Command::Zpopmin | Command::Bzpopmin | Command::Zpopmax | Command::Bzpopmax | Command::ZScan | Command::Pfadd | Command::Pfcount | Command::GeoAdd | Command::GeoDist |
+        Command::GeoHash | Command::GeoPos | Command::GeoRadius | Command::GeoRadiusByMember | Command::Expire | Command::PExpire | Command::ExpireAt | Command::PExpireAt |
+        Command::Ttl | Command::PTtl | Command::Type | Command::Persist | Command::Xadd | Command::Xlen | Command::Xrange | Command::Xrevrange | Command::Xdel => {
              if items.len() > 1 {
                  if let Some(key) = as_bytes(&items[1]) {
                      keys.push(key.to_vec());
                  }
              }
         }
+        Command::Rename | Command::RenameNx => {
+            if items.len() > 2 {
+                if let Some(key) = as_bytes(&items[1]) {
+                    keys.push(key.to_vec());
+                }
+                if let Some(key) = as_bytes(&items[2]) {
+                    keys.push(key.to_vec());
+                }
+            }
+        }
         Command::Mset => {
              for i in (1..items.len()).step_by(2) {
+                 if let Some(key) = as_bytes(&items[i]) {
+                     keys.push(key.to_vec());
+                 }
+             }
+        }
+        Command::Exists => {
+             for i in 1..items.len() {
                  if let Some(key) = as_bytes(&items[i]) {
                      keys.push(key.to_vec());
                  }
@@ -463,11 +495,13 @@ async fn dispatch_command(
         Command::Hmget => (hash::hmget(items, db), None),
         Command::Hdel => (hash::hdel(items, db), None),
         Command::Hlen => (hash::hlen(items, db), None),
+        Command::HScan => (hash::hscan(items, db), None),
         Command::Sadd => (set::sadd(items, db), None),
         Command::Srem => (set::srem(items, db), None),
         Command::Sismember => (set::sismember(items, db), None),
         Command::Smembers => (set::smembers(items, db), None),
         Command::Scard => (set::scard(items, db), None),
+        Command::SScan => (set::sscan(items, db), None),
         Command::Zadd => (zset::zadd(items, conn_ctx, server_ctx), None),
         Command::Zrem => (zset::zrem(items, db), None),
         Command::Zscore => (zset::zscore(items, db), None),
@@ -478,6 +512,7 @@ async fn dispatch_command(
         Command::Bzpopmin => (zset::bzpopmin(items, conn_ctx, server_ctx).await, None),
         Command::Zpopmax => (zset::zpopmax(items, db), None),
         Command::Bzpopmax => (zset::bzpopmax(items, conn_ctx, server_ctx).await, None),
+        Command::ZScan => (zset::zscan(items, db), None),
         Command::Pfadd => (hll::pfadd(items, db), None),
         Command::Pfcount => (hll::pfcount(items, db), None),
         Command::Pfmerge => (hll::pfmerge(items, db), None),
@@ -488,9 +523,21 @@ async fn dispatch_command(
         Command::GeoRadius => (geo::georadius(items, db), None),
         Command::GeoRadiusByMember => (geo::georadiusbymember(items, db), None),
         Command::Expire => (key::expire(items, db), None),
+        Command::PExpire => (key::pexpire(items, db), None),
+        Command::ExpireAt => (key::expireat(items, db), None),
+        Command::PExpireAt => (key::pexpireat(items, db), None),
         Command::Ttl => (key::ttl(items, db), None),
+        Command::PTtl => (key::pttl(items, db), None),
+        Command::Exists => (key::exists(items, db), None),
+        Command::Type => (key::type_(items, db), None),
+        Command::Rename => (key::rename(items, db), None),
+        Command::RenameNx => (key::renamenx(items, db), None),
+        Command::Persist => (key::persist(items, db), None),
+        Command::FlushDb => (key::flushdb(items, db), None),
+        Command::FlushAll => (key::flushall(items, &server_ctx.databases), None),
         Command::Dbsize => (key::dbsize(items, db), None),
         Command::Keys => (key::keys(items, db), None),
+        Command::Scan => (key::scan(items, db), None),
         Command::Save => (save::save(items, &server_ctx.databases, &server_ctx.config), None),
         Command::Bgsave => (save::bgsave(items, &server_ctx.databases, &server_ctx.config), None),
         Command::Shutdown => {
@@ -590,11 +637,13 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("HMGET".to_string(), Command::Hmget);
         m.insert("HDEL".to_string(), Command::Hdel);
         m.insert("HLEN".to_string(), Command::Hlen);
+        m.insert("HSCAN".to_string(), Command::HScan);
         m.insert("SADD".to_string(), Command::Sadd);
         m.insert("SREM".to_string(), Command::Srem);
         m.insert("SISMEMBER".to_string(), Command::Sismember);
         m.insert("SMEMBERS".to_string(), Command::Smembers);
         m.insert("SCARD".to_string(), Command::Scard);
+        m.insert("SSCAN".to_string(), Command::SScan);
         m.insert("ZADD".to_string(), Command::Zadd);
         m.insert("ZREM".to_string(), Command::Zrem);
         m.insert("ZSCORE".to_string(), Command::Zscore);
@@ -605,6 +654,7 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("BZPOPMIN".to_string(), Command::Bzpopmin);
         m.insert("ZPOPMAX".to_string(), Command::Zpopmax);
         m.insert("BZPOPMAX".to_string(), Command::Bzpopmax);
+        m.insert("ZSCAN".to_string(), Command::ZScan);
         m.insert("PFADD".to_string(), Command::Pfadd);
         m.insert("PFCOUNT".to_string(), Command::Pfcount);
         m.insert("PFMERGE".to_string(), Command::Pfmerge);
@@ -615,9 +665,21 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("GEORADIUS".to_string(), Command::GeoRadius);
         m.insert("GEORADIUSBYMEMBER".to_string(), Command::GeoRadiusByMember);
         m.insert("EXPIRE".to_string(), Command::Expire);
+        m.insert("PEXPIRE".to_string(), Command::PExpire);
+        m.insert("EXPIREAT".to_string(), Command::ExpireAt);
+        m.insert("PEXPIREAT".to_string(), Command::PExpireAt);
         m.insert("TTL".to_string(), Command::Ttl);
+        m.insert("PTTL".to_string(), Command::PTtl);
+        m.insert("EXISTS".to_string(), Command::Exists);
+        m.insert("TYPE".to_string(), Command::Type);
+        m.insert("RENAME".to_string(), Command::Rename);
+        m.insert("RENAMENX".to_string(), Command::RenameNx);
+        m.insert("PERSIST".to_string(), Command::Persist);
+        m.insert("FLUSHDB".to_string(), Command::FlushDb);
+        m.insert("FLUSHALL".to_string(), Command::FlushAll);
         m.insert("DBSIZE".to_string(), Command::Dbsize);
         m.insert("KEYS".to_string(), Command::Keys);
+        m.insert("SCAN".to_string(), Command::Scan);
         m.insert("SAVE".to_string(), Command::Save);
         m.insert("BGSAVE".to_string(), Command::Bgsave);
         m.insert("SHUTDOWN".to_string(), Command::Shutdown);
