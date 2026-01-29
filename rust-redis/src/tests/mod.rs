@@ -1,4 +1,5 @@
 mod acl;
+pub mod helper;
 mod keys;
 mod keys_cmd;
 mod hscan_cmd;

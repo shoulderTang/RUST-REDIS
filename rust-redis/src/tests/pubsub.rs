@@ -10,18 +10,7 @@ use tokio::sync::mpsc;
 async fn test_subscribe_publish() {
     let (tx, mut rx) = mpsc::channel(32);
     
-    let server_ctx = ServerContext {
-        databases: Arc::new(vec![crate::db::Db::default()]),
-        acl: Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        aof: None,
-        config: Arc::new(crate::conf::Config::default()),
-        script_manager: crate::cmd::scripting::create_script_manager(),
-        blocking_waiters: Arc::new(DashMap::new()),
-        blocking_zset_waiters: Arc::new(DashMap::new()),
-        pubsub_channels: Arc::new(DashMap::new()),
-        pubsub_patterns: Arc::new(DashMap::new()),
-    };
-
+    let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = ConnectionContext::new(1, Some(tx));
 
     // SUBSCRIBE
@@ -72,17 +61,7 @@ async fn test_subscribe_publish() {
 async fn test_pubsub_channels() {
     let (tx, _rx) = mpsc::channel(32);
     
-    let server_ctx = ServerContext {
-        databases: Arc::new(vec![crate::db::Db::default()]),
-        acl: Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        aof: None,
-        config: Arc::new(crate::conf::Config::default()),
-        script_manager: crate::cmd::scripting::create_script_manager(),
-        blocking_waiters: Arc::new(DashMap::new()),
-        blocking_zset_waiters: Arc::new(DashMap::new()),
-        pubsub_channels: Arc::new(DashMap::new()),
-        pubsub_patterns: Arc::new(DashMap::new()),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
 
     let mut conn_ctx = ConnectionContext::new(1, Some(tx));
 
@@ -142,17 +121,7 @@ async fn test_pubsub_channels() {
 async fn test_pubsub_channels_filtering() {
     let (tx, _rx) = mpsc::channel(32);
     
-    let server_ctx = ServerContext {
-        databases: Arc::new(vec![crate::db::Db::default()]),
-        acl: Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        aof: None,
-        config: Arc::new(crate::conf::Config::default()),
-        script_manager: crate::cmd::scripting::create_script_manager(),
-        blocking_waiters: Arc::new(DashMap::new()),
-        blocking_zset_waiters: Arc::new(DashMap::new()),
-        pubsub_channels: Arc::new(DashMap::new()),
-        pubsub_patterns: Arc::new(DashMap::new()),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
 
     let mut conn_ctx = ConnectionContext::new(1, Some(tx));
 

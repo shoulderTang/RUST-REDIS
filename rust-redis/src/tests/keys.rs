@@ -7,25 +7,8 @@ use bytes::Bytes;
 
 #[tokio::test]
 async fn test_scan() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl,
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
-    conn_ctx.authenticated = true;
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // Create 100 keys
     for i in 0..100 {
@@ -151,25 +134,8 @@ async fn test_scan() {
 
 #[tokio::test]
 async fn test_rename_renamenx_persist() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl,
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
-    conn_ctx.authenticated = true;
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // Helper to run command
     async fn run_cmd(args: Vec<&str>, conn: &mut crate::cmd::ConnectionContext, ctx: &ServerContext) -> Resp {
@@ -232,25 +198,8 @@ async fn test_rename_renamenx_persist() {
 
 #[tokio::test]
 async fn test_keys() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl,
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
-    conn_ctx.authenticated = true;
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // Setup keys
     let req = Resp::Array(Some(vec![
@@ -316,25 +265,8 @@ async fn test_keys() {
 
 #[tokio::test]
 async fn test_expire_ttl() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl,
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
-    conn_ctx.authenticated = true;
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // SET key val
     let req = Resp::Array(Some(vec![
@@ -406,25 +338,8 @@ async fn test_expire_ttl() {
 
 #[tokio::test]
 async fn test_dbsize() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl,
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
-    conn_ctx.authenticated = true;
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // DBSIZE -> 0
     let req = Resp::Array(Some(vec![Resp::BulkString(Some(Bytes::from("DBSIZE")))]));
@@ -453,25 +368,8 @@ async fn test_dbsize() {
 
 #[tokio::test]
 async fn test_del() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl,
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
-    conn_ctx.authenticated = true;
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // Setup keys
     let req = Resp::Array(Some(vec![
@@ -500,7 +398,8 @@ async fn test_del() {
     }
 
     // Verify deletion
-    assert!(!db[0].contains_key(&Bytes::from("k1")));
-    assert!(!db[0].contains_key(&Bytes::from("k2")));
-    assert!(db[0].contains_key(&Bytes::from("k3")));
+    let db = server_ctx.databases.get(0).unwrap();
+    assert!(!db.contains_key(&Bytes::from("k1")));
+    assert!(!db.contains_key(&Bytes::from("k2")));
+    assert!(db.contains_key(&Bytes::from("k3")));
 }

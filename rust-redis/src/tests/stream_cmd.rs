@@ -8,34 +8,8 @@ use std::sync::{Arc, RwLock};
 
 #[tokio::test]
 async fn test_xadd() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = crate::cmd::scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: Arc::new(DashMap::new()),
-        blocking_zset_waiters: Arc::new(DashMap::new()),
-        pubsub_channels: Arc::new(DashMap::new()),
-        pubsub_patterns: Arc::new(DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        id: 0,
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // XADD key * field value
     let args = vec![
@@ -60,34 +34,8 @@ async fn test_xadd() {
 
 #[tokio::test]
 async fn test_xlen() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = crate::cmd::scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: Arc::new(DashMap::new()),
-        blocking_zset_waiters: Arc::new(DashMap::new()),
-        pubsub_channels: Arc::new(DashMap::new()),
-        pubsub_patterns: Arc::new(DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        id: 0,
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // XADD key * field value
     let args = vec![
@@ -113,34 +61,8 @@ async fn test_xlen() {
 
 #[tokio::test]
 async fn test_xlen_bug_repro() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = crate::cmd::scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: Arc::new(DashMap::new()),
-        blocking_zset_waiters: Arc::new(DashMap::new()),
-        pubsub_channels: Arc::new(DashMap::new()),
-        pubsub_patterns: Arc::new(DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        id: 0,
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // Scenario 1: One XADD with multiple fields
     // XADD mystream1 * f1 v1 f2 v2 f3 v3
@@ -212,35 +134,9 @@ async fn test_xlen_bug_repro() {
 
 #[tokio::test]
 async fn test_xrevrange() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = crate::cmd::scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: Arc::new(DashMap::new()),
-        blocking_zset_waiters: Arc::new(DashMap::new()),
-        pubsub_channels: Arc::new(DashMap::new()),
-        pubsub_patterns: Arc::new(DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        id: 0,
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
-
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
+    
     // XADD key 100-1 field value
     let args = vec![
         Resp::BulkString(Some(Bytes::from("XADD"))),
@@ -290,34 +186,8 @@ async fn test_xrevrange() {
 
 #[tokio::test]
 async fn test_xrange() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = crate::cmd::scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: Arc::new(DashMap::new()),
-        blocking_zset_waiters: Arc::new(DashMap::new()),
-        pubsub_channels: Arc::new(DashMap::new()),
-        pubsub_patterns: Arc::new(DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        id: 0,
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // XADD key 100-1 field value
     let args = vec![
@@ -372,34 +242,8 @@ async fn test_xrange() {
 
 #[tokio::test]
 async fn test_xdel() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = crate::cmd::scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: Arc::new(DashMap::new()),
-        blocking_zset_waiters: Arc::new(DashMap::new()),
-        pubsub_channels: Arc::new(DashMap::new()),
-        pubsub_patterns: Arc::new(DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        id: 0,
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // XADD key 100-1 field value
     let args = vec![
@@ -447,34 +291,8 @@ async fn test_xdel() {
 
 #[tokio::test]
 async fn test_xread() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = crate::cmd::scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: Arc::new(DashMap::new()),
-        blocking_zset_waiters: Arc::new(DashMap::new()),
-        pubsub_channels: Arc::new(DashMap::new()),
-        pubsub_patterns: Arc::new(DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        id: 0,
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // XADD key 100-1 field value
     let args = vec![
@@ -606,37 +424,12 @@ async fn test_xread() {
 
 #[tokio::test]
 async fn test_xread_block() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = crate::cmd::scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: Arc::new(DashMap::new()),
-        blocking_zset_waiters: Arc::new(DashMap::new()),
-        pubsub_channels: Arc::new(DashMap::new()),
-        pubsub_patterns: Arc::new(DashMap::new()),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
 
     // 1. Start blocking XREAD
     let server_ctx_clone = server_ctx.clone();
     let handle = tokio::spawn(async move {
-        let mut conn_ctx = ConnectionContext {
-            db_index: 0,
-            authenticated: true,
-            current_username: "default".to_string(),
-            in_multi: false,
-            multi_queue: Vec::new(),
-        id: 0,
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-        };
+        let mut conn_ctx: ConnectionContext = crate::tests::helper::create_connection_context();
         let args = vec![
             Resp::BulkString(Some(Bytes::from("XREAD"))),
             Resp::BulkString(Some(Bytes::from("BLOCK"))),
@@ -654,17 +447,7 @@ async fn test_xread_block() {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // 2. Push data to unblock
-    let mut conn_ctx = ConnectionContext {
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        id: 0,
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+    let mut conn_ctx: ConnectionContext = crate::tests::helper::create_connection_context();
     let args = vec![
         Resp::BulkString(Some(Bytes::from("XADD"))),
         Resp::BulkString(Some(Bytes::from("mystream_block"))),

@@ -9,33 +9,8 @@ use std::sync::{Arc, RwLock};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_eval() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: Arc::new(config),
-        script_manager: scripting::create_script_manager(),
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-        id: 0,
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // Script with keys and redis.call
     let req = Resp::Array(Some(vec![
@@ -68,33 +43,8 @@ async fn test_eval() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_eval_pcall() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: Arc::new(config),
-        script_manager: scripting::create_script_manager(),
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-        id: 0,
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // redis.call with error -> raises Lua error
     let req = Resp::Array(Some(vec![
@@ -131,33 +81,8 @@ async fn test_eval_pcall() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_script_commands() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: Arc::new(config),
-        script_manager: scripting::create_script_manager(),
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-        id: 0,
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // SCRIPT LOAD "return 'hello'"
     let script = "return 'hello'";
@@ -247,33 +172,8 @@ async fn test_script_commands() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_lua_state_reuse() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: Arc::new(config),
-        script_manager: scripting::create_script_manager(),
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-        id: 0,
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // Set a global variable
     let script1 = "my_global = 10; return my_global";

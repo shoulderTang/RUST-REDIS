@@ -8,34 +8,8 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn test_xgroup_create_and_xreadgroup() {
-    let db = Arc::new(vec![Arc::new(DashMap::new())]);
-    let config = Config::default();
-    let script_manager = crate::cmd::scripting::create_script_manager();
-    let acl = Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl,
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        id: 0,
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+    let mut conn_ctx: ConnectionContext = crate::tests::helper::create_connection_context();
+    let server_ctx: ServerContext = crate::tests::helper::create_server_context();
 
     // 1. Create a stream and add some entries
     let args = vec![
@@ -197,34 +171,8 @@ async fn test_xgroup_create_and_xreadgroup() {
 
 #[tokio::test]
 async fn test_xreadgroup_block() {
-    let db = Arc::new(vec![Arc::new(DashMap::new())]);
-    let config = Config::default();
-    let script_manager = crate::cmd::scripting::create_script_manager();
-    let acl = Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        id: 0,
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+    let mut conn_ctx: ConnectionContext = crate::tests::helper::create_connection_context();
+    let server_ctx: ServerContext = crate::tests::helper::create_server_context();
 
     let args = vec![
         Resp::BulkString(Some(Bytes::from("XGROUP"))),

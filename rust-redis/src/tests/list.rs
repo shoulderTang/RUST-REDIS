@@ -8,34 +8,8 @@ use std::sync::{Arc, RwLock};
 
 #[tokio::test]
 async fn test_list_ops() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl,
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        id: 0,
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // LPUSH list 1 -> 1
     let req = Resp::Array(Some(vec![
@@ -173,34 +147,8 @@ async fn test_list_ops() {
 
 #[tokio::test]
 async fn test_brpop_ops() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl,
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        id: 0,
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+     let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // LPUSH list a b c -> ["c", "b", "a"]
     let req = Resp::Array(Some(vec![
@@ -271,34 +219,8 @@ async fn test_brpop_ops() {
 
 #[tokio::test]
 async fn test_blmove_ops() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl,
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        id: 0,
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("LPUSH"))),
@@ -378,34 +300,8 @@ async fn test_blmove_ops() {
 
 #[tokio::test]
 async fn test_lmove_ops() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl,
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        id: 0,
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("LPUSH"))),

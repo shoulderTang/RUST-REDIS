@@ -8,33 +8,8 @@ use std::sync::{Arc, RwLock};
 
 #[tokio::test]
 async fn test_acl_key_permissions() {
-    let db = Arc::new(vec![Db::default()]);
-    let cfg = Arc::new(Config::default());
-    let acl = Arc::new(RwLock::new(Acl::new()));
-    
-    let mut conn_ctx = crate::cmd::ConnectionContext {
-        id: 0,
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
-
-    let server_ctx = crate::cmd::ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: cfg.clone(),
-        script_manager: scripting::create_script_manager(),
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
     
     // Create user bob with access to user:*
     // ACL SETUSER bob on >secret +@all ~user:*
@@ -96,9 +71,7 @@ async fn test_acl_key_permissions() {
 }
 
 #[tokio::test]
-async fn test_acl_persistence() {
-    let db = Arc::new(vec![Db::default()]);
-    
+async fn test_acl_persistence() {    
     // Use a temp file
     let temp_dir = std::env::temp_dir();
     let acl_path = temp_dir.join("test_users.acl");
@@ -112,32 +85,10 @@ async fn test_acl_persistence() {
     let mut cfg = Config::default();
     cfg.aclfile = Some(acl_path_str.clone());
     let cfg_arc = Arc::new(cfg);
-    
-    let acl = Arc::new(RwLock::new(Acl::new()));
-    
-    let mut conn_ctx = crate::cmd::ConnectionContext {
-        id: 0,
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
-
-    let server_ctx = crate::cmd::ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: cfg_arc.clone(),
-        script_manager: scripting::create_script_manager(),
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
+        
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
+    let mut server_ctx = crate::tests::helper::create_server_context();
+    server_ctx.config = cfg_arc.clone();
     
     // Create user alice
     // ACL SETUSER alice on >pass123 +@all
@@ -171,18 +122,9 @@ async fn test_acl_persistence() {
     
     // Create a NEW ACL instance to test loading
     let new_acl = Arc::new(RwLock::new(Acl::new()));
-    
-    let server_ctx_new = crate::cmd::ServerContext {
-        databases: db.clone(),
-        acl: new_acl.clone(),
-        aof: None,
-        config: cfg_arc.clone(),
-        script_manager: scripting::create_script_manager(),
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
+    let mut server_ctx_new = crate::tests::helper::create_server_context();
+    server_ctx_new.acl = new_acl.clone();
+    server_ctx_new.config = cfg_arc.clone();
     
     // ACL LOAD on new instance
     let req_load = Resp::Array(Some(vec![

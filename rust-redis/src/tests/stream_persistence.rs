@@ -76,34 +76,11 @@ mod tests {
         let path_str = Path::new(dir).join(&filename);
         let path = path_str.to_str().unwrap();
 
-        let db = Arc::new(vec![Db::default()]);
-        let config = Arc::new(Config::default());
-        let script_manager = create_script_manager();
-        let acl = Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
-
-        let server_ctx = ServerContext {
-            databases: db.clone(),
-            acl: acl,
-            aof: None,
-            config: config.clone(),
-            script_manager: script_manager,
-            blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        id: 0,
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+        // 1. Setup DB
+        let server_ctx = crate::tests::helper::create_server_context();
+        let mut conn_ctx = crate::tests::helper::create_connection_context();
+        let db = server_ctx.databases.clone();
+        let config = server_ctx.config.clone();
         
         // Helper to run command and write log
         macro_rules! run_and_log {

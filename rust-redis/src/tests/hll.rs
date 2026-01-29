@@ -8,34 +8,8 @@ use std::sync::{Arc, RwLock};
 
 #[tokio::test]
 async fn test_hll() {
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        id: 0,
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // PFADD hll1 a b c
     let req = Resp::Array(Some(vec![
@@ -111,39 +85,13 @@ async fn test_hll_string_promotion() {
     use crate::db::{Entry, Value};
     use crate::hll::HLL_REGISTERS;
     
-    let db = Arc::new(vec![Db::default()]);
-    let config = Config::default();
-    let script_manager = scripting::create_script_manager();
-    let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
-
-    let server_ctx = ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: Arc::new(config),
-        script_manager: script_manager,
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
-    let mut conn_ctx = ConnectionContext {
-        id: 0,
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // Manually insert a String that looks like an HLL (16k zero bytes)
     let key = Bytes::from("hll_str");
     let raw_hll = vec![0u8; HLL_REGISTERS];
-    db[0].insert(key.clone(), Entry::new(Value::String(Bytes::from(raw_hll)), None));
+    server_ctx.databases[0].insert(key.clone(), Entry::new(Value::String(Bytes::from(raw_hll)), None));
 
     // PFCOUNT should work and return 0
     let req = Resp::Array(Some(vec![
@@ -166,7 +114,7 @@ async fn test_hll_string_promotion() {
     assert_eq!(res, Resp::Integer(1));
 
     // Verify it is now Value::HyperLogLog in DB
-    if let Some(entry) = db[0].get(&key) {
+    if let Some(entry) = server_ctx.databases[0].get(&key) {
         match &entry.value {
             Value::HyperLogLog(_) => {}, // Good
             _ => panic!("Value should have been promoted to HyperLogLog"),

@@ -8,31 +8,8 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn test_zset_ops() {
-    let db = Arc::new(vec![Db::default()]);
-    let cfg = Arc::new(Config::default());
-    let acl = Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
-    let mut conn_ctx = crate::cmd::ConnectionContext {
-        id: 0,
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
-    let server_ctx = crate::cmd::ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: cfg.clone(),
-        script_manager: scripting::create_script_manager(),
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // ZADD zset 1 m1 2 m2 -> 2
     let req = Resp::Array(Some(vec![
@@ -165,31 +142,8 @@ async fn test_zset_ops() {
 
 #[tokio::test]
 async fn test_zpopmin_ops() {
-    let db = Arc::new(vec![Db::default()]);
-    let cfg = Arc::new(Config::default());
-    let acl = Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
-    let mut conn_ctx = crate::cmd::ConnectionContext {
-        id: 0,
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
-    let server_ctx = crate::cmd::ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: cfg.clone(),
-        script_manager: scripting::create_script_manager(),
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // ZADD zset 1 m1 2 m2 3 m3
     let req = Resp::Array(Some(vec![
@@ -237,35 +191,12 @@ async fn test_zpopmin_ops() {
 
 #[tokio::test]
 async fn test_bzpopmin_ops() {
-    let db = Arc::new(vec![Db::default()]);
-    let cfg = Arc::new(Config::default());
-    let acl = Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
-    let server_ctx = crate::cmd::ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: cfg.clone(),
-        script_manager: scripting::create_script_manager(),
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
-
+    let server_ctx = crate::tests::helper::create_server_context();
+    
     // 1. Blocking wait
     let server_ctx_clone = server_ctx.clone();
     let handle = tokio::spawn(async move {
-        let mut conn_ctx = crate::cmd::ConnectionContext {
-            id: 0,
-            db_index: 0,
-            authenticated: true,
-            current_username: "default".to_string(),
-            in_multi: false,
-            multi_queue: Vec::new(),
-            msg_sender: None,
-            subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-        };
+        let mut conn_ctx = crate::tests::helper::create_connection_context();
         let req = Resp::Array(Some(vec![
             Resp::BulkString(Some(Bytes::from("BZPOPMIN"))),
             Resp::BulkString(Some(Bytes::from("zset_block"))),
@@ -279,17 +210,7 @@ async fn test_bzpopmin_ops() {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // Push data
-    let mut conn_ctx = crate::cmd::ConnectionContext {
-        id: 0,
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("ZADD"))),
         Resp::BulkString(Some(Bytes::from("zset_block"))),
@@ -322,31 +243,8 @@ async fn test_bzpopmin_ops() {
 
 #[tokio::test]
 async fn test_zpopmax_ops() {
-    let db = Arc::new(vec![Db::default()]);
-    let cfg = Arc::new(Config::default());
-    let acl = Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
-    let mut conn_ctx = crate::cmd::ConnectionContext {
-        id: 0,
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
-    let server_ctx = crate::cmd::ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: cfg.clone(),
-        script_manager: scripting::create_script_manager(),
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // ZADD zset 1 m1 2 m2 3 m3
     let req = Resp::Array(Some(vec![
@@ -394,35 +292,12 @@ async fn test_zpopmax_ops() {
 
 #[tokio::test]
 async fn test_bzpopmax_ops() {
-    let db = Arc::new(vec![Db::default()]);
-    let cfg = Arc::new(Config::default());
-    let acl = Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
-    let server_ctx = crate::cmd::ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: cfg.clone(),
-        script_manager: scripting::create_script_manager(),
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
 
     // 1. Blocking wait
     let server_ctx_clone = server_ctx.clone();
     let handle = tokio::spawn(async move {
-        let mut conn_ctx = crate::cmd::ConnectionContext {
-            id: 0,
-            db_index: 0,
-            authenticated: true,
-            current_username: "default".to_string(),
-            in_multi: false,
-            multi_queue: Vec::new(),
-            msg_sender: None,
-            subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-        };
+        let mut conn_ctx = crate::tests::helper::create_connection_context();
         let req = Resp::Array(Some(vec![
             Resp::BulkString(Some(Bytes::from("BZPOPMAX"))),
             Resp::BulkString(Some(Bytes::from("zset_block_max"))),
@@ -436,17 +311,7 @@ async fn test_bzpopmax_ops() {
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // Push data
-    let mut conn_ctx = crate::cmd::ConnectionContext {
-        id: 0,
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-    };
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("ZADD"))),
         Resp::BulkString(Some(Bytes::from("zset_block_max"))),

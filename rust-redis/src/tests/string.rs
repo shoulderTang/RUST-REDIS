@@ -9,23 +9,8 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn test_set_get() {
-    let db = Arc::new(vec![Db::default()]);
-    let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
-    let cfg = std::sync::Arc::new(Config::default());
-    let script_manager = scripting::create_script_manager();
-    
-    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
-    let server_ctx = crate::cmd::ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: cfg.clone(),
-        script_manager: script_manager.clone(),
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // SET key val
     let req = Resp::Array(Some(vec![
@@ -64,23 +49,8 @@ async fn test_set_get() {
 
 #[tokio::test]
 async fn test_mset_mget() {
-    let db = Arc::new(vec![Db::default()]);
-    let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
-    let cfg = std::sync::Arc::new(Config::default());
-    let script_manager = scripting::create_script_manager();
-    
-    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
-    let server_ctx = crate::cmd::ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: cfg.clone(),
-        script_manager: script_manager.clone(),
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // MSET k1 v1 k2 v2
     let req = Resp::Array(Some(vec![
@@ -126,23 +96,8 @@ async fn test_mset_mget() {
 
 #[tokio::test]
 async fn test_string_extended() {
-    let db = Arc::new(vec![Db::default()]);
-    let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
-    let cfg = std::sync::Arc::new(Config::default());
-    let script_manager = scripting::create_script_manager();
-    
-    let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None);
-    let server_ctx = crate::cmd::ServerContext {
-        databases: db.clone(),
-        acl: acl.clone(),
-        aof: None,
-        config: cfg.clone(),
-        script_manager: script_manager.clone(),
-        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    };
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // SET NX key val -> OK
     let req = Resp::Array(Some(vec![
