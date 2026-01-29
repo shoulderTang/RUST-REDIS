@@ -10,20 +10,21 @@ use tokio::sync::Mutex;
 use dashmap::DashMap;
 use tracing::error;
 
-mod command;
-mod config;
-mod hash;
+pub mod command;
+pub mod config;
+pub mod hash;
 pub mod key;
-mod list;
+pub mod list;
 pub mod scripting;
-mod save;
-mod set;
-mod stream;
-mod string;
-mod zset;
-mod hll;
-mod geo;
-mod acl;
+pub mod save;
+pub mod set;
+pub mod stream;
+pub mod string;
+pub mod zset;
+pub mod hll;
+pub mod geo;
+pub mod info;
+pub mod acl;
 pub mod pubsub;
 
 
@@ -38,10 +39,11 @@ pub struct ConnectionContext {
     pub msg_sender: Option<tokio::sync::mpsc::Sender<Resp>>,
     pub subscriptions: HashSet<String>,
     pub psubscriptions: HashSet<String>,
+    pub shutdown: Option<tokio::sync::watch::Receiver<bool>>,
 }
 
 impl ConnectionContext {
-    pub fn new(id: u64, msg_sender: Option<tokio::sync::mpsc::Sender<Resp>>) -> Self {
+    pub fn new(id: u64, msg_sender: Option<tokio::sync::mpsc::Sender<Resp>>, shutdown: Option<tokio::sync::watch::Receiver<bool>>) -> Self {
         Self {
             id,
             db_index: 0,
@@ -52,6 +54,7 @@ impl ConnectionContext {
             msg_sender,
             subscriptions: HashSet::new(),
             psubscriptions: HashSet::new(),
+            shutdown,
         }
     }
 }
@@ -67,6 +70,10 @@ pub struct ServerContext {
     pub blocking_zset_waiters: Arc<DashMap<(usize, Vec<u8>), VecDeque<(tokio::sync::mpsc::Sender<(Vec<u8>, Vec<u8>, f64)>, bool)>>>,
     pub pubsub_channels: Arc<DashMap<String, DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>>,
     pub pubsub_patterns: Arc<DashMap<String, DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>>,
+    pub run_id: String,
+    pub start_time: std::time::Instant,
+    pub client_count: Arc<std::sync::atomic::AtomicU64>,
+    pub blocked_client_count: Arc<std::sync::atomic::AtomicU64>,
 }
 
 
@@ -152,6 +159,7 @@ enum Command {
     Shutdown,
     Command,
     Config,
+    Info,
     BgRewriteAof,
     Multi,
     Exec,
@@ -266,7 +274,7 @@ pub async fn process_frame(
     server_ctx: &ServerContext,
 ) -> (Resp, Option<Resp>) {
     let original_frame = frame.clone();
-
+    //println!("loaded frame: {:?}", frame);
     let (res, custom_log, cmd_name_opt) = match frame {
         Resp::Array(Some(items)) => {
             if items.is_empty() {
@@ -545,6 +553,7 @@ async fn dispatch_command(
         }
         Command::Command => (command::command(items), None),
         Command::Config => (config::config(items, &server_ctx.config), None),
+        Command::Info => (info::info(items, server_ctx), None),
         Command::Eval => scripting::eval(items, conn_ctx, server_ctx).await,
         Command::EvalSha => scripting::evalsha(items, conn_ctx, server_ctx).await,
         Command::Script => (scripting::script(items, &server_ctx.script_manager), None),
@@ -685,6 +694,7 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("SHUTDOWN".to_string(), Command::Shutdown);
         m.insert("COMMAND".to_string(), Command::Command);
         m.insert("CONFIG".to_string(), Command::Config);
+        m.insert("INFO".to_string(), Command::Info);
         m.insert("EVAL".to_string(), Command::Eval);
         m.insert("EVALSHA".to_string(), Command::EvalSha);
         m.insert("SCRIPT".to_string(), Command::Script);

@@ -33,6 +33,53 @@ async fn test_xadd() {
 }
 
 #[tokio::test]
+async fn test_xread_block_cancellation() {
+    let server_ctx = crate::tests::helper::create_server_context();
+    
+    // Create shutdown channel
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    
+    // 1. Start blocking XREAD
+    let server_ctx_clone = server_ctx.clone();
+    let handle = tokio::spawn(async move {
+        // Create connection context with shutdown receiver
+        let mut conn_ctx = crate::cmd::ConnectionContext::new(1, None, Some(shutdown_rx));
+        
+        let args = vec![
+            Resp::BulkString(Some(Bytes::from("XREAD"))),
+            Resp::BulkString(Some(Bytes::from("BLOCK"))),
+            Resp::BulkString(Some(Bytes::from("0"))), // Infinite block
+            Resp::BulkString(Some(Bytes::from("STREAMS"))),
+            Resp::BulkString(Some(Bytes::from("mystream_cancel"))),
+            Resp::BulkString(Some(Bytes::from("0-0"))),
+        ];
+        let frame = Resp::Array(Some(args));
+        let (resp, _) = process_frame(frame, &mut conn_ctx, &server_ctx_clone).await;
+        resp
+    });
+
+    // Wait a bit to ensure blocking and count update
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    
+    // Verify blocked client count is 1
+    assert_eq!(server_ctx.blocked_client_count.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+    // 2. Send shutdown signal
+    let _ = shutdown_tx.send(true);
+    
+    // 3. Verify XREAD returns nil
+    let resp = handle.await.unwrap();
+    if let Resp::BulkString(None) = resp {
+        // ok
+    } else {
+        panic!("Expected Nil on cancellation, got {:?}", resp);
+    }
+    
+    // Verify blocked client count is 0
+    assert_eq!(server_ctx.blocked_client_count.load(std::sync::atomic::Ordering::Relaxed), 0);
+}
+
+#[tokio::test]
 async fn test_xlen() {
     let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();

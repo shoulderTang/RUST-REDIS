@@ -123,15 +123,16 @@ async  fn redis_call_handler<'lua>(
     let frame = Resp::Array(Some(resp_args));
     // Use a local db_index to ensure SELECT in Lua doesn't affect the client connection
     let mut local_conn_ctx = ConnectionContext {
-        id: 0,
+        id: conn_ctx.id,
         db_index: conn_ctx.db_index,
-        authenticated: true,
+        authenticated: conn_ctx.authenticated,
         current_username: conn_ctx.current_username.clone(),
-        in_multi: false,
+        in_multi: false, // Scripts don't inherit MULTI state in this context
         multi_queue: Vec::new(),
-        msg_sender: None,
+        msg_sender: conn_ctx.msg_sender.clone(),
         subscriptions: std::collections::HashSet::new(),
         psubscriptions: std::collections::HashSet::new(),
+        shutdown: conn_ctx.shutdown.clone(),
     };
     
     let (res, _) = super::process_frame(frame, &mut local_conn_ctx, server_ctx).await;

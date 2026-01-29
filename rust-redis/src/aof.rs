@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{self, AsyncWriteExt, BufWriter};
 use tokio::task::JoinHandle;
+use rand::Rng;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AppendFsync {
@@ -72,13 +73,15 @@ impl Aof {
 
     pub async fn load(
         &self,
-        path: &str,
-        databases: &Arc<Vec<Db>>,
-        cfg: &Config,
-        script_manager: &Arc<ScriptManager>,
+      //  path: &str,
+        server_ctx: &crate::cmd::ServerContext,
+        // databases: &Arc<Vec<Db>>,
+        // cfg: &Config,
+        // script_manager: &Arc<ScriptManager>,
     ) -> io::Result<()> {
+        let path = server_ctx.config.appendfilename.clone();
         // Check if file exists first
-        match tokio::fs::metadata(path).await {
+        match tokio::fs::metadata(&path).await {
             Ok(_) => {}
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
             Err(e) => return Err(e),
@@ -86,43 +89,50 @@ impl Aof {
 
         let file = tokio::fs::File::open(path).await?;
         let mut reader = tokio::io::BufReader::new(file);
-        let mut current_db_index = 0;
 
+        let mut conn_ctx = crate::cmd::ConnectionContext {
+            id: 0,
+            db_index: 0,
+            authenticated: true,
+            current_username: "default".to_string(),
+            in_multi: false,
+            multi_queue: Vec::new(),
+            msg_sender: None,
+            subscriptions: std::collections::HashSet::new(),
+            psubscriptions: std::collections::HashSet::new(),
+            shutdown: None,
+        };
         loop {
             match read_frame(&mut reader).await {
                 Ok(Some(frame)) => {
                     // process_frame requires Aof option now, but during load we pass None
                     // to avoid recursive or circular dependency issues and because we don't want to log loaded commands
                     
-                    let mut conn_ctx = crate::cmd::ConnectionContext {
-                        id: 0,
-                        db_index: current_db_index,
-                        authenticated: true,
-                        current_username: "default".to_string(),
-                        in_multi: false,
-                        multi_queue: Vec::new(),
-                        msg_sender: None,
-                        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-                    };
-
-                    let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
                     
-                    let server_ctx = crate::cmd::ServerContext {
-                        databases: databases.clone(),
-                        acl: acl,
-                        aof: None,
-                        config: std::sync::Arc::new(cfg.clone()),
-                        script_manager: script_manager.clone(),
-                        blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-                        blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-                        pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-                        pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-                    };
+
+                    // let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
+                    // let mut rng = rand::rng();
+                    // let run_id: String = (0..40).map(|_| rng.sample(rand::distr::Alphanumeric) as char).collect();
+
+                    // let server_ctx = crate::cmd::ServerContext {
+                    //     databases: databases.clone(),
+                    //     acl: acl,
+                    //     aof: None,
+                    //     config: std::sync::Arc::new(cfg.clone()),
+                    //     script_manager: script_manager.clone(),
+                    //     blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+                    //     blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+                    //     pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+                    //     pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
+                    //     run_id,
+                    //     start_time: std::time::Instant::now(),
+                    //     client_count: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                    //     blocked_client_count: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                    // };
 
                     let _ = process_frame(frame, &mut conn_ctx, &server_ctx).await;
+                    //current_db_index = conn_ctx.db_index;
                     
-                    current_db_index = conn_ctx.db_index;
                 }
                 Ok(None) => break,
                 Err(e) => return Err(e),

@@ -1,5 +1,6 @@
 mod acl;
 pub mod helper;
+pub mod aof_hang;
 mod keys;
 mod keys_cmd;
 mod hscan_cmd;
@@ -19,4 +20,5 @@ mod stream_cgroups_cmd;
 mod stream_persistence;
 mod hll;
 mod geo;
+mod info;
 mod pubsub;

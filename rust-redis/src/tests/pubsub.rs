@@ -11,7 +11,7 @@ async fn test_subscribe_publish() {
     let (tx, mut rx) = mpsc::channel(32);
     
     let server_ctx = crate::tests::helper::create_server_context();
-    let mut conn_ctx = ConnectionContext::new(1, Some(tx));
+    let mut conn_ctx = ConnectionContext::new(1, Some(tx), None);
 
     // SUBSCRIBE
     let sub_args = vec![
@@ -63,7 +63,7 @@ async fn test_pubsub_channels() {
     
     let server_ctx = crate::tests::helper::create_server_context();
 
-    let mut conn_ctx = ConnectionContext::new(1, Some(tx));
+    let mut conn_ctx = ConnectionContext::new(1, Some(tx), None);
 
     // SUBSCRIBE ch1
     let args = vec![
@@ -123,7 +123,7 @@ async fn test_pubsub_channels_filtering() {
     
     let server_ctx = crate::tests::helper::create_server_context();
 
-    let mut conn_ctx = ConnectionContext::new(1, Some(tx));
+    let mut conn_ctx = ConnectionContext::new(1, Some(tx), None);
 
     // 1. SUBSCRIBE ch1
     let sub_args = vec![

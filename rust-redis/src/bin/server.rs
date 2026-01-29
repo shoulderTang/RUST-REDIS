@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
@@ -34,7 +35,9 @@ pub mod acl;
 #[path = "../tests/mod.rs"]
 mod tests;
 
-#[tokio::main(flavor = "current_thread")]
+use rand::Rng;
+
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
     let cfg_path = std::env::args().nth(1);
     let cfg = match conf::load_config(cfg_path.as_deref()) {
@@ -64,6 +67,7 @@ async fn main() {
         run_server(cfg, None).await;
     }
 }
+
 
 async fn run_server(
     cfg: conf::Config,
@@ -120,39 +124,64 @@ async fn run_server(
     }
 
     let acl = Arc::new(std::sync::RwLock::new(acl_store));
-
+    let mut rng = rand::rng();
+    let run_id: String = (0..40).map(|_| rng.sample(rand::distr::Alphanumeric) as char).collect();
     let aof = if cfg.appendonly {
         info!("AOF enabled, file: {}", cfg.appendfilename);
         let aof = aof::Aof::new(&cfg.appendfilename, cfg.appendfsync)
             .await
-            .expect("failed to open AOF file");
-        aof.load(&cfg.appendfilename, &databases, &cfg, &script_manager)
-            .await
-            .expect("failed to load AOF");
+            .expect("failed to open AOF file"); 
+        //aof.load(&cfg.appendfilename, &databases, &cfg, &script_manager)
         Some(Arc::new(Mutex::new(aof)))
     } else {
         None
     };
-
-    // Create script cache if not created (e.g. AOF disabled), or share the one used for loading
-    // Since we can't easily extract it from the if/else block without defining it outside, let's define it outside.
-
-    let cfg_arc = Arc::new(cfg);
-
     let server_ctx = cmd::ServerContext {
-        databases: databases.clone(),
-        acl: acl.clone(),
-        aof: aof.clone(),
-        config: cfg_arc.clone(),
+        databases: databases,
+        acl: acl,
+        aof: aof,
+        config: Arc::new(cfg),
         script_manager: script_manager.clone(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
         pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
+        run_id,
+        start_time: std::time::Instant::now(),
+        client_count: Arc::new(AtomicU64::new(0)),
+        blocked_client_count: Arc::new(AtomicU64::new(0)),
     };
+    
+    if let Some(ref aof) = server_ctx.aof {
+            //let aof_guard = aof.lock().await;
+            let aof_guard = aof.lock().await;
+            aof_guard.load(&server_ctx).await.expect("failed to load AOF");
+    }
+    // Create script cache if not created (e.g. AOF disabled), or share the one used for loading
+    // Since we can't easily extract it from the if/else block without defining it outside, let's define it outside.
+
+    //let cfg_arc: Arc<Arc<conf::Config>> = Arc::new(server_ctx.config.clone());
+
+
+
+    // let server_ctx = cmd::ServerContext {
+    //     databases: databases.clone(),
+    //     acl: acl.clone(),
+    //     aof: aof.clone(),
+    //     config: Arc::new(server_ctx.config.clone()),
+    //     script_manager: script_manager.clone(),
+    //     blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    //     blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
+    //     pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
+    //     pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
+    //     run_id,
+    //     start_time: std::time::Instant::now(),
+    //     client_count: Arc::new(AtomicU64::new(0)),
+    //     blocked_client_count: Arc::new(AtomicU64::new(0)),
+    // };
 
     // Background task to clean up expired keys
-    let databases_for_cleanup = databases.clone();
+    let databases_for_cleanup = server_ctx.databases.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
         loop {
@@ -166,14 +195,22 @@ async fn run_server(
     let next_connection_id = Arc::new(AtomicU64::new(1));
 
     loop {
-        let (socket, addr) = listener.accept().await.unwrap();
+        let (mut socket, addr) = listener.accept().await.unwrap();
         info!("accepted connection from {}", addr);
+
+        let current_clients = server_ctx.client_count.load(Ordering::Relaxed);
+        if current_clients >= server_ctx.config.maxclients {
+            warn!("max number of clients reached, rejecting connection from {}", addr);
+            let _ = socket.write_all(b"-ERR max number of clients reached\r\n").await;
+            continue;
+        }
+
+        server_ctx.client_count.fetch_add(1, Ordering::Relaxed);
         let server_ctx_cloned: cmd::ServerContext = server_ctx.clone();
         let connection_id = next_connection_id.fetch_add(1, Ordering::Relaxed);
 
         tokio::spawn(async move {
             let (read_half, write_half) = socket.into_split();
-            let mut reader = BufReader::new(read_half);
             
             let (tx, mut rx) = tokio::sync::mpsc::channel(32);
             let tx_for_conn = tx.clone();
@@ -191,29 +228,68 @@ async fn run_server(
                 }
             });
 
-            let mut conn_ctx = cmd::ConnectionContext::new(connection_id, Some(tx_for_conn));
+            // Shutdown signal
+            let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+            
+            // Frame channel
+            let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel(32);
+
+            // Reader Task
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(read_half);
+                loop {
+                    match resp::read_frame(&mut reader).await {
+                        Ok(Some(frame)) => {
+                            if frame_tx.send(frame).await.is_err() {
+                                break;
+                            }
+                        }
+                        Ok(None) => break, // EOF
+                        Err(_) => break, // Error
+                    }
+                }
+                // Signal shutdown
+                let _ = shutdown_tx.send(true);
+            });
+
+            let mut conn_ctx = cmd::ConnectionContext::new(connection_id, Some(tx_for_conn), Some(shutdown_rx.clone()));
 
             loop {
-                let frame = match resp::read_frame(&mut reader).await {
-                    Ok(Some(f)) => f,
-                    Ok(None) => break,
-                    Err(_) => break,
-                };
-                let (response, cmd_to_log) = cmd::process_frame(
-                    frame,
-                    &mut conn_ctx,
-                    &server_ctx_cloned,
-                ).await;
+                tokio::select! {
+                    frame_opt = frame_rx.recv() => {
+                        match frame_opt {
+                            Some(frame) => {
+                                let (response, cmd_to_log) = cmd::process_frame(
+                                    frame,
+                                    &mut conn_ctx,
+                                    &server_ctx_cloned,
+                                ).await;
+                
+                                if tx.send(response).await.is_err() {
+                                    break;
+                                }
+                
+                                if let Some(cmd) = cmd_to_log {
+                                    if let Some(aof) = &server_ctx_cloned.aof {
+                                        // Use a timeout to prevent hanging if AOF lock is held for too long
+                                        let aof_op = async {
+                                            let mut guard = aof.lock().await;
+                                            guard.append(&cmd).await
+                                        };
 
-                if tx.send(response).await.is_err() {
-                    break;
-                }
-
-                if let Some(cmd) = cmd_to_log {
-                    if let Some(aof) = &server_ctx_cloned.aof {
-                        if let Err(e) = aof.lock().await.append(&cmd).await {
-                            error!("failed to append to AOF: {}", e);
+                                        match tokio::time::timeout(Duration::from_millis(500), aof_op).await {
+                                            Ok(Ok(_)) => {},
+                                            Ok(Err(e)) => error!("failed to append to AOF: {}", e),
+                                            Err(_) => error!("timeout appending to AOF"),
+                                        }
+                                    }
+                                }
+                            }
+                            None => break, // Reader closed
                         }
+                    }
+                    _ = shutdown_rx.changed() => {
+                        break;
                     }
                 }
             }
@@ -229,6 +305,7 @@ async fn run_server(
                     subscribers.remove(&conn_ctx.id);
                 }
             }
+            server_ctx_cloned.client_count.fetch_sub(1, Ordering::Relaxed);
         });
     }
 }

@@ -5,6 +5,8 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use tokio::time::timeout;
 
+use std::sync::atomic::Ordering;
+
 pub fn lpush(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerContext) -> Resp {
     if items.len() < 3 {
         return Resp::Error("ERR wrong number of arguments for 'LPUSH'".to_string());
@@ -422,17 +424,41 @@ async fn blocking_pop_generic(
     }
 
     // Wait
+    server_ctx.blocked_client_count.fetch_add(1, Ordering::Relaxed);
+    
+    let (_shutdown_tx, mut shutdown_rx) = if let Some(rx) = &conn_ctx.shutdown {
+        (None, rx.clone())
+    } else {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        (Some(tx), rx)
+    };
+
     let result = if timeout_secs > 0.0 {
         let duration = Duration::from_secs_f64(timeout_secs);
-        match timeout(duration, rx.recv()).await {
-            Ok(Some((key, val))) => Some((key, val)),
-            Ok(None) => None,
-            Err(_) => None, // Timeout
+        tokio::select! {
+            res = timeout(duration, rx.recv()) => {
+                match res {
+                    Ok(Some((key, val))) => Some((key, val)),
+                    Ok(None) => None,
+                    Err(_) => None, // Timeout
+                }
+            }
+            _ = shutdown_rx.changed() => {
+                None
+            }
         }
     } else {
         // Infinite wait
-        rx.recv().await
+        tokio::select! {
+            res = rx.recv() => {
+                res
+            }
+            _ = shutdown_rx.changed() => {
+                None
+            }
+        }
     };
+    server_ctx.blocked_client_count.fetch_sub(1, Ordering::Relaxed);
 
     match result {
         Some((key, val)) => Resp::Array(Some(vec![
@@ -743,6 +769,7 @@ pub async fn blmove(
         .or_insert_with(VecDeque::new);
     queue.push_back(tx);
 
+    server_ctx.blocked_client_count.fetch_add(1, Ordering::Relaxed);
     let result = if timeout_secs > 0.0 {
         let duration = Duration::from_secs_f64(timeout_secs);
         match timeout(duration, rx.recv()).await {
@@ -756,6 +783,7 @@ pub async fn blmove(
             None => None,
         }
     };
+    server_ctx.blocked_client_count.fetch_sub(1, Ordering::Relaxed);
 
     match result {
         Some(v) => {

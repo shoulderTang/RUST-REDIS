@@ -668,6 +668,14 @@ const COMMAND_TABLE: &[CommandInfo] = &[
         step: 0,
     },
     CommandInfo {
+        name: "info",
+        arity: -1,
+        flags: &["random", "loading", "stale"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
         name: "eval",
         arity: -3,
         flags: &["noscript", "movablekeys"],

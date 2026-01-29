@@ -6,6 +6,7 @@ use bytes::Bytes;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH, Duration, Instant};
 use tokio::time::sleep;
+use std::sync::atomic::Ordering;
 
 fn as_bytes(resp: &Resp) -> Option<Bytes> {
     match resp {
@@ -911,26 +912,37 @@ pub async fn xread_cmd(
     match block_ms {
         None => xread(args, db),
         Some(ms) => {
-            if ms == 0 {
+            server_ctx.blocked_client_count.fetch_add(1, Ordering::Relaxed);
+            let (_shutdown_tx, mut shutdown_rx) = if let Some(rx) = &conn_ctx.shutdown {
+                (None, rx.clone())
+            } else {
+                let (tx, rx) = tokio::sync::watch::channel(false);
+                (Some(tx), rx)
+            };
+
+            let result = if ms == 0 {
                 loop {
-                    let res = xread(args, db);
-                    match res {
+                    let resp = xread(args, db);
+                    match resp {
                         Resp::BulkString(None) => {
-                            sleep(Duration::from_millis(10)).await;
+                            tokio::select! {
+                                _ = sleep(Duration::from_millis(10)) => {}
+                                _ = shutdown_rx.changed() => break Resp::BulkString(None),
+                            }
                             continue;
                         }
-                        _ => return res,
+                        _ => break resp,
                     }
                 }
             } else {
                 let deadline = Instant::now() + Duration::from_millis(ms);
                 loop {
-                    let res = xread(args, db);
-                    match res {
+                    let resp = xread(args, db);
+                    match resp {
                         Resp::BulkString(None) => {
                             let now = Instant::now();
                             if now >= deadline {
-                                return Resp::BulkString(None);
+                                break Resp::BulkString(None);
                             }
                             let remaining = deadline - now;
                             let sleep_dur = if remaining > Duration::from_millis(10) {
@@ -938,12 +950,17 @@ pub async fn xread_cmd(
                             } else {
                                 remaining
                             };
-                            sleep(sleep_dur).await;
+                            tokio::select! {
+                                _ = sleep(sleep_dur) => {}
+                                _ = shutdown_rx.changed() => break Resp::BulkString(None),
+                            }
                         }
-                        _ => return res,
+                        _ => break resp,
                     }
                 }
-            }
+            };
+            server_ctx.blocked_client_count.fetch_sub(1, Ordering::Relaxed);
+            result
         }
     }
 }
@@ -1007,39 +1024,55 @@ pub async fn xreadgroup_cmd(
     match block_ms {
         None => xreadgroup(args, db),
         Some(ms) => {
-            if ms == 0 {
-                loop {
-                    let (resp, log) = xreadgroup(args, db);
-                    match resp {
-                        Resp::BulkString(None) => {
-                            sleep(Duration::from_millis(10)).await;
-                            continue;
-                        }
-                        _ => return (resp, log),
-                    }
-                }
-            } else {
-                let deadline = Instant::now() + Duration::from_millis(ms);
-                loop {
-                    let (resp, log) = xreadgroup(args, db);
-                    match resp {
-                        Resp::BulkString(None) => {
-                            let now = Instant::now();
-                            if now >= deadline {
-                                return (Resp::BulkString(None), None);
+            server_ctx.blocked_client_count.fetch_add(1, Ordering::Relaxed);
+            let (_shutdown_tx, mut shutdown_rx) = if let Some(rx) = &conn_ctx.shutdown {
+                    (None, rx.clone())
+                } else {
+                    let (tx, rx) = tokio::sync::watch::channel(false);
+                    (Some(tx), rx)
+                };
+
+                let result = if ms == 0 {
+                    loop {
+                        let (resp, log) = xreadgroup(args, db);
+                        match resp {
+                            Resp::BulkString(None) => {
+                                tokio::select! {
+                                    _ = sleep(Duration::from_millis(10)) => {}
+                                    _ = shutdown_rx.changed() => break (Resp::BulkString(None), None),
+                                }
+                                continue;
                             }
-                            let remaining = deadline - now;
-                            let sleep_dur = if remaining > Duration::from_millis(10) {
-                                Duration::from_millis(10)
-                            } else {
-                                remaining
-                            };
-                            sleep(sleep_dur).await;
+                            _ => break (resp, log),
                         }
-                        _ => return (resp, log),
                     }
-                }
-            }
+                } else {
+                    let deadline = Instant::now() + Duration::from_millis(ms);
+                    loop {
+                        let (resp, log) = xreadgroup(args, db);
+                        match resp {
+                            Resp::BulkString(None) => {
+                                let now = Instant::now();
+                                if now >= deadline {
+                                    break (Resp::BulkString(None), None);
+                                }
+                                let remaining = deadline - now;
+                                let sleep_dur = if remaining > Duration::from_millis(10) {
+                                    Duration::from_millis(10)
+                                } else {
+                                    remaining
+                                };
+                                tokio::select! {
+                                    _ = sleep(sleep_dur) => {}
+                                    _ = shutdown_rx.changed() => break (Resp::BulkString(None), None),
+                                }
+                            }
+                            _ => break (resp, log),
+                        }
+                    }
+                };
+            server_ctx.blocked_client_count.fetch_sub(1, Ordering::Relaxed);
+            result
         }
     }
 }

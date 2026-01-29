@@ -192,15 +192,16 @@ async fn test_xreadgroup_block() {
     let server_ctx_clone = server_ctx.clone();
     let handle = tokio::spawn(async move {
         let mut conn_ctx = ConnectionContext {
+            id: 1,
             db_index: 0,
             authenticated: true,
             current_username: "default".to_string(),
             in_multi: false,
             multi_queue: Vec::new(),
-        id: 0,
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
+            msg_sender: None,
+            subscriptions: std::collections::HashSet::new(),
+            psubscriptions: std::collections::HashSet::new(),
+            shutdown: None,
         };
         let args = vec![
             Resp::BulkString(Some(Bytes::from("XREADGROUP"))),

@@ -17,6 +17,8 @@ pub struct Config {
     pub requirepass: Option<String>,
     pub aclfile: Option<String>,
     pub save_params: Vec<(u64, u64)>,
+    pub config_file: Option<String>,
+    pub maxclients: u64,
 }
 
 impl Default for Config {
@@ -34,6 +36,8 @@ impl Default for Config {
             requirepass: None,
             aclfile: None,
             save_params: vec![(3600, 1), (300, 100), (60, 10000)],
+            config_file: None,
+            maxclients: 10000,
         }
     }
 }
@@ -54,6 +58,11 @@ pub fn load_config(path: Option<&str>) -> io::Result<Config> {
     info!("loading config from {}", p);
     let reader = BufReader::new(file);
     let mut cfg = Config::default();
+    if let Ok(abs_path) = std::fs::canonicalize(p) {
+        cfg.config_file = Some(abs_path.to_string_lossy().into_owned());
+    } else {
+        cfg.config_file = Some(p.to_string());
+    }
     let mut save_seen = false;
     for line in reader.lines() {
         let mut l = line?;
@@ -89,6 +98,16 @@ pub fn load_config(path: Option<&str>) -> io::Result<Config> {
                     warn!(
                         "invalid databases value '{}', keep previous {}",
                         parts[1], cfg.databases
+                    );
+                }
+            }
+            "maxclients" if parts.len() >= 2 => {
+                if let Ok(mc) = parts[1].parse::<u64>() {
+                    cfg.maxclients = mc;
+                } else {
+                    warn!(
+                        "invalid maxclients value '{}', keep previous {}",
+                        parts[1], cfg.maxclients
                     );
                 }
             }

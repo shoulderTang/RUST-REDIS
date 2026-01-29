@@ -7,6 +7,8 @@ use tokio::time::timeout;
 use crate::cmd::key::match_pattern;
 use bytes::Bytes;
 
+use std::sync::atomic::Ordering;
+
 pub fn zadd(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerContext) -> Resp {
     if items.len() < 4 || items.len() % 2 != 0 {
         return Resp::Error("ERR wrong number of arguments for 'ZADD'".to_string());
@@ -601,17 +603,41 @@ async fn blocking_zpop_generic(
     }
 
     // Wait
+    server_ctx.blocked_client_count.fetch_add(1, Ordering::Relaxed);
+    
+    let (_shutdown_tx, mut shutdown_rx) = if let Some(rx) = &conn_ctx.shutdown {
+        (None, rx.clone())
+    } else {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        (Some(tx), rx)
+    };
+
     let result = if timeout_secs > 0.0 {
         let duration = Duration::from_secs_f64(timeout_secs);
-        match timeout(duration, rx.recv()).await {
-            Ok(Some((key, val, score))) => Some((key, val, score)),
-            Ok(None) => None,
-            Err(_) => None, // Timeout
+        tokio::select! {
+            res = timeout(duration, rx.recv()) => {
+                match res {
+                    Ok(Some((key, val, score))) => Some((key, val, score)),
+                    Ok(None) => None,
+                    Err(_) => None, // Timeout
+                }
+            }
+            _ = shutdown_rx.changed() => {
+                None
+            }
         }
     } else {
         // Infinite wait
-        rx.recv().await
+        tokio::select! {
+            res = rx.recv() => {
+                res
+            }
+            _ = shutdown_rx.changed() => {
+                None
+            }
+        }
     };
+    server_ctx.blocked_client_count.fetch_sub(1, Ordering::Relaxed);
 
     match result {
         Some((key, val, score)) => Resp::Array(Some(vec![

@@ -49,9 +49,11 @@ async fn test_aof_append_and_load() {
     let aof_loader = Aof::new(&path, AppendFsync::Always)
         .await
         .expect("failed to open aof for loading");
-    let script_manager = scripting::create_script_manager();
-    aof_loader
-        .load(&path, &db_new, &Config::default(), &script_manager)
+    //let script_manager = scripting::create_script_manager();
+    let mut server_ctx = crate::tests::helper::create_server_context();
+    Arc::make_mut(&mut server_ctx.config).appendfilename = path.to_string();
+    server_ctx.databases = db_new.clone();
+    aof_loader.load(&server_ctx)
         .await
         .expect("failed to load aof");
 

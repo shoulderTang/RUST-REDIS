@@ -45,13 +45,17 @@ mod tests {
 
         // 3. Load AOF into new DB
         let new_db = Arc::new(vec![Db::default()]);
-        let config = Config::default();
-        let script_manager = create_script_manager();
+        // let config = Config::default();
+        // let script_manager = create_script_manager();
         
         // We need to use Aof::load. It's an instance method.
         // Re-open AOF to load
         let loader = Aof::new(path, AppendFsync::No).await.unwrap();
-        loader.load(path, &new_db, &config, &script_manager).await.unwrap();
+        let mut server_ctx = crate::tests::helper::create_server_context();
+        server_ctx.databases = new_db.clone();
+        Arc::make_mut(&mut server_ctx.config).appendfilename = path.to_string();
+        loader.load(&server_ctx).await.unwrap();
+        //loader.load(path, &new_db, &config, &script_manager).await.unwrap();
 
         // 4. Verify
         let entry = new_db[0].get(&key).unwrap();
@@ -144,8 +148,12 @@ mod tests {
         
         let loader = Aof::new(path, AppendFsync::No).await.unwrap();
         // create new script manager for loader
-        let script_manager_loader = create_script_manager();
-        loader.load(path, &new_db, &config, &script_manager_loader).await.unwrap();
+        //let script_manager_loader = create_script_manager();
+        let mut server_ctx_loader = server_ctx.clone();
+        server_ctx_loader.databases = new_db.clone();
+        Arc::make_mut(&mut server_ctx_loader.config).appendfilename = path.to_string();
+        loader.load(&server_ctx_loader).await.unwrap();
+        //loader.load(path, &new_db, &config, &script_manager_loader).await.unwrap();
 
         // 7. Verify
         let entry = new_db[0].get(&Bytes::from("mystream")).unwrap();
