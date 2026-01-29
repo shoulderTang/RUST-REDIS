@@ -140,7 +140,7 @@ async fn run_server(
         databases: databases,
         acl: acl,
         aof: aof,
-        config: Arc::new(cfg),
+        config: Arc::new(cfg.clone()),
         script_manager: script_manager.clone(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
@@ -150,6 +150,14 @@ async fn run_server(
         start_time: std::time::Instant::now(),
         client_count: Arc::new(AtomicU64::new(0)),
         blocked_client_count: Arc::new(AtomicU64::new(0)),
+        clients: std::sync::Arc::new(dashmap::DashMap::new()),
+        monitors: std::sync::Arc::new(dashmap::DashMap::new()),
+        slowlog: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new())),
+        slowlog_next_id: std::sync::Arc::new(AtomicU64::new(1)),
+        slowlog_max_len: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(cfg.slowlog_max_len as usize)),
+        slowlog_threshold_us: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(cfg.slowlog_log_slower_than)),
+        mem_peak_rss: std::sync::Arc::new(AtomicU64::new(0)),
+        maxmemory: std::sync::Arc::new(AtomicU64::new(cfg.maxmemory)),
     };
     
     if let Some(ref aof) = server_ctx.aof {
@@ -157,28 +165,6 @@ async fn run_server(
             let aof_guard = aof.lock().await;
             aof_guard.load(&server_ctx).await.expect("failed to load AOF");
     }
-    // Create script cache if not created (e.g. AOF disabled), or share the one used for loading
-    // Since we can't easily extract it from the if/else block without defining it outside, let's define it outside.
-
-    //let cfg_arc: Arc<Arc<conf::Config>> = Arc::new(server_ctx.config.clone());
-
-
-
-    // let server_ctx = cmd::ServerContext {
-    //     databases: databases.clone(),
-    //     acl: acl.clone(),
-    //     aof: aof.clone(),
-    //     config: Arc::new(server_ctx.config.clone()),
-    //     script_manager: script_manager.clone(),
-    //     blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-    //     blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
-    //     pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
-    //     pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-    //     run_id,
-    //     start_time: std::time::Instant::now(),
-    //     client_count: Arc::new(AtomicU64::new(0)),
-    //     blocked_client_count: Arc::new(AtomicU64::new(0)),
-    // };
 
     // Background task to clean up expired keys
     let databases_for_cleanup = server_ctx.databases.clone();
@@ -210,6 +196,26 @@ async fn run_server(
         let connection_id = next_connection_id.fetch_add(1, Ordering::Relaxed);
 
         tokio::spawn(async move {
+            // Shutdown signal
+            let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+
+            {
+                let flags = String::from("N");
+                let ci = cmd::ClientInfo {
+                    id: connection_id,
+                    addr: addr.to_string(),
+                    name: "".to_string(),
+                    db: 0,
+                    sub: 0,
+                    psub: 0,
+                    flags,
+                    cmd: "".to_string(),
+                    connect_time: std::time::Instant::now(),
+                    last_activity: std::time::Instant::now(),
+                    shutdown_tx: Some(shutdown_tx.clone()),
+                };
+                server_ctx_cloned.clients.insert(connection_id, ci);
+            }
             let (read_half, write_half) = socket.into_split();
             
             let (tx, mut rx) = tokio::sync::mpsc::channel(32);
@@ -227,9 +233,6 @@ async fn run_server(
                     }
                 }
             });
-
-            // Shutdown signal
-            let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
             
             // Frame channel
             let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel(32);
@@ -259,6 +262,20 @@ async fn run_server(
                     frame_opt = frame_rx.recv() => {
                         match frame_opt {
                             Some(frame) => {
+                                let cmd_name = match &frame {
+                                    resp::Resp::Array(Some(items)) => {
+                                        if !items.is_empty() {
+                                            match &items[0] {
+                                                resp::Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_string(),
+                                                resp::Resp::SimpleString(s) => String::from_utf8_lossy(s).to_string(),
+                                                _ => String::new(),
+                                            }
+                                        } else {
+                                            String::new()
+                                        }
+                                    }
+                                    _ => String::new(),
+                                };
                                 let (response, cmd_to_log) = cmd::process_frame(
                                     frame,
                                     &mut conn_ctx,
@@ -284,6 +301,21 @@ async fn run_server(
                                         }
                                     }
                                 }
+                                if let Some(mut ci) = server_ctx_cloned.clients.get_mut(&connection_id) {
+                                    let mut flags = String::from("N");
+                                    if conn_ctx.in_multi {
+                                        flags.push('M');
+                                    }
+                                    if !conn_ctx.subscriptions.is_empty() || !conn_ctx.psubscriptions.is_empty() {
+                                        flags.push('P');
+                                    }
+                                    ci.db = conn_ctx.db_index;
+                                    ci.sub = conn_ctx.subscriptions.len();
+                                    ci.psub = conn_ctx.psubscriptions.len();
+                                    ci.flags = flags;
+                                    ci.cmd = cmd_name;
+                                    ci.last_activity = std::time::Instant::now();
+                                }
                             }
                             None => break, // Reader closed
                         }
@@ -306,6 +338,8 @@ async fn run_server(
                 }
             }
             server_ctx_cloned.client_count.fetch_sub(1, Ordering::Relaxed);
+            server_ctx_cloned.clients.remove(&conn_ctx.id);
+            server_ctx_cloned.monitors.remove(&conn_ctx.id);
         });
     }
 }

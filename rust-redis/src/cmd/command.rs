@@ -222,7 +222,7 @@ const COMMAND_TABLE: &[CommandInfo] = &[
     CommandInfo {
         name: "blpop",
         arity: -3,
-        flags: &["write", "noscript"],
+        flags: &["write", "noscript", "blocking"],
         first_key: 1,
         last_key: -2,
         step: 1,
@@ -230,7 +230,7 @@ const COMMAND_TABLE: &[CommandInfo] = &[
     CommandInfo {
         name: "brpop",
         arity: -3,
-        flags: &["write", "noscript"],
+        flags: &["write", "noscript", "blocking"],
         first_key: 1,
         last_key: -2,
         step: 1,
@@ -238,7 +238,7 @@ const COMMAND_TABLE: &[CommandInfo] = &[
     CommandInfo {
         name: "blmove",
         arity: 6,
-        flags: &["write", "noscript"],
+        flags: &["write", "noscript", "blocking"],
         first_key: 1,
         last_key: 2,
         step: 1,
@@ -438,7 +438,7 @@ const COMMAND_TABLE: &[CommandInfo] = &[
     CommandInfo {
         name: "bzpopmin",
         arity: -3,
-        flags: &["write", "noscript"],
+        flags: &["write", "noscript", "blocking"],
         first_key: 1,
         last_key: -2,
         step: 1,
@@ -454,7 +454,7 @@ const COMMAND_TABLE: &[CommandInfo] = &[
     CommandInfo {
         name: "bzpopmax",
         arity: -3,
-        flags: &["write", "noscript"],
+        flags: &["write", "noscript", "blocking"],
         first_key: 1,
         last_key: -2,
         step: 1,
@@ -827,6 +827,22 @@ const COMMAND_TABLE: &[CommandInfo] = &[
         last_key: 0,
         step: 0,
     },
+    CommandInfo {
+        name: "client",
+        arity: -2,
+        flags: &["admin"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
+        name: "monitor",
+        arity: 1,
+        flags: &["admin", "noscript", "loading"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
 ];
 
 pub fn command(items: &[Resp]) -> Resp {
@@ -862,6 +878,20 @@ pub fn is_write_command(name: &str) -> bool {
         if cmd.name == name_lower {
             for flag in cmd.flags {
                 if *flag == "write" {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+pub fn is_blocking_command(name: &str) -> bool {
+    let name_lower = name.to_lowercase();
+    for cmd in COMMAND_TABLE {
+        if cmd.name == name_lower {
+            for flag in cmd.flags {
+                if *flag == "blocking" {
                     return true;
                 }
             }

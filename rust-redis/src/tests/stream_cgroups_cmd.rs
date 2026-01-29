@@ -202,6 +202,7 @@ async fn test_xreadgroup_block() {
             subscriptions: std::collections::HashSet::new(),
             psubscriptions: std::collections::HashSet::new(),
             shutdown: None,
+            is_lua: false,
         };
         let args = vec![
             Resp::BulkString(Some(Bytes::from("XREADGROUP"))),

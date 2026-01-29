@@ -130,10 +130,11 @@ async  fn redis_call_handler<'lua>(
         in_multi: false, // Scripts don't inherit MULTI state in this context
         multi_queue: Vec::new(),
         msg_sender: conn_ctx.msg_sender.clone(),
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-        shutdown: conn_ctx.shutdown.clone(),
-    };
+            subscriptions: std::collections::HashSet::new(),
+            psubscriptions: std::collections::HashSet::new(),
+            shutdown: conn_ctx.shutdown.clone(),
+            is_lua: true,
+        };
     
     let (res, _) = super::process_frame(frame, &mut local_conn_ctx, server_ctx).await;
 

@@ -22,3 +22,7 @@ mod hll;
 mod geo;
 mod info;
 mod pubsub;
+mod client;
+mod monitor;
+mod slowlog;
+mod config_cmd;

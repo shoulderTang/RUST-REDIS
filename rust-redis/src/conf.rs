@@ -19,6 +19,9 @@ pub struct Config {
     pub save_params: Vec<(u64, u64)>,
     pub config_file: Option<String>,
     pub maxclients: u64,
+    pub slowlog_log_slower_than: i64,
+    pub slowlog_max_len: u64,
+    pub maxmemory: u64,
 }
 
 impl Default for Config {
@@ -38,6 +41,9 @@ impl Default for Config {
             save_params: vec![(3600, 1), (300, 100), (60, 10000)],
             config_file: None,
             maxclients: 10000,
+            slowlog_log_slower_than: 10000,
+            slowlog_max_len: 128,
+            maxmemory: 0,
         }
     }
 }
@@ -46,6 +52,23 @@ impl Config {
     pub fn address(&self) -> String {
         format!("{}:{}", self.bind, self.port)
     }
+}
+
+fn parse_memory(s: &str) -> Option<u64> {
+    let s = s.to_lowercase();
+    let (num, unit) = if s.ends_with("gb") {
+        (s.trim_end_matches("gb"), 1024 * 1024 * 1024)
+    } else if s.ends_with("mb") {
+        (s.trim_end_matches("mb"), 1024 * 1024)
+    } else if s.ends_with("kb") {
+        (s.trim_end_matches("kb"), 1024)
+    } else if s.ends_with("b") {
+        (s.trim_end_matches("b"), 1)
+    } else {
+        (s.as_str(), 1)
+    };
+    
+    num.parse::<u64>().ok().map(|n| n * unit)
 }
 
 pub fn load_config(path: Option<&str>) -> io::Result<Config> {
@@ -108,6 +131,36 @@ pub fn load_config(path: Option<&str>) -> io::Result<Config> {
                     warn!(
                         "invalid maxclients value '{}', keep previous {}",
                         parts[1], cfg.maxclients
+                    );
+                }
+            }
+            "slowlog-log-slower-than" if parts.len() >= 2 => {
+                if let Ok(sl) = parts[1].parse::<i64>() {
+                    cfg.slowlog_log_slower_than = sl;
+                } else {
+                    warn!(
+                        "invalid slowlog-log-slower-than value '{}', keep previous {}",
+                        parts[1], cfg.slowlog_log_slower_than
+                    );
+                }
+            }
+            "slowlog-max-len" if parts.len() >= 2 => {
+                if let Ok(ml) = parts[1].parse::<u64>() {
+                    cfg.slowlog_max_len = ml;
+                } else {
+                    warn!(
+                        "invalid slowlog-max-len value '{}', keep previous {}",
+                        parts[1], cfg.slowlog_max_len
+                    );
+                }
+            }
+            "maxmemory" if parts.len() >= 2 => {
+                if let Some(mm) = parse_memory(parts[1]) {
+                    cfg.maxmemory = mm;
+                } else {
+                    warn!(
+                        "invalid maxmemory value '{}', keep previous {}",
+                        parts[1], cfg.maxmemory
                     );
                 }
             }

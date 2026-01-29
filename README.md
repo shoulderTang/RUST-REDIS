@@ -19,4 +19,7 @@ Rewrite the redis in Rust language and in Rust way.
 
 2026.1.28 1.增加 EXISTS, TYPE, FLUSHDB, FLUSHALL , RENAME, RENAMENX, PERSIST 命令实现。 2.增加expire,pexpire,expireat,pexpireat,ttl,pttl命令实现。 3.增加SCAN，HSCAN，SSCAN，ZSCAN命令实现。 
 
-2026.1.29 1.tests下代码结构优化，避免重复修改每个用例创建server_context和connection_context的代码。
+2026.1.29 1.tests下代码结构优化，避免重复修改每个用例创建server_context和connection_context的代码。2.增加info,client,monitor,slowlog相关命令的实现。 3.修复aof阻塞写命令需要重写为非阻塞命令的问题。
+
+
+

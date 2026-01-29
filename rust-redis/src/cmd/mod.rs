@@ -5,6 +5,7 @@ use crate::db::Db;
 use crate::acl::Acl;
 use crate::resp::{Resp, as_bytes};
 use std::sync::{Arc, RwLock, OnceLock};
+use std::sync::atomic::Ordering;
 use std::collections::{HashMap, VecDeque, HashSet};
 use tokio::sync::Mutex;
 use dashmap::DashMap;
@@ -26,6 +27,9 @@ pub mod geo;
 pub mod info;
 pub mod acl;
 pub mod pubsub;
+pub mod client;
+pub mod monitor;
+pub mod slowlog;
 
 
 #[derive(Debug, Clone)]
@@ -40,6 +44,7 @@ pub struct ConnectionContext {
     pub subscriptions: HashSet<String>,
     pub psubscriptions: HashSet<String>,
     pub shutdown: Option<tokio::sync::watch::Receiver<bool>>,
+    pub is_lua: bool,
 }
 
 impl ConnectionContext {
@@ -55,8 +60,24 @@ impl ConnectionContext {
             subscriptions: HashSet::new(),
             psubscriptions: HashSet::new(),
             shutdown,
+            is_lua: false,
         }
     }
+}
+
+#[derive(Clone)]
+pub struct ClientInfo {
+    pub id: u64,
+    pub addr: String,
+    pub name: String,
+    pub db: usize,
+    pub sub: usize,
+    pub psub: usize,
+    pub flags: String,
+    pub cmd: String,
+    pub connect_time: std::time::Instant,
+    pub last_activity: std::time::Instant,
+    pub shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
 }
 
 #[derive(Clone)]
@@ -74,8 +95,25 @@ pub struct ServerContext {
     pub start_time: std::time::Instant,
     pub client_count: Arc<std::sync::atomic::AtomicU64>,
     pub blocked_client_count: Arc<std::sync::atomic::AtomicU64>,
+    pub clients: Arc<DashMap<u64, ClientInfo>>,
+    pub monitors: Arc<DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>,
+    pub slowlog: Arc<Mutex<VecDeque<SlowLogEntry>>>,
+    pub slowlog_next_id: Arc<std::sync::atomic::AtomicU64>,
+    pub slowlog_max_len: Arc<std::sync::atomic::AtomicUsize>,
+    pub slowlog_threshold_us: Arc<std::sync::atomic::AtomicI64>,
+    pub mem_peak_rss: Arc<std::sync::atomic::AtomicU64>,
+    pub maxmemory: Arc<std::sync::atomic::AtomicU64>,
 }
 
+#[derive(Clone)]
+pub struct SlowLogEntry {
+    pub id: u64,
+    pub timestamp: i64,
+    pub microseconds: i64,
+    pub args: Vec<bytes::Bytes>,
+    pub client_addr: String,
+    pub client_name: String,
+}
 
 
 
@@ -185,6 +223,9 @@ enum Command {
     Psubscribe,
     Punsubscribe,
     PubSub,
+    Client,
+    Monitor,
+    Slowlog,
     Unknown,
 }
 
@@ -300,7 +341,75 @@ pub async fn process_frame(
                 if let Err(e) = check_access(cmd_name, cmd_raw, &items, conn_ctx, server_ctx) {
                     (e, None, Some(cmd_name))
                 } else {
+                    // Monitor broadcasting
+                    if !server_ctx.monitors.is_empty() {
+                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+                        let timestamp = format!("{}.{:06}", now.as_secs(), now.subsec_micros());
+                        
+                        let client_addr = if conn_ctx.is_lua {
+                            String::from("lua")
+                        } else if let Some(ci) = server_ctx.clients.get(&conn_ctx.id) {
+                            ci.addr.clone()
+                        } else {
+                            String::from("unknown")
+                        };
+                        
+                        let mut cmd_str = format!("{} [{} {}]", timestamp, conn_ctx.db_index, client_addr);
+                        
+                        for item in items.iter() {
+                            match item {
+                                 Resp::BulkString(Some(b)) | Resp::SimpleString(b) => {
+                                     let s = String::from_utf8_lossy(&b[..]);
+                                     cmd_str.push_str(&format!(" \"{}\"", s));
+                                 }
+                                 Resp::Integer(i) => {
+                                      cmd_str.push_str(&format!(" \"{}\"", i));
+                                 }
+                                 _ => {}
+                            }
+                        }
+                        
+                        for m in server_ctx.monitors.iter() {
+                            let _ = m.value().try_send(Resp::SimpleString(bytes::Bytes::from(cmd_str.clone())));
+                        }
+                    }
+
+                    let start = std::time::Instant::now();
                     let (res, log) = dispatch_command(cmd_name, &items, conn_ctx, server_ctx).await;
+                    let elapsed_us = start.elapsed().as_micros() as i64;
+                    if cmd_name != Command::Slowlog && elapsed_us >= server_ctx.slowlog_threshold_us.load(Ordering::Relaxed) {
+                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+                        let timestamp = now.as_secs() as i64;
+                        let mut args = Vec::new();
+                        for item in items.iter() {
+                            match item {
+                                Resp::BulkString(Some(b)) => args.push(b.clone()),
+                                Resp::SimpleString(b) => args.push(b.clone()),
+                                Resp::Integer(i) => args.push(bytes::Bytes::from(i.to_string())),
+                                _ => {}
+                            }
+                        }
+                        let (client_addr, client_name) = if let Some(ci) = server_ctx.clients.get(&conn_ctx.id) {
+                            (ci.addr.clone(), ci.name.clone())
+                        } else {
+                            (String::from("unknown"), String::new())
+                        };
+                        let id = server_ctx.slowlog_next_id.fetch_add(1, Ordering::Relaxed);
+                        let entry = SlowLogEntry {
+                            id,
+                            timestamp,
+                            microseconds: elapsed_us,
+                            args,
+                            client_addr,
+                            client_name,
+                        };
+                        let mut logq = server_ctx.slowlog.lock().await;
+                        logq.push_front(entry);
+                        let max_len = server_ctx.slowlog_max_len.load(Ordering::Relaxed);
+                        while logq.len() > max_len {
+                            logq.pop_back();
+                        }
+                    }
                     (res, log, Some(cmd_name))
                 }
             }
@@ -318,7 +427,110 @@ pub async fn process_frame(
                 if command::is_write_command(s) && !conn_ctx.in_multi {
                     match cmd_name {
                         Command::Multi | Command::Exec | Command::Discard => None,
-                        _ => Some(original_frame.clone()),
+                        Command::Blpop => {
+                            match &res {
+                                Resp::Array(Some(arr)) if arr.len() >= 2 => {
+                                    let key_bytes = match &arr[0] {
+                                        Resp::BulkString(Some(k)) => k.clone(),
+                                        Resp::SimpleString(k) => k.clone(),
+                                        _ => bytes::Bytes::new(),
+                                    };
+                                    if !key_bytes.is_empty() {
+                                        Some(Resp::Array(Some(vec![
+                                            Resp::BulkString(Some(bytes::Bytes::from_static(b"LPOP"))),
+                                            Resp::BulkString(Some(key_bytes)),
+                                        ])))
+                                    } else {
+                                        None
+                                    }
+                                }
+                                _ => None,
+                            }
+                        }
+                        Command::Brpop => {
+                            match &res {
+                                Resp::Array(Some(arr)) if arr.len() >= 2 => {
+                                    let key_bytes = match &arr[0] {
+                                        Resp::BulkString(Some(k)) => k.clone(),
+                                        Resp::SimpleString(k) => k.clone(),
+                                        _ => bytes::Bytes::new(),
+                                    };
+                                    if !key_bytes.is_empty() {
+                                        Some(Resp::Array(Some(vec![
+                                            Resp::BulkString(Some(bytes::Bytes::from_static(b"RPOP"))),
+                                            Resp::BulkString(Some(key_bytes)),
+                                        ])))
+                                    } else {
+                                        None
+                                    }
+                                }
+                                _ => None,
+                            }
+                        }
+                        Command::Blmove => {
+                            // Rewrite to LMOVE with the same arguments
+                            if let Resp::Array(Some(orig_items)) = &original_frame {
+                                if !orig_items.is_empty() {
+                                    let mut new_items = orig_items.clone();
+                                    // Replace command name
+                                    new_items[0] = Resp::BulkString(Some(bytes::Bytes::from_static(b"LMOVE")));
+                                    Some(Resp::Array(Some(new_items)))
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        }
+                        Command::Bzpopmin => {
+                            // Rewrite to ZPOPMIN key
+                            match &res {
+                                Resp::Array(Some(arr)) if arr.len() >= 2 => {
+                                    let key_bytes = match &arr[0] {
+                                        Resp::BulkString(Some(k)) => k.clone(),
+                                        Resp::SimpleString(k) => k.clone(),
+                                        _ => bytes::Bytes::new(),
+                                    };
+                                    if !key_bytes.is_empty() {
+                                        Some(Resp::Array(Some(vec![
+                                            Resp::BulkString(Some(bytes::Bytes::from_static(b"ZPOPMIN"))),
+                                            Resp::BulkString(Some(key_bytes)),
+                                        ])))
+                                    } else {
+                                        None
+                                    }
+                                }
+                                _ => None,
+                            }
+                        }
+                        Command::Bzpopmax => {
+                            // Rewrite to ZPOPMAX key
+                            match &res {
+                                Resp::Array(Some(arr)) if arr.len() >= 2 => {
+                                    let key_bytes = match &arr[0] {
+                                        Resp::BulkString(Some(k)) => k.clone(),
+                                        Resp::SimpleString(k) => k.clone(),
+                                        _ => bytes::Bytes::new(),
+                                    };
+                                    if !key_bytes.is_empty() {
+                                        Some(Resp::Array(Some(vec![
+                                            Resp::BulkString(Some(bytes::Bytes::from_static(b"ZPOPMAX"))),
+                                            Resp::BulkString(Some(key_bytes)),
+                                        ])))
+                                    } else {
+                                        None
+                                    }
+                                }
+                                _ => None,
+                            }
+                        }
+                        _ => {
+                            if command::is_blocking_command(s) {
+                                None
+                            } else {
+                                Some(original_frame.clone())
+                            }
+                        }
                     }
                 } else {
                     None
@@ -552,7 +764,7 @@ async fn dispatch_command(
             std::process::exit(0);
         }
         Command::Command => (command::command(items), None),
-        Command::Config => (config::config(items, &server_ctx.config), None),
+        Command::Config => (config::config(items, server_ctx).await, None),
         Command::Info => (info::info(items, server_ctx), None),
         Command::Eval => scripting::eval(items, conn_ctx, server_ctx).await,
         Command::EvalSha => scripting::evalsha(items, conn_ctx, server_ctx).await,
@@ -595,6 +807,9 @@ async fn dispatch_command(
         Command::Psubscribe => (pubsub::psubscribe(items.to_vec(), conn_ctx, server_ctx).await, None),
         Command::Punsubscribe => (pubsub::punsubscribe(items.to_vec(), conn_ctx, server_ctx).await, None),
         Command::PubSub => (pubsub::pubsub_command(items.to_vec(), conn_ctx, server_ctx).await, None),
+        Command::Client => client::client(items, conn_ctx, server_ctx),
+        Command::Monitor => monitor::monitor(conn_ctx, server_ctx),
+        Command::Slowlog => slowlog::slowlog(items, server_ctx).await,
         Command::BgRewriteAof => {
             if let Some(aof) = &server_ctx.aof {
                 let aof = aof.clone();
@@ -720,6 +935,9 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("PSUBSCRIBE".to_string(), Command::Psubscribe);
         m.insert("PUNSUBSCRIBE".to_string(), Command::Punsubscribe);
         m.insert("PUBSUB".to_string(), Command::PubSub);
+        m.insert("CLIENT".to_string(), Command::Client);
+        m.insert("MONITOR".to_string(), Command::Monitor);
+        m.insert("SLOWLOG".to_string(), Command::Slowlog);
         m
     });
 

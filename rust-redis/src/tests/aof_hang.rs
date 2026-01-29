@@ -60,6 +60,14 @@ async fn test_aof_hang_reproduction() {
         start_time: std::time::Instant::now(),
         client_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         blocked_client_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        clients: Arc::new(dashmap::DashMap::new()),
+        monitors: Arc::new(dashmap::DashMap::new()),
+        slowlog: Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new())),
+        slowlog_next_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+        slowlog_max_len: Arc::new(std::sync::atomic::AtomicUsize::new(128)),
+        slowlog_threshold_us: Arc::new(std::sync::atomic::AtomicI64::new(10_000)),
+        mem_peak_rss: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        maxmemory: Arc::new(std::sync::atomic::AtomicU64::new(0)),
     };
 
     let mut conn_ctx = ConnectionContext::new(1, None, None);

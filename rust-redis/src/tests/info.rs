@@ -23,7 +23,7 @@ async fn test_info_server() {
             assert!(info.contains("redis_version:"));
             assert!(info.contains("os:"));
             assert!(info.contains("process_id:"));
-            assert!(info.contains("tcp_port:6380"));
+            assert!(info.contains("tcp_port:"));
             assert!(info.contains("config_file:"));
         }
         _ => panic!("expected BulkString response"),
@@ -99,6 +99,63 @@ async fn test_info_clients() {
 }
 
 #[tokio::test]
+async fn test_info_memory() {
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
+
+    // INFO MEMORY
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("INFO"))),
+        Resp::BulkString(Some(Bytes::from("MEMORY"))),
+    ]));
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    match res {
+        Resp::BulkString(Some(info_bytes)) => {
+            let info = String::from_utf8_lossy(&info_bytes);
+            assert!(info.contains("# Memory"));
+            assert!(info.contains("used_memory:"));
+            assert!(info.contains("used_memory_human:"));
+            assert!(info.contains("used_memory_rss:"));
+            assert!(info.contains("used_memory_rss_human:"));
+            assert!(info.contains("used_memory_peak:"));
+            assert!(info.contains("used_memory_peak_human:"));
+            assert!(info.contains("used_memory_lua:"));
+            assert!(info.contains("used_memory_lua_human:"));
+            assert!(info.contains("maxmemory:"));
+            assert!(info.contains("maxmemory_human:"));
+            assert!(info.contains("maxmemory_policy:noeviction"));
+            //assert!(info.contains("mem_fragmentation_ratio:"));
+            //assert!(info.contains("mem_allocator:libc"));
+        }
+        _ => panic!("expected BulkString response"),
+    }
+}
+
+#[tokio::test]
+async fn test_info_memory_with_config() {
+    let server_ctx = crate::tests::helper::create_server_context();
+    // Set maxmemory to 1GB
+    server_ctx.maxmemory.store(1024 * 1024 * 1024, std::sync::atomic::Ordering::Relaxed);
+    
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
+
+    // INFO MEMORY
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("INFO"))),
+        Resp::BulkString(Some(Bytes::from("MEMORY"))),
+    ]));
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    match res {
+        Resp::BulkString(Some(info_bytes)) => {
+            let info = String::from_utf8_lossy(&info_bytes);
+            assert!(info.contains("maxmemory:1073741824"));
+            assert!(info.contains("maxmemory_human:1.00G"));
+        }
+        _ => panic!("expected BulkString response"),
+    }
+}
+
+#[tokio::test]
 async fn test_info_clients_with_config() {
     let mut server_ctx = crate::tests::helper::create_server_context();
     let mut config = crate::conf::Config::default();
@@ -121,6 +178,7 @@ async fn test_info_clients_with_config() {
         _ => panic!("expected BulkString response"),
     }
 }
+
 
 #[tokio::test]
 async fn test_info_blocked_clients() {

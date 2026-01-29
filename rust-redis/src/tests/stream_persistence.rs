@@ -84,7 +84,6 @@ mod tests {
         let server_ctx = crate::tests::helper::create_server_context();
         let mut conn_ctx = crate::tests::helper::create_connection_context();
         let db = server_ctx.databases.clone();
-        let config = server_ctx.config.clone();
         
         // Helper to run command and write log
         macro_rules! run_and_log {

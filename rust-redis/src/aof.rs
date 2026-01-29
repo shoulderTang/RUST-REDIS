@@ -101,6 +101,7 @@ impl Aof {
             subscriptions: std::collections::HashSet::new(),
             psubscriptions: std::collections::HashSet::new(),
             shutdown: None,
+            is_lua: false,
         };
         loop {
             match read_frame(&mut reader).await {
