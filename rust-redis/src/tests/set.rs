@@ -1,11 +1,7 @@
-use crate::cmd::{process_frame, ConnectionContext, ServerContext};
-use crate::cmd::scripting;
-use crate::conf::Config;
-use crate::db::Db;
 use crate::resp::Resp;
 use bytes::Bytes;
-use std::sync::Arc;
 use std::collections::HashSet;
+use crate::tests::helper::run_cmd;
 
 #[tokio::test]
 async fn test_set_ops() {
@@ -13,47 +9,28 @@ async fn test_set_ops() {
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // SADD set m1 -> 1
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SADD"))),
-        Resp::BulkString(Some(Bytes::from("set"))),
-        Resp::BulkString(Some(Bytes::from("m1"))),
-    ]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["SADD", "set", "m1"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
     }
 
     // SADD set m1 -> 0
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SADD"))),
-        Resp::BulkString(Some(Bytes::from("set"))),
-        Resp::BulkString(Some(Bytes::from("m1"))),
-    ]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["SADD", "set", "m1"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 0),
         _ => panic!("expected Integer(0)"),
     }
 
     // SISMEMBER set m1 -> 1
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SISMEMBER"))),
-        Resp::BulkString(Some(Bytes::from("set"))),
-        Resp::BulkString(Some(Bytes::from("m1"))),
-    ]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["SISMEMBER", "set", "m1"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
     }
 
     // SMEMBERS set -> ["m1"]
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SMEMBERS"))),
-        Resp::BulkString(Some(Bytes::from("set"))),
-    ]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["SMEMBERS", "set"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 1);
@@ -66,23 +43,14 @@ async fn test_set_ops() {
     }
 
     // SCARD set -> 1
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SCARD"))),
-        Resp::BulkString(Some(Bytes::from("set"))),
-    ]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["SCARD", "set"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
     }
 
     // SREM set m1 -> 1
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SREM"))),
-        Resp::BulkString(Some(Bytes::from("set"))),
-        Resp::BulkString(Some(Bytes::from("m1"))),
-    ]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["SREM", "set", "m1"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
@@ -93,15 +61,6 @@ async fn test_set_ops() {
 async fn test_srandmember() {
     let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-
-    async fn run_cmd(args: Vec<&str>, conn_ctx: &mut crate::cmd::ConnectionContext, server_ctx: &crate::cmd::ServerContext) -> Resp {
-        let mut resp_args = Vec::new();
-        for arg in args {
-            resp_args.push(Resp::BulkString(Some(Bytes::from(arg.to_string()))));
-        }
-        let (res, _) = process_frame(Resp::Array(Some(resp_args)), conn_ctx, server_ctx).await;
-        res
-    }
 
     // SADD set m1 m2 m3
     run_cmd(vec!["SADD", "set", "m1", "m2", "m3"], &mut conn_ctx, &server_ctx).await;
@@ -171,15 +130,6 @@ async fn test_srandmember() {
 async fn test_spop() {
     let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-
-    async fn run_cmd(args: Vec<&str>, conn_ctx: &mut crate::cmd::ConnectionContext, server_ctx: &crate::cmd::ServerContext) -> Resp {
-        let mut resp_args = Vec::new();
-        for arg in args {
-            resp_args.push(Resp::BulkString(Some(Bytes::from(arg.to_string()))));
-        }
-        let (res, _) = process_frame(Resp::Array(Some(resp_args)), conn_ctx, server_ctx).await;
-        res
-    }
 
     // SADD set m1 m2 m3
     run_cmd(vec!["SADD", "set", "m1", "m2", "m3"], &mut conn_ctx, &server_ctx).await;

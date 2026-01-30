@@ -1,27 +1,11 @@
-use crate::cmd::process_frame;
 use crate::resp::Resp;
 use bytes::Bytes;
-use std::collections::HashSet;
+use crate::tests::helper::run_cmd;
 
 #[tokio::test]
 async fn test_sinterstore() {
     let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-
-    // Helper to run commands
-    async fn run_cmd(
-        args: Vec<&str>,
-        conn_ctx: &mut crate::cmd::ConnectionContext,
-        server_ctx: &crate::cmd::ServerContext,
-    ) -> Resp {
-        let mut resp_args = Vec::new();
-        for arg in args {
-            resp_args.push(Resp::BulkString(Some(Bytes::from(arg.to_string()))));
-        }
-        let req = Resp::Array(Some(resp_args));
-        let (res, _) = process_frame(req, conn_ctx, server_ctx).await;
-        res
-    }
 
     // Setup
     // s1: {a, b, c, d}
@@ -82,7 +66,7 @@ async fn test_sinterstore() {
         _ => panic!("Expected Array"),
     }
 
-    // 4. SINTERSTORE overwrites existing non-set key (actually, SINTERSTORE just writes a set, it should work even if dest was string before? No, usually in Redis commands overwrite unless specified otherwise, but types might be tricky. Let's see implementation. db.insert overwrites.)
+    // 4. SINTERSTORE overwrites existing non-set key
     run_cmd(vec!["SET", "dest_str", "value"], &mut conn_ctx, &server_ctx).await;
     let res = run_cmd(vec!["SINTERSTORE", "dest_str", "s1", "s2"], &mut conn_ctx, &server_ctx).await;
     match res {

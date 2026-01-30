@@ -261,10 +261,12 @@ enum Command {
     Xrange,
     Xrevrange,
     Xdel,
+    Xtrim,
     Xread,
     Xgroup,
     Xreadgroup,
     Xack,
+    Xinfo,
     Subscribe,
     Unsubscribe,
     Publish,
@@ -286,7 +288,7 @@ fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
         Command::Smembers | Command::Scard | Command::SPop | Command::SRandMember | Command::SScan | Command::Zadd | Command::ZIncrBy | Command::Zrem | Command::Zscore | Command::Zcard |
         Command::Zrank | Command::ZRevRank | Command::Zrange | Command::ZRevRange | Command::Zrangebyscore | Command::Zrangebylex | Command::Zcount | Command::Zlexcount | Command::Zpopmin | Command::Bzpopmin | Command::Zpopmax | Command::Bzpopmax | Command::ZScan | Command::ZRandMember | Command::Pfadd | Command::Pfcount | Command::GeoAdd | Command::GeoDist |
         Command::GeoHash | Command::GeoPos | Command::GeoRadius | Command::GeoRadiusByMember | Command::Expire | Command::PExpire | Command::ExpireAt | Command::PExpireAt |
-        Command::Ttl | Command::PTtl | Command::Type | Command::Persist | Command::Xadd | Command::Xlen | Command::Xrange | Command::Xrevrange | Command::Xdel => {
+        Command::Ttl | Command::PTtl | Command::Type | Command::Persist | Command::Xadd | Command::Xlen | Command::Xrange | Command::Xrevrange | Command::Xdel | Command::Xtrim | Command::Xinfo => {
              if items.len() > 1 {
                  if let Some(key) = as_bytes(&items[1]) {
                      keys.push(key.to_vec());
@@ -1020,10 +1022,12 @@ async fn dispatch_command(
         Command::Xrange => (stream::xrange(items, db), None),
         Command::Xrevrange => (stream::xrevrange(items, db), None),
         Command::Xdel => stream::xdel(items, db),
+        Command::Xtrim => stream::xtrim(items, db),
         Command::Xread => (stream::xread_cmd(items, conn_ctx, server_ctx).await, None),
         Command::Xgroup => stream::xgroup(items, db),
         Command::Xreadgroup => stream::xreadgroup_cmd(items, conn_ctx, server_ctx).await,
         Command::Xack => stream::xack(items, db),
+        Command::Xinfo => (stream::xinfo(items, db), None),
         Command::Publish => (pubsub::publish(items.to_vec(), conn_ctx, server_ctx).await, None),
         Command::Subscribe => (pubsub::subscribe(items.to_vec(), conn_ctx, server_ctx).await, None),
         Command::Unsubscribe => (pubsub::unsubscribe(items.to_vec(), conn_ctx, server_ctx).await, None),
@@ -1193,10 +1197,12 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("XRANGE".to_string(), Command::Xrange);
         m.insert("XREVRANGE".to_string(), Command::Xrevrange);
         m.insert("XDEL".to_string(), Command::Xdel);
+        m.insert("XTRIM".to_string(), Command::Xtrim);
         m.insert("XREAD".to_string(), Command::Xread);
         m.insert("XGROUP".to_string(), Command::Xgroup);
         m.insert("XREADGROUP".to_string(), Command::Xreadgroup);
         m.insert("XACK".to_string(), Command::Xack);
+        m.insert("XINFO".to_string(), Command::Xinfo);
         m.insert("BGREWRITEAOF".to_string(), Command::BgRewriteAof);
         m.insert("MULTI".to_string(), Command::Multi);
         m.insert("EXEC".to_string(), Command::Exec);

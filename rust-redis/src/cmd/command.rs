@@ -1132,6 +1132,14 @@ const COMMAND_TABLE: &[CommandInfo] = &[
         step: 1,
     },
     CommandInfo {
+        name: "xtrim",
+        arity: -4,
+        flags: &["write", "fast"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
         name: "xread",
         arity: -4,
         flags: &["readonly", "blocking"],
@@ -1161,6 +1169,14 @@ const COMMAND_TABLE: &[CommandInfo] = &[
         flags: &["write", "fast"],
         first_key: 1,
         last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "xinfo",
+        arity: -2,
+        flags: &["readonly", "random"],
+        first_key: 2,
+        last_key: 2,
         step: 1,
     },
     CommandInfo {

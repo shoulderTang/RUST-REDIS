@@ -1,22 +1,11 @@
-use crate::cmd::process_frame;
 use crate::resp::Resp;
+use crate::tests::helper::run_cmd;
 use bytes::Bytes;
 
 #[tokio::test]
 async fn test_zrangebyscore() {
     let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-
-    // Helper to run command
-    async fn run_cmd(args: Vec<&str>, conn_ctx: &mut crate::cmd::ConnectionContext, server_ctx: &crate::cmd::ServerContext) -> Resp {
-        let mut resp_args = Vec::new();
-        for arg in args {
-            resp_args.push(Resp::BulkString(Some(Bytes::from(arg.to_string()))));
-        }
-        let req = Resp::Array(Some(resp_args));
-        let (res, _) = process_frame(req, conn_ctx, server_ctx).await;
-        res
-    }
 
     // Setup: ZADD myzset 1 a 2 b 3 c 4 d 5 e
     run_cmd(vec!["ZADD", "myzset", "1", "a", "2", "b", "3", "c", "4", "d", "5", "e"], &mut conn_ctx, &server_ctx).await;
@@ -72,17 +61,6 @@ async fn test_zrangebyscore() {
 async fn test_zrangebylex() {
     let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-
-    // Helper to run command
-    async fn run_cmd(args: Vec<&str>, conn_ctx: &mut crate::cmd::ConnectionContext, server_ctx: &crate::cmd::ServerContext) -> Resp {
-        let mut resp_args = Vec::new();
-        for arg in args {
-            resp_args.push(Resp::BulkString(Some(Bytes::from(arg.to_string()))));
-        }
-        let req = Resp::Array(Some(resp_args));
-        let (res, _) = process_frame(req, conn_ctx, server_ctx).await;
-        res
-    }
 
     // Setup: ZADD myzset 0 a 0 b 0 c 0 d 0 e
     run_cmd(vec!["ZADD", "myzset", "0", "a", "0", "b", "0", "c", "0", "d", "0", "e"], &mut conn_ctx, &server_ctx).await;

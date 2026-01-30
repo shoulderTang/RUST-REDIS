@@ -1,9 +1,6 @@
-use std::sync::{Arc, RwLock};
-use crate::db::Db;
-use crate::conf::Config;
-use crate::cmd::{self, scripting, ServerContext, process_frame};
 use crate::resp::Resp;
 use bytes::Bytes;
+use crate::tests::helper::run_cmd;
 
 #[tokio::test]
 async fn test_scan() {
@@ -12,22 +9,11 @@ async fn test_scan() {
 
     // Create 100 keys
     for i in 0..100 {
-        let req = Resp::Array(Some(vec![
-            Resp::BulkString(Some(Bytes::from("SET"))),
-            Resp::BulkString(Some(Bytes::from(format!("key:{:03}", i)))), // key:000, key:001... to ensure sort order matches creation slightly better, though not strictly required
-            Resp::BulkString(Some(Bytes::from("val"))),
-        ]));
-        process_frame(req, &mut conn_ctx, &server_ctx).await;
+        run_cmd(vec!["SET", &format!("key:{:03}", i), "val"], &mut conn_ctx, &server_ctx).await;
     }
 
     // SCAN 0 COUNT 20
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SCAN"))),
-        Resp::BulkString(Some(Bytes::from("0"))),
-        Resp::BulkString(Some(Bytes::from("COUNT"))),
-        Resp::BulkString(Some(Bytes::from("20"))),
-    ]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["SCAN", "0", "COUNT", "20"], &mut conn_ctx, &server_ctx).await;
     
     let mut cursor: usize;
     let mut keys_found = std::collections::HashSet::new();
@@ -63,13 +49,7 @@ async fn test_scan() {
 
     // Continue scanning until cursor is 0
     while cursor != 0 {
-         let req = Resp::Array(Some(vec![
-            Resp::BulkString(Some(Bytes::from("SCAN"))),
-            Resp::BulkString(Some(Bytes::from(cursor.to_string()))),
-            Resp::BulkString(Some(Bytes::from("COUNT"))),
-            Resp::BulkString(Some(Bytes::from("20"))),
-        ]));
-        let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+        let res = run_cmd(vec!["SCAN", &cursor.to_string(), "COUNT", "20"], &mut conn_ctx, &server_ctx).await;
          match res {
             Resp::Array(Some(items)) => {
                 match &items[0] {
@@ -100,16 +80,7 @@ async fn test_scan() {
     assert_eq!(keys_found.len(), 100);
 
     // Test MATCH
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SCAN"))),
-        Resp::BulkString(Some(Bytes::from("0"))),
-        Resp::BulkString(Some(Bytes::from("MATCH"))),
-        Resp::BulkString(Some(Bytes::from("key:01*"))), // Should match key:010 to key:019
-        Resp::BulkString(Some(Bytes::from("COUNT"))),
-        Resp::BulkString(Some(Bytes::from("1000"))),
-    ]));
-    
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["SCAN", "0", "MATCH", "key:01*", "COUNT", "1000"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(items)) => {
              match &items[1] {
@@ -136,14 +107,6 @@ async fn test_scan() {
 async fn test_rename_renamenx_persist() {
     let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-
-    // Helper to run command
-    async fn run_cmd(args: Vec<&str>, conn: &mut crate::cmd::ConnectionContext, ctx: &ServerContext) -> Resp {
-        let req_items: Vec<Resp> = args.iter().map(|s| Resp::BulkString(Some(Bytes::from(s.to_string())))).collect();
-        let req = Resp::Array(Some(req_items));
-        let (res, _) = process_frame(req, conn, ctx).await;
-        res
-    }
 
     // Test RENAME
     run_cmd(vec!["SET", "k1", "v1"], &mut conn_ctx, &server_ctx).await;
@@ -202,33 +165,12 @@ async fn test_keys() {
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // Setup keys
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SET"))),
-        Resp::BulkString(Some(Bytes::from("key1"))),
-        Resp::BulkString(Some(Bytes::from("val"))),
-    ]));
-    process_frame(req, &mut conn_ctx, &server_ctx).await;
-
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SET"))),
-        Resp::BulkString(Some(Bytes::from("key2"))),
-        Resp::BulkString(Some(Bytes::from("val"))),
-    ]));
-    process_frame(req, &mut conn_ctx, &server_ctx).await;
-
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SET"))),
-        Resp::BulkString(Some(Bytes::from("other"))),
-        Resp::BulkString(Some(Bytes::from("val"))),
-    ]));
-    process_frame(req, &mut conn_ctx, &server_ctx).await;
+    run_cmd(vec!["SET", "key1", "val"], &mut conn_ctx, &server_ctx).await;
+    run_cmd(vec!["SET", "key2", "val"], &mut conn_ctx, &server_ctx).await;
+    run_cmd(vec!["SET", "other", "val"], &mut conn_ctx, &server_ctx).await;
 
     // KEYS *
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("KEYS"))),
-        Resp::BulkString(Some(Bytes::from("*"))),
-    ]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["KEYS", "*"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 3);
@@ -237,11 +179,7 @@ async fn test_keys() {
     }
 
     // KEYS key*
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("KEYS"))),
-        Resp::BulkString(Some(Bytes::from("key*"))),
-    ]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["KEYS", "key*"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 2);
@@ -250,11 +188,7 @@ async fn test_keys() {
     }
 
     // KEYS ?ey?
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("KEYS"))),
-        Resp::BulkString(Some(Bytes::from("?ey?"))),
-    ]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["KEYS", "?ey?"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 2);
@@ -269,42 +203,24 @@ async fn test_expire_ttl() {
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // SET key val
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SET"))),
-        Resp::BulkString(Some(Bytes::from("foo"))),
-        Resp::BulkString(Some(Bytes::from("bar"))),
-    ]));
-    process_frame(req, &mut conn_ctx, &server_ctx).await;
+    run_cmd(vec!["SET", "foo", "bar"], &mut conn_ctx, &server_ctx).await;
 
     // TTL key -> -1
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("TTL"))),
-        Resp::BulkString(Some(Bytes::from("foo"))),
-    ]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["TTL", "foo"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, -1),
         _ => panic!("expected Integer(-1)"),
     }
 
     // EXPIRE key 1
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("EXPIRE"))),
-        Resp::BulkString(Some(Bytes::from("foo"))),
-        Resp::BulkString(Some(Bytes::from("1"))),
-    ]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["EXPIRE", "foo", "1"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
     }
 
     // TTL key -> ~1
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("TTL"))),
-        Resp::BulkString(Some(Bytes::from("foo"))),
-    ]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["TTL", "foo"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert!(i >= 0 && i <= 1),
         _ => panic!("expected Integer(>=0)"),
@@ -314,22 +230,14 @@ async fn test_expire_ttl() {
     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
 
     // GET key -> Nil
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("GET"))),
-        Resp::BulkString(Some(Bytes::from("foo"))),
-    ]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["GET", "foo"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::BulkString(None) => {}
         _ => panic!("expected BulkString(None)"),
     }
 
     // TTL key -> -2
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("TTL"))),
-        Resp::BulkString(Some(Bytes::from("foo"))),
-    ]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["TTL", "foo"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, -2),
         _ => panic!("expected Integer(-2)"),
@@ -342,24 +250,17 @@ async fn test_dbsize() {
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // DBSIZE -> 0
-    let req = Resp::Array(Some(vec![Resp::BulkString(Some(Bytes::from("DBSIZE")))]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["DBSIZE"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 0),
         _ => panic!("expected Integer(0)"),
     }
 
     // SET key val
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("SET"))),
-        Resp::BulkString(Some(Bytes::from("foo"))),
-        Resp::BulkString(Some(Bytes::from("bar"))),
-    ]));
-    process_frame(req, &mut conn_ctx, &server_ctx).await;
+    run_cmd(vec!["SET", "foo", "bar"], &mut conn_ctx, &server_ctx).await;
 
     // DBSIZE -> 1
-    let req = Resp::Array(Some(vec![Resp::BulkString(Some(Bytes::from("DBSIZE")))]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["DBSIZE"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("expected Integer(1)"),
@@ -372,25 +273,10 @@ async fn test_del() {
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // Setup keys
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("MSET"))),
-        Resp::BulkString(Some(Bytes::from("k1"))),
-        Resp::BulkString(Some(Bytes::from("v1"))),
-        Resp::BulkString(Some(Bytes::from("k2"))),
-        Resp::BulkString(Some(Bytes::from("v2"))),
-        Resp::BulkString(Some(Bytes::from("k3"))),
-        Resp::BulkString(Some(Bytes::from("v3"))),
-    ]));
-    process_frame(req, &mut conn_ctx, &server_ctx).await;
+    run_cmd(vec!["MSET", "k1", "v1", "k2", "v2", "k3", "v3"], &mut conn_ctx, &server_ctx).await;
 
     // DEL k1 k2 k_missing
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("DEL"))),
-        Resp::BulkString(Some(Bytes::from("k1"))),
-        Resp::BulkString(Some(Bytes::from("k2"))),
-        Resp::BulkString(Some(Bytes::from("k_missing"))),
-    ]));
-    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(vec!["DEL", "k1", "k2", "k_missing"], &mut conn_ctx, &server_ctx).await;
 
     match res {
         Resp::Integer(i) => assert_eq!(i, 2),

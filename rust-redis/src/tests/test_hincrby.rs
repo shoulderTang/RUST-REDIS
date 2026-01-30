@@ -1,21 +1,11 @@
-use crate::cmd::process_frame;
 use crate::resp::Resp;
 use bytes::Bytes;
+use crate::tests::helper::run_cmd;
 
 #[tokio::test]
 async fn test_hincrby() {
     let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-
-    async fn run_cmd(args: Vec<&str>, conn_ctx: &mut crate::cmd::ConnectionContext, server_ctx: &crate::cmd::ServerContext) -> Resp {
-        let mut resp_args = Vec::new();
-        for arg in args {
-            resp_args.push(Resp::BulkString(Some(Bytes::from(arg.to_string()))));
-        }
-        let req = Resp::Array(Some(resp_args));
-        let (res, _) = process_frame(req, conn_ctx, server_ctx).await;
-        res
-    }
 
     // --- HINCRBY Tests ---
 
@@ -75,16 +65,6 @@ async fn test_hincrby() {
 async fn test_hincrbyfloat() {
     let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-
-    async fn run_cmd(args: Vec<&str>, conn_ctx: &mut crate::cmd::ConnectionContext, server_ctx: &crate::cmd::ServerContext) -> Resp {
-        let mut resp_args = Vec::new();
-        for arg in args {
-            resp_args.push(Resp::BulkString(Some(Bytes::from(arg.to_string()))));
-        }
-        let req = Resp::Array(Some(resp_args));
-        let (res, _) = process_frame(req, conn_ctx, server_ctx).await;
-        res
-    }
 
     // --- HINCRBYFLOAT Tests ---
 

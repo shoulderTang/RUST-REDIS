@@ -51,3 +51,5 @@ mod test_zdiff;
 mod test_zcount;
 mod test_zlexcount;
 mod test_zrangeby;
+mod test_xtrim;
+mod test_xinfo;

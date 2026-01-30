@@ -167,4 +167,40 @@ impl Stream {
         let entries = self.rax.rev_range(&start_bytes, &end_bytes);
         entries.into_iter().map(|(_, entry)| entry).collect()
     }
+
+    pub fn trim_maxlen(&mut self, maxlen: usize) -> usize {
+        let current_len = self.len();
+        if current_len <= maxlen {
+            return 0;
+        }
+
+        let to_remove = current_len - maxlen;
+        let mut removed = 0;
+        
+        let entries = self.rax.range(&StreamID::new(0, 0).to_be_bytes(), &StreamID::new(u64::MAX, u64::MAX).to_be_bytes());
+        
+        for (id_bytes, _) in entries.iter().take(to_remove) {
+            if self.rax.remove(id_bytes).is_some() {
+                removed += 1;
+            }
+        }
+        
+        removed
+    }
+
+    pub fn trim_minid(&mut self, minid: StreamID) -> usize {
+        let mut removed = 0;
+        
+        let entries = self.rax.range(&StreamID::new(0, 0).to_be_bytes(), &minid.to_be_bytes());
+        
+        for (id_bytes, entry) in entries {
+            if entry.id < minid {
+                if self.rax.remove(&id_bytes).is_some() {
+                    removed += 1;
+                }
+            }
+        }
+        
+        removed
+    }
 }

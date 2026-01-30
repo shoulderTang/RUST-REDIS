@@ -1,27 +1,12 @@
-use crate::cmd::process_frame;
 use crate::resp::Resp;
 use bytes::Bytes;
 use std::collections::HashSet;
+use crate::tests::helper::run_cmd;
 
 #[tokio::test]
 async fn test_sunionstore() {
     let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-
-    // Helper to run commands
-    async fn run_cmd(
-        args: Vec<&str>,
-        conn_ctx: &mut crate::cmd::ConnectionContext,
-        server_ctx: &crate::cmd::ServerContext,
-    ) -> Resp {
-        let mut resp_args = Vec::new();
-        for arg in args {
-            resp_args.push(Resp::BulkString(Some(Bytes::from(arg.to_string()))));
-        }
-        let req = Resp::Array(Some(resp_args));
-        let (res, _) = process_frame(req, conn_ctx, server_ctx).await;
-        res
-    }
 
     // Setup
     // s1: {a, b}

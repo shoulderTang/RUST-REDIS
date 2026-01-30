@@ -1130,3 +1130,217 @@ pub fn xack(args: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
 
     (Resp::Integer(acked), Some(Resp::Array(Some(log_args))))
 }
+
+pub fn xtrim(args: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
+    if args.len() < 4 {
+        return (Resp::Error("ERR wrong number of arguments for 'xtrim' command".to_string()), None);
+    }
+
+    let key = match as_bytes(&args[1]) {
+        Some(b) => b,
+        None => return (Resp::Error("ERR invalid key".to_string()), None),
+    };
+
+    let mut arg_idx = 2;
+    let strategy = match as_bytes(&args[arg_idx]) {
+        Some(b) => String::from_utf8_lossy(&b).to_string().to_uppercase(),
+        None => return (Resp::Error("ERR syntax error".to_string()), None),
+    };
+    arg_idx += 1;
+
+    let mut _approximate = false;
+    if arg_idx < args.len() {
+        let opt = match as_bytes(&args[arg_idx]) {
+            Some(b) => String::from_utf8_lossy(&b).to_string(),
+            None => return (Resp::Error("ERR syntax error".to_string()), None),
+        };
+        if opt == "~" {
+            _approximate = true;
+            arg_idx += 1;
+        } else if opt == "=" {
+            arg_idx += 1;
+        }
+    }
+
+    if arg_idx >= args.len() {
+        return (Resp::Error("ERR syntax error".to_string()), None);
+    }
+
+    let threshold_str = match as_bytes(&args[arg_idx]) {
+        Some(b) => String::from_utf8_lossy(&b).to_string(),
+        None => return (Resp::Error("ERR syntax error".to_string()), None),
+    };
+    arg_idx += 1;
+
+    // Parse LIMIT if present
+    let mut _limit = None;
+    if arg_idx < args.len() {
+        let opt = match as_bytes(&args[arg_idx]) {
+            Some(b) => String::from_utf8_lossy(&b).to_string().to_uppercase(),
+            None => return (Resp::Error("ERR syntax error".to_string()), None),
+        };
+        if opt == "LIMIT" {
+            arg_idx += 1;
+            if arg_idx >= args.len() {
+                return (Resp::Error("ERR syntax error".to_string()), None);
+            }
+            if let Some(val) = as_bytes(&args[arg_idx]) {
+                if let Ok(l) = String::from_utf8_lossy(&val).parse::<usize>() {
+                    _limit = Some(l);
+                } else {
+                    return (Resp::Error("ERR invalid limit".to_string()), None);
+                }
+            } else {
+                return (Resp::Error("ERR invalid limit".to_string()), None);
+            }
+        }
+    }
+
+    let removed;
+    if let Some(mut entry) = db.get_mut(&key) {
+        if let Value::Stream(stream) = &mut entry.value {
+            if strategy == "MAXLEN" {
+                if let Ok(maxlen) = threshold_str.parse::<usize>() {
+                    removed = stream.trim_maxlen(maxlen);
+                } else {
+                    return (Resp::Error("ERR invalid maxlen".to_string()), None);
+                }
+            } else if strategy == "MINID" {
+                if let Ok(minid) = StreamID::from_str(&threshold_str) {
+                    removed = stream.trim_minid(minid);
+                } else {
+                    return (Resp::Error("ERR invalid minid".to_string()), None);
+                }
+            } else {
+                return (Resp::Error("ERR syntax error".to_string()), None);
+            }
+        } else {
+            return (Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()), None);
+        }
+    } else {
+        return (Resp::Integer(0), None);
+    }
+
+    // Log command
+    let mut log_args = Vec::with_capacity(args.len());
+    for arg in args {
+        log_args.push(arg.clone());
+    }
+
+    (Resp::Integer(removed as i64), Some(Resp::Array(Some(log_args))))
+}
+
+pub fn xinfo(args: &[Resp], db: &Db) -> Resp {
+    if args.len() < 3 {
+        return Resp::Error("ERR wrong number of arguments for 'xinfo' command".to_string());
+    }
+
+    let subcommand = match as_bytes(&args[1]) {
+        Some(b) => String::from_utf8_lossy(&b).to_string().to_uppercase(),
+        None => return Resp::Error("ERR syntax error".to_string()),
+    };
+
+    let key = match as_bytes(&args[2]) {
+        Some(b) => b,
+        None => return Resp::Error("ERR invalid key".to_string()),
+    };
+
+    if let Some(entry) = db.get(&key) {
+        if let Value::Stream(stream) = &entry.value {
+            match subcommand.as_str() {
+                "STREAM" => {
+                    let mut res = Vec::new();
+                    res.push(Resp::SimpleString(Bytes::from("length")));
+                    res.push(Resp::Integer(stream.len() as i64));
+                    res.push(Resp::SimpleString(Bytes::from("last-generated-id")));
+                    res.push(Resp::BulkString(Some(Bytes::from(stream.last_id.to_string()))));
+                    res.push(Resp::SimpleString(Bytes::from("groups")));
+                    res.push(Resp::Integer(stream.groups.len() as i64));
+                    
+                    // First entry
+                    let entries = stream.range(&StreamID::new(0, 0), &StreamID::new(u64::MAX, u64::MAX));
+                    res.push(Resp::SimpleString(Bytes::from("first-entry")));
+                    if let Some(first) = entries.first() {
+                        let mut entry_res = Vec::new();
+                        entry_res.push(Resp::BulkString(Some(Bytes::from(first.id.to_string()))));
+                        let mut fields = Vec::new();
+                        for (f, v) in &first.fields {
+                            fields.push(Resp::BulkString(Some(f.clone())));
+                            fields.push(Resp::BulkString(Some(v.clone())));
+                        }
+                        entry_res.push(Resp::Array(Some(fields)));
+                        res.push(Resp::Array(Some(entry_res)));
+                    } else {
+                        res.push(Resp::BulkString(None));
+                    }
+
+                    // Last entry
+                    res.push(Resp::SimpleString(Bytes::from("last-entry")));
+                    if let Some(last) = entries.last() {
+                        let mut entry_res = Vec::new();
+                        entry_res.push(Resp::BulkString(Some(Bytes::from(last.id.to_string()))));
+                        let mut fields = Vec::new();
+                        for (f, v) in &last.fields {
+                            fields.push(Resp::BulkString(Some(f.clone())));
+                            fields.push(Resp::BulkString(Some(v.clone())));
+                        }
+                        entry_res.push(Resp::Array(Some(fields)));
+                        res.push(Resp::Array(Some(entry_res)));
+                    } else {
+                        res.push(Resp::BulkString(None));
+                    }
+
+                    Resp::Array(Some(res))
+                }
+                "GROUPS" => {
+                    let mut res = Vec::new();
+                    for group in stream.groups.values() {
+                        let mut g_res = Vec::new();
+                        g_res.push(Resp::SimpleString(Bytes::from("name")));
+                        g_res.push(Resp::BulkString(Some(Bytes::from(group.name.clone()))));
+                        g_res.push(Resp::SimpleString(Bytes::from("consumers")));
+                        g_res.push(Resp::Integer(group.consumers.len() as i64));
+                        g_res.push(Resp::SimpleString(Bytes::from("pending")));
+                        g_res.push(Resp::Integer(group.pel.len() as i64));
+                        g_res.push(Resp::SimpleString(Bytes::from("last-delivered-id")));
+                        g_res.push(Resp::BulkString(Some(Bytes::from(group.last_id.to_string()))));
+                        res.push(Resp::Array(Some(g_res)));
+                    }
+                    Resp::Array(Some(res))
+                }
+                "CONSUMERS" => {
+                    if args.len() < 4 {
+                        return Resp::Error("ERR wrong number of arguments for 'XINFO CONSUMERS'".to_string());
+                    }
+                    let group_name = match as_bytes(&args[3]) {
+                        Some(b) => String::from_utf8_lossy(&b).to_string(),
+                        None => return Resp::Error("ERR invalid group name".to_string()),
+                    };
+                    if let Some(group) = stream.groups.get(&group_name) {
+                        let mut res = Vec::new();
+                        for consumer in group.consumers.values() {
+                            let mut c_res = Vec::new();
+                            c_res.push(Resp::SimpleString(Bytes::from("name")));
+                            c_res.push(Resp::BulkString(Some(Bytes::from(consumer.name.clone()))));
+                            c_res.push(Resp::SimpleString(Bytes::from("pending")));
+                            c_res.push(Resp::Integer(consumer.pending_ids.len() as i64));
+                            c_res.push(Resp::SimpleString(Bytes::from("idle")));
+                            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+                            let idle = if consumer.seen_time > 0 { now - consumer.seen_time } else { 0 };
+                            c_res.push(Resp::Integer(idle as i64));
+                            res.push(Resp::Array(Some(c_res)));
+                        }
+                        Resp::Array(Some(res))
+                    } else {
+                        Resp::Error("ERR no such consumer group".to_string())
+                    }
+                }
+                _ => Resp::Error("ERR unknown subcommand".to_string()),
+            }
+        } else {
+            Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string())
+        }
+    } else {
+        Resp::Error("ERR no such key".to_string())
+    }
+}

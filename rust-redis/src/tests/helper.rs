@@ -1,10 +1,22 @@
-use crate::cmd::{ConnectionContext, ServerContext};
+use crate::cmd::{ConnectionContext, ServerContext, process_frame};
 use crate::conf::Config;
 use crate::db::Db;
+use crate::resp::Resp;
+use bytes::Bytes;
 use std::sync::{Arc, RwLock};
 use dashmap::DashMap;
 
 use rand::Rng;
+
+pub async fn run_cmd(args: Vec<&str>, conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) -> Resp {
+    let mut resp_args = Vec::new();
+    for arg in args {
+        resp_args.push(Resp::BulkString(Some(Bytes::from(arg.to_string()))));
+    }
+    let req = Resp::Array(Some(resp_args));
+    let (res, _) = process_frame(req, conn_ctx, server_ctx).await;
+    res
+}
 
 pub fn create_server_context() -> ServerContext {
     let db = Arc::new(vec![Db::default()]);
