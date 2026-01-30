@@ -180,18 +180,41 @@ enum Command {
     Sismember,
     Smembers,
     Scard,
+    SPop,
+    SRandMember,
     SScan,
+    SMove,
+    SInter,
+    SInterStore,
+    SUnion,
+    SUnionStore,
+    SDiff,
+    SDiffStore,
     Zadd,
+    ZIncrBy,
     Zrem,
     Zscore,
     Zcard,
     Zrank,
+    ZRevRank,
     Zrange,
+    ZRevRange,
+    Zrangebyscore,
+    Zrangebylex,
+    Zcount,
+    Zlexcount,
     Zpopmin,
     Bzpopmin,
     Zpopmax,
     Bzpopmax,
     ZScan,
+    ZRandMember,
+    Zunion,
+    Zunionstore,
+    Zinter,
+    Zinterstore,
+    Zdiff,
+    Zdiffstore,
     Pfadd,
     Pfcount,
     Pfmerge,
@@ -260,8 +283,8 @@ fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
         Command::Set | Command::SetNx | Command::SetEx | Command::PSetEx | Command::GetSet | Command::Get | Command::GetDel | Command::GetEx | Command::GetRange | Command::SetRange | Command::Incr | Command::Decr | Command::IncrBy | Command::IncrByFloat | Command::DecrBy |
         Command::Append | Command::StrLen | Command::Lpush | Command::Rpush | Command::Lpop | Command::Rpop | Command::Blpop | Command::Brpop |
         Command::Llen | Command::Lrange | Command::Linsert | Command::Lrem | Command::Lpos | Command::Ltrim | Command::Hset | Command::HsetNx | Command::HincrBy | Command::HincrByFloat | Command::Hget | Command::Hgetall | Command::Hmset | Command::Hdel | Command::Hlen | Command::Hkeys | Command::Hvals | Command::HstrLen | Command::HRandField | Command::HScan | Command::Sadd | Command::Srem | Command::Sismember |
-        Command::Smembers | Command::Scard | Command::SScan | Command::Zadd | Command::Zrem | Command::Zscore | Command::Zcard |
-        Command::Zrank | Command::Zrange | Command::Zpopmin | Command::Bzpopmin | Command::Zpopmax | Command::Bzpopmax | Command::ZScan | Command::Pfadd | Command::Pfcount | Command::GeoAdd | Command::GeoDist |
+        Command::Smembers | Command::Scard | Command::SPop | Command::SRandMember | Command::SScan | Command::Zadd | Command::ZIncrBy | Command::Zrem | Command::Zscore | Command::Zcard |
+        Command::Zrank | Command::ZRevRank | Command::Zrange | Command::ZRevRange | Command::Zrangebyscore | Command::Zrangebylex | Command::Zcount | Command::Zlexcount | Command::Zpopmin | Command::Bzpopmin | Command::Zpopmax | Command::Bzpopmax | Command::ZScan | Command::ZRandMember | Command::Pfadd | Command::Pfcount | Command::GeoAdd | Command::GeoDist |
         Command::GeoHash | Command::GeoPos | Command::GeoRadius | Command::GeoRadiusByMember | Command::Expire | Command::PExpire | Command::ExpireAt | Command::PExpireAt |
         Command::Ttl | Command::PTtl | Command::Type | Command::Persist | Command::Xadd | Command::Xlen | Command::Xrange | Command::Xrevrange | Command::Xdel => {
              if items.len() > 1 {
@@ -270,7 +293,7 @@ fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
                  }
              }
         }
-        Command::Rename | Command::RenameNx => {
+        Command::Rename | Command::RenameNx | Command::SMove => {
             if items.len() > 2 {
                 if let Some(key) = as_bytes(&items[1]) {
                     keys.push(key.to_vec());
@@ -294,7 +317,7 @@ fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
                  }
              }
         }
-        Command::Mget | Command::Del | Command::Pfmerge => {
+        Command::Mget | Command::Del | Command::Pfmerge | Command::SInter | Command::SInterStore | Command::SUnion | Command::SDiff | Command::SDiffStore => {
              for i in 1..items.len() {
                  if let Some(key) = as_bytes(&items[i]) {
                      keys.push(key.to_vec());
@@ -325,6 +348,117 @@ fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
                 }
                 if let Some(key) = as_bytes(&items[2]) {
                     keys.push(key.to_vec());
+                }
+            }
+        }
+        Command::Zunion => {
+            if items.len() > 1 {
+                if let Some(numkeys_bytes) = as_bytes(&items[1]) {
+                    if let Ok(numkeys_str) = std::str::from_utf8(&numkeys_bytes) {
+                        if let Ok(numkeys) = numkeys_str.parse::<usize>() {
+                            for i in 0..numkeys {
+                                if 2 + i < items.len() {
+                                    if let Some(key) = as_bytes(&items[2+i]) {
+                                        keys.push(key.to_vec());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Command::Zunionstore => {
+            if items.len() > 2 {
+                if let Some(dest) = as_bytes(&items[1]) {
+                    keys.push(dest.to_vec());
+                }
+                if let Some(numkeys_bytes) = as_bytes(&items[2]) {
+                    if let Ok(numkeys_str) = std::str::from_utf8(&numkeys_bytes) {
+                        if let Ok(numkeys) = numkeys_str.parse::<usize>() {
+                            for i in 0..numkeys {
+                                if 3 + i < items.len() {
+                                    if let Some(key) = as_bytes(&items[3+i]) {
+                                        keys.push(key.to_vec());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Command::Zinter => {
+            if items.len() > 1 {
+                if let Some(numkeys_bytes) = as_bytes(&items[1]) {
+                    if let Ok(numkeys_str) = std::str::from_utf8(&numkeys_bytes) {
+                        if let Ok(numkeys) = numkeys_str.parse::<usize>() {
+                            for i in 0..numkeys {
+                                if 2 + i < items.len() {
+                                    if let Some(key) = as_bytes(&items[2+i]) {
+                                        keys.push(key.to_vec());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Command::Zinterstore => {
+            if items.len() > 2 {
+                if let Some(dest) = as_bytes(&items[1]) {
+                    keys.push(dest.to_vec());
+                }
+                if let Some(numkeys_bytes) = as_bytes(&items[2]) {
+                    if let Ok(numkeys_str) = std::str::from_utf8(&numkeys_bytes) {
+                        if let Ok(numkeys) = numkeys_str.parse::<usize>() {
+                            for i in 0..numkeys {
+                                if 3 + i < items.len() {
+                                    if let Some(key) = as_bytes(&items[3+i]) {
+                                        keys.push(key.to_vec());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Command::Zdiff => {
+            if items.len() > 1 {
+                if let Some(numkeys_bytes) = as_bytes(&items[1]) {
+                    if let Ok(numkeys_str) = std::str::from_utf8(&numkeys_bytes) {
+                        if let Ok(numkeys) = numkeys_str.parse::<usize>() {
+                            for i in 0..numkeys {
+                                if 2 + i < items.len() {
+                                    if let Some(key) = as_bytes(&items[2+i]) {
+                                        keys.push(key.to_vec());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Command::Zdiffstore => {
+            if items.len() > 2 {
+                if let Some(dest) = as_bytes(&items[1]) {
+                    keys.push(dest.to_vec());
+                }
+                if let Some(numkeys_bytes) = as_bytes(&items[2]) {
+                    if let Ok(numkeys_str) = std::str::from_utf8(&numkeys_bytes) {
+                        if let Ok(numkeys) = numkeys_str.parse::<usize>() {
+                            for i in 0..numkeys {
+                                if 3 + i < items.len() {
+                                    if let Some(key) = as_bytes(&items[3+i]) {
+                                        keys.push(key.to_vec());
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -787,18 +921,41 @@ async fn dispatch_command(
         Command::Sismember => (set::sismember(items, db), None),
         Command::Smembers => (set::smembers(items, db), None),
         Command::Scard => (set::scard(items, db), None),
+        Command::SPop => (set::spop(items, db), None),
+        Command::SRandMember => (set::srandmember(items, db), None),
         Command::SScan => (set::sscan(items, db), None),
+        Command::SMove => (set::smove(items, db), None),
+        Command::SInter => (set::sinter(items, db), None),
+        Command::SInterStore => (set::sinterstore(items, db), None),
+        Command::SUnion => (set::sunion(items, db), None),
+        Command::SUnionStore => (set::sunionstore(items, db), None),
+        Command::SDiff => (set::sdiff(items, db), None),
+        Command::SDiffStore => (set::sdiffstore(items, db), None),
         Command::Zadd => (zset::zadd(items, conn_ctx, server_ctx), None),
+        Command::ZIncrBy => (zset::zincrby(items, db), None),
         Command::Zrem => (zset::zrem(items, db), None),
         Command::Zscore => (zset::zscore(items, db), None),
         Command::Zcard => (zset::zcard(items, db), None),
         Command::Zrank => (zset::zrank(items, db), None),
+        Command::ZRevRank => (zset::zrevrank(items, db), None),
         Command::Zrange => (zset::zrange(items, db), None),
+        Command::ZRevRange => (zset::zrevrange(items, db), None),
+        Command::Zrangebyscore => (zset::zrangebyscore(items, db), None),
+        Command::Zrangebylex => (zset::zrangebylex(items, db), None),
+        Command::Zcount => (zset::zcount(items, db), None),
+        Command::Zlexcount => (zset::zlexcount(items, db), None),
         Command::Zpopmin => (zset::zpopmin(items, db), None),
         Command::Bzpopmin => (zset::bzpopmin(items, conn_ctx, server_ctx).await, None),
         Command::Zpopmax => (zset::zpopmax(items, db), None),
         Command::Bzpopmax => (zset::bzpopmax(items, conn_ctx, server_ctx).await, None),
         Command::ZScan => (zset::zscan(items, db), None),
+        Command::ZRandMember => (zset::zrandmember(items, db), None),
+        Command::Zunion => (zset::zunion(items, db), None),
+        Command::Zunionstore => (zset::zunionstore(items, db), None),
+        Command::Zinter => (zset::zinter(items, db), None),
+        Command::Zinterstore => (zset::zinterstore(items, db), None),
+        Command::Zdiff => (zset::zdiff(items, db), None),
+        Command::Zdiffstore => (zset::zdiffstore(items, db), None),
         Command::Pfadd => (hll::pfadd(items, db), None),
         Command::Pfcount => (hll::pfcount(items, db), None),
         Command::Pfmerge => (hll::pfmerge(items, db), None),
@@ -958,18 +1115,42 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("SISMEMBER".to_string(), Command::Sismember);
         m.insert("SMEMBERS".to_string(), Command::Smembers);
         m.insert("SCARD".to_string(), Command::Scard);
+        m.insert("SPOP".to_string(), Command::SPop);
+        m.insert("SRANDMEMBER".to_string(), Command::SRandMember);
         m.insert("SSCAN".to_string(), Command::SScan);
+        m.insert("SMOVE".to_string(), Command::SMove);
+        m.insert("SINTER".to_string(), Command::SInter);
+        m.insert("SINTERSTORE".to_string(), Command::SInterStore);
+        m.insert("SUNION".to_string(), Command::SUnion);
+        m.insert("SUNIONSTORE".to_string(), Command::SUnionStore);
+        m.insert("SDIFF".to_string(), Command::SDiff);
+        m.insert("SDIFFSTORE".to_string(), Command::SDiffStore);
         m.insert("ZADD".to_string(), Command::Zadd);
+        m.insert("ZINCRBY".to_string(), Command::ZIncrBy);
         m.insert("ZREM".to_string(), Command::Zrem);
         m.insert("ZSCORE".to_string(), Command::Zscore);
         m.insert("ZCARD".to_string(), Command::Zcard);
         m.insert("ZRANK".to_string(), Command::Zrank);
+        m.insert("ZREVRANK".to_string(), Command::ZRevRank);
         m.insert("ZRANGE".to_string(), Command::Zrange);
+        m.insert("ZREVRANGE".to_string(), Command::ZRevRange);
+        m.insert("ZRANGEBYSCORE".to_string(), Command::Zrangebyscore);
+        m.insert("ZRANGEBYLEX".to_string(), Command::Zrangebylex);
+        m.insert("ZCOUNT".to_string(), Command::Zcount);
+        m.insert("ZLEXCOUNT".to_string(), Command::Zlexcount);
         m.insert("ZPOPMIN".to_string(), Command::Zpopmin);
         m.insert("BZPOPMIN".to_string(), Command::Bzpopmin);
         m.insert("ZPOPMAX".to_string(), Command::Zpopmax);
         m.insert("BZPOPMAX".to_string(), Command::Bzpopmax);
         m.insert("ZSCAN".to_string(), Command::ZScan);
+        m.insert("ZRANDMEMBER".to_string(), Command::ZRandMember);
+        m.insert("ZUNION".to_string(), Command::Zunion);
+        m.insert("ZUNIONSTORE".to_string(), Command::Zunionstore);
+        m.insert("ZINTER".to_string(), Command::Zinter);
+        m.insert("ZINTERSTORE".to_string(), Command::Zinterstore);
+        m.insert("ZDIFF".to_string(), Command::Zdiff);
+        m.insert("ZDIFFSTORE".to_string(), Command::Zdiffstore);
+        m.insert("SDIFFSTORE".to_string(), Command::SDiffStore);
         m.insert("PFADD".to_string(), Command::Pfadd);
         m.insert("PFCOUNT".to_string(), Command::Pfcount);
         m.insert("PFMERGE".to_string(), Command::Pfmerge);
