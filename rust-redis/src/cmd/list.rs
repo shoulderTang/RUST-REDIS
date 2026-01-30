@@ -797,3 +797,522 @@ pub async fn blmove(
         None => Resp::BulkString(None),
     }
 }
+
+pub fn linsert(items: &[Resp], db: &Db) -> Resp {
+    if items.len() != 5 {
+        return Resp::Error("ERR wrong number of arguments for 'LINSERT'".to_string());
+    }
+
+    let key = match &items[1] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid key".to_string()),
+    };
+
+    let before = match &items[2] {
+        Resp::BulkString(Some(b)) => {
+            let s = String::from_utf8_lossy(b).to_ascii_uppercase();
+            if s == "BEFORE" {
+                true
+            } else if s == "AFTER" {
+                false
+            } else {
+                return Resp::Error("ERR syntax error".to_string());
+            }
+        }
+        Resp::SimpleString(s) => {
+            let s = String::from_utf8_lossy(s).to_ascii_uppercase();
+            if s == "BEFORE" {
+                true
+            } else if s == "AFTER" {
+                false
+            } else {
+                return Resp::Error("ERR syntax error".to_string());
+            }
+        }
+        _ => return Resp::Error("ERR syntax error".to_string()),
+    };
+
+    let pivot = match &items[3] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid value".to_string()),
+    };
+
+    let element = match &items[4] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid value".to_string()),
+    };
+
+    if let Some(mut entry) = db.get_mut(&key) {
+        if entry.is_expired() {
+            drop(entry);
+            db.remove(&key);
+            return Resp::Integer(0);
+        }
+        
+        match &mut entry.value {
+            Value::List(list) => {
+                let mut index = None;
+                for (i, val) in list.iter().enumerate() {
+                    if val == &pivot {
+                        index = Some(i);
+                        break;
+                    }
+                }
+
+                if let Some(idx) = index {
+                    let insert_at = if before { idx } else { idx + 1 };
+                    list.insert(insert_at, element);
+                    Resp::Integer(list.len() as i64)
+                } else {
+                    Resp::Integer(-1)
+                }
+            }
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
+        }
+    } else {
+        Resp::Integer(0)
+    }
+}
+
+pub fn lrem(items: &[Resp], db: &Db) -> Resp {
+    if items.len() != 4 {
+        return Resp::Error("ERR wrong number of arguments for 'LREM'".to_string());
+    }
+    let key = match &items[1] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid key".to_string()),
+    };
+    let count = match &items[2] {
+        Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).parse::<i64>(),
+        Resp::SimpleString(s) => String::from_utf8_lossy(s).parse::<i64>(),
+        _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+    };
+    let count = match count {
+        Ok(v) => v,
+        Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+    };
+    let element = match &items[3] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid value".to_string()),
+    };
+
+    if let Some(mut entry) = db.get_mut(&key) {
+        if entry.is_expired() {
+            drop(entry);
+            db.remove(&key);
+            return Resp::Integer(0);
+        }
+        match &mut entry.value {
+            Value::List(list) => {
+                let mut removed = 0;
+                if count == 0 {
+                    let initial_len = list.len();
+                    list.retain(|x| x != &element);
+                    removed = initial_len - list.len();
+                } else if count > 0 {
+                    let mut to_remove = count;
+                    let mut i = 0;
+                    while i < list.len() && to_remove > 0 {
+                        if &list[i] == &element {
+                            list.remove(i);
+                            removed += 1;
+                            to_remove -= 1;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                } else {
+                    // count < 0, remove from tail
+                    let mut to_remove = -count;
+                    let mut i = list.len();
+                    while i > 0 && to_remove > 0 {
+                        i -= 1;
+                        if &list[i] == &element {
+                            list.remove(i);
+                            removed += 1;
+                            to_remove -= 1;
+                        }
+                    }
+                }
+                if list.is_empty() {
+                    drop(entry);
+                    db.remove(&key);
+                }
+                Resp::Integer(removed as i64)
+            }
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
+        }
+    } else {
+        Resp::Integer(0)
+    }
+}
+
+pub fn ltrim(items: &[Resp], db: &Db) -> Resp {
+    if items.len() != 4 {
+        return Resp::Error("ERR wrong number of arguments for 'LTRIM'".to_string());
+    }
+    let key = match &items[1] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid key".to_string()),
+    };
+    let start = match &items[2] {
+        Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).parse::<i64>(),
+        Resp::SimpleString(s) => String::from_utf8_lossy(s).parse::<i64>(),
+        _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+    };
+    let start = match start {
+        Ok(v) => v,
+        Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+    };
+    let stop = match &items[3] {
+        Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).parse::<i64>(),
+        Resp::SimpleString(s) => String::from_utf8_lossy(s).parse::<i64>(),
+        _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+    };
+    let stop = match stop {
+        Ok(v) => v,
+        Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+    };
+
+    if let Some(mut entry) = db.get_mut(&key) {
+        if entry.is_expired() {
+            drop(entry);
+            db.remove(&key);
+            return Resp::SimpleString(bytes::Bytes::from_static(b"OK"));
+        }
+        match &mut entry.value {
+            Value::List(list) => {
+                let len = list.len() as i64;
+                let start = if start < 0 { len + start } else { start };
+                let stop = if stop < 0 { len + stop } else { stop };
+
+                let start = if start < 0 { 0 } else { start };
+                
+                if start > stop || start >= len {
+                    list.clear();
+                    drop(entry);
+                    db.remove(&key);
+                    return Resp::SimpleString(bytes::Bytes::from_static(b"OK"));
+                }
+                
+                let start = start as usize;
+                let stop = if stop >= len { len - 1 } else { stop } as usize;
+                
+                if start > 0 {
+                    for _ in 0..start {
+                        list.pop_front();
+                    }
+                }
+                
+                let new_len = stop - start + 1;
+                list.truncate(new_len);
+                
+                if list.is_empty() {
+                    drop(entry);
+                    db.remove(&key);
+                }
+
+                Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
+            }
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
+        }
+    } else {
+        Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
+    }
+}
+
+pub fn lindex(items: &[Resp], db: &Db) -> Resp {
+    if items.len() != 3 {
+        return Resp::Error("ERR wrong number of arguments for 'LINDEX'".to_string());
+    }
+    let key = match &items[1] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid key".to_string()),
+    };
+    let index = match &items[2] {
+        Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).parse::<i64>(),
+        Resp::SimpleString(s) => String::from_utf8_lossy(s).parse::<i64>(),
+        _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+    };
+    let index = match index {
+        Ok(v) => v,
+        Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+    };
+
+    if let Some(entry) = db.get(&key) {
+        if entry.is_expired() {
+            return Resp::BulkString(None);
+        }
+        match &entry.value {
+            Value::List(list) => {
+                let len = list.len() as i64;
+                let idx = if index < 0 { len + index } else { index };
+                
+                if idx < 0 || idx >= len {
+                    return Resp::BulkString(None);
+                }
+                
+                if let Some(val) = list.get(idx as usize) {
+                    Resp::BulkString(Some(val.clone()))
+                } else {
+                    Resp::BulkString(None)
+                }
+            }
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
+        }
+    } else {
+        Resp::BulkString(None)
+    }
+}
+
+pub fn lpushx(items: &[Resp], db: &Db) -> Resp {
+    if items.len() < 3 {
+        return Resp::Error("ERR wrong number of arguments for 'LPUSHX'".to_string());
+    }
+    let key = match &items[1] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid key".to_string()),
+    };
+
+    if let Some(mut entry) = db.get_mut(&key) {
+        if entry.is_expired() {
+            return Resp::Integer(0);
+        }
+        match &mut entry.value {
+            Value::List(list) => {
+                for i in 2..items.len() {
+                    let val = match &items[i] {
+                        Resp::BulkString(Some(b)) => b.clone(),
+                        Resp::SimpleString(s) => s.clone(),
+                        _ => return Resp::Error("ERR invalid value".to_string()),
+                    };
+                    list.push_front(val);
+                }
+                Resp::Integer(list.len() as i64)
+            }
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
+        }
+    } else {
+        Resp::Integer(0)
+    }
+}
+
+pub fn rpushx(items: &[Resp], db: &Db) -> Resp {
+    if items.len() < 3 {
+        return Resp::Error("ERR wrong number of arguments for 'RPUSHX'".to_string());
+    }
+    let key = match &items[1] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid key".to_string()),
+    };
+
+    if let Some(mut entry) = db.get_mut(&key) {
+        if entry.is_expired() {
+            return Resp::Integer(0);
+        }
+        match &mut entry.value {
+            Value::List(list) => {
+                for i in 2..items.len() {
+                    let val = match &items[i] {
+                        Resp::BulkString(Some(b)) => b.clone(),
+                        Resp::SimpleString(s) => s.clone(),
+                        _ => return Resp::Error("ERR invalid value".to_string()),
+                    };
+                    list.push_back(val);
+                }
+                Resp::Integer(list.len() as i64)
+            }
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
+        }
+    } else {
+        Resp::Integer(0)
+    }
+}
+
+pub fn lpos(items: &[Resp], db: &Db) -> Resp {
+    if items.len() < 3 {
+        return Resp::Error("ERR wrong number of arguments for 'LPOS'".to_string());
+    }
+    let key = match &items[1] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid key".to_string()),
+    };
+    let element = match &items[2] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid value".to_string()),
+    };
+
+    let mut rank: i64 = 1;
+    let mut count: Option<i64> = None;
+    let mut maxlen: Option<i64> = None;
+
+    let mut i = 3;
+    while i < items.len() {
+        let arg = match &items[i] {
+            Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_ascii_uppercase(),
+            Resp::SimpleString(s) => String::from_utf8_lossy(s).to_ascii_uppercase(),
+            _ => return Resp::Error("ERR syntax error".to_string()),
+        };
+
+        match arg.as_str() {
+            "RANK" => {
+                if i + 1 >= items.len() {
+                    return Resp::Error("ERR syntax error".to_string());
+                }
+                rank = match &items[i+1] {
+                    Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).parse().unwrap_or(0),
+                    Resp::SimpleString(s) => String::from_utf8_lossy(s).parse().unwrap_or(0),
+                    _ => 0,
+                };
+                if rank == 0 {
+                    return Resp::Error("ERR RANK can't be zero: use 1 to start from the first match, 2 from the second, ... or use negative to start from the end of the list".to_string());
+                }
+                i += 2;
+            }
+            "COUNT" => {
+                if i + 1 >= items.len() {
+                    return Resp::Error("ERR syntax error".to_string());
+                }
+                let c = match &items[i+1] {
+                    Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).parse().unwrap_or(-1),
+                    Resp::SimpleString(s) => String::from_utf8_lossy(s).parse().unwrap_or(-1),
+                    _ => -1,
+                };
+                if c < 0 {
+                    return Resp::Error("ERR COUNT can't be negative".to_string());
+                }
+                count = Some(c);
+                i += 2;
+            }
+            "MAXLEN" => {
+                if i + 1 >= items.len() {
+                    return Resp::Error("ERR syntax error".to_string());
+                }
+                let m = match &items[i+1] {
+                    Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).parse().unwrap_or(-1),
+                    Resp::SimpleString(s) => String::from_utf8_lossy(s).parse().unwrap_or(-1),
+                    _ => -1,
+                };
+                if m < 0 {
+                    return Resp::Error("ERR MAXLEN can't be negative".to_string());
+                }
+                maxlen = Some(m);
+                i += 2;
+            }
+            _ => return Resp::Error("ERR syntax error".to_string()),
+        }
+    }
+
+    if let Some(entry) = db.get(&key) {
+        if entry.is_expired() {
+            return if count.is_some() {
+                Resp::Array(Some(vec![]))
+            } else {
+                Resp::BulkString(None)
+            };
+        }
+        match &entry.value {
+            Value::List(list) => {
+                let mut matches = Vec::new();
+                let mut comparisons = 0;
+                let mut matched_count = 0;
+
+                let return_array = count.is_some();
+                let limit_matches = match count {
+                    Some(0) => usize::MAX,
+                    Some(n) => n as usize,
+                    None => 1,
+                };
+                let max_comps = maxlen.unwrap_or(0) as usize;
+
+                let mut skipped = 0;
+                let target_skip = rank.abs() as usize - 1;
+
+                if rank > 0 {
+                    for (idx, val) in list.iter().enumerate() {
+                        if max_comps > 0 && comparisons >= max_comps {
+                            break;
+                        }
+                        comparisons += 1;
+
+                        if val == &element {
+                            if skipped < target_skip {
+                                skipped += 1;
+                            } else {
+                                matches.push(idx as i64);
+                                matched_count += 1;
+                                if matched_count >= limit_matches {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // rank < 0
+                    for (idx, val) in list.iter().enumerate().rev() {
+                        if max_comps > 0 && comparisons >= max_comps {
+                            break;
+                        }
+                        comparisons += 1;
+
+                        if val == &element {
+                            if skipped < target_skip {
+                                skipped += 1;
+                            } else {
+                                matches.push(idx as i64);
+                                matched_count += 1;
+                                if matched_count >= limit_matches {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if return_array {
+                    let res = matches.into_iter().map(|i| Resp::Integer(i)).collect();
+                    Resp::Array(Some(res))
+                } else {
+                    if matches.is_empty() {
+                        Resp::BulkString(None)
+                    } else {
+                        Resp::Integer(matches[0])
+                    }
+                }
+            }
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
+        }
+    } else {
+        if count.is_some() {
+            Resp::Array(Some(vec![]))
+        } else {
+            Resp::BulkString(None)
+        }
+    }
+}
+

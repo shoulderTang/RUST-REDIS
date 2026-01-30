@@ -122,18 +122,31 @@ pub struct SlowLogEntry {
 enum Command {
     Ping,
     Set,
+    SetNx,
+    SetEx,
+    PSetEx,
+    GetSet,
+    GetDel,
+    GetEx,
+    GetRange,
     Mset,
+    MsetNx,
+    SetRange,
     Del,
     Get,
     Mget,
     Incr,
     Decr,
     IncrBy,
+    IncrByFloat,
     DecrBy,
     Append,
+    StrAlgo,
     StrLen,
     Lpush,
+    Lpushx,
     Rpush,
+    Rpushx,
     Lpop,
     Rpop,
     Blpop,
@@ -141,14 +154,26 @@ enum Command {
     Blmove,
     Lmove,
     Llen,
+    Lindex,
+    Linsert,
+    Lrem,
+    Lpos,
+    Ltrim,
     Lrange,
     Hset,
+    HsetNx,
+    HincrBy,
+    HincrByFloat,
     Hget,
     Hgetall,
     Hmset,
     Hmget,
     Hdel,
     Hlen,
+    Hkeys,
+    Hvals,
+    HstrLen,
+    HRandField,
     HScan,
     Sadd,
     Srem,
@@ -232,10 +257,9 @@ enum Command {
 fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
     let mut keys = Vec::new();
     match cmd {
-        Command::Set | Command::Get | Command::Incr | Command::Decr | Command::IncrBy | Command::DecrBy |
+        Command::Set | Command::SetNx | Command::SetEx | Command::PSetEx | Command::GetSet | Command::Get | Command::GetDel | Command::GetEx | Command::GetRange | Command::SetRange | Command::Incr | Command::Decr | Command::IncrBy | Command::IncrByFloat | Command::DecrBy |
         Command::Append | Command::StrLen | Command::Lpush | Command::Rpush | Command::Lpop | Command::Rpop | Command::Blpop | Command::Brpop |
-        Command::Llen | Command::Lrange | Command::Hset | Command::Hget | Command::Hgetall | Command::Hmset |
-        Command::Hmget | Command::Hdel | Command::Hlen | Command::HScan | Command::Sadd | Command::Srem | Command::Sismember |
+        Command::Llen | Command::Lrange | Command::Linsert | Command::Lrem | Command::Lpos | Command::Ltrim | Command::Hset | Command::HsetNx | Command::HincrBy | Command::HincrByFloat | Command::Hget | Command::Hgetall | Command::Hmset | Command::Hdel | Command::Hlen | Command::Hkeys | Command::Hvals | Command::HstrLen | Command::HRandField | Command::HScan | Command::Sadd | Command::Srem | Command::Sismember |
         Command::Smembers | Command::Scard | Command::SScan | Command::Zadd | Command::Zrem | Command::Zscore | Command::Zcard |
         Command::Zrank | Command::Zrange | Command::Zpopmin | Command::Bzpopmin | Command::Zpopmax | Command::Bzpopmax | Command::ZScan | Command::Pfadd | Command::Pfcount | Command::GeoAdd | Command::GeoDist |
         Command::GeoHash | Command::GeoPos | Command::GeoRadius | Command::GeoRadiusByMember | Command::Expire | Command::PExpire | Command::ExpireAt | Command::PExpireAt |
@@ -256,7 +280,7 @@ fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
                 }
             }
         }
-        Command::Mset => {
+        Command::Mset | Command::MsetNx => {
              for i in (1..items.len()).step_by(2) {
                  if let Some(key) = as_bytes(&items[i]) {
                      keys.push(key.to_vec());
@@ -303,6 +327,23 @@ fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
                     keys.push(key.to_vec());
                 }
             }
+        }
+        Command::StrAlgo => {
+             for i in 2..items.len() {
+                 if let Some(arg) = as_bytes(&items[i]) {
+                     if arg.eq_ignore_ascii_case(b"KEYS") {
+                         if i + 2 < items.len() {
+                             if let Some(key) = as_bytes(&items[i+1]) {
+                                 keys.push(key.to_vec());
+                             }
+                             if let Some(key) = as_bytes(&items[i+2]) {
+                                 keys.push(key.to_vec());
+                             }
+                         }
+                         break;
+                     }
+                 }
+             }
         }
         _ => {}
     }
@@ -688,33 +729,58 @@ async fn dispatch_command(
             }
         }
         Command::Set => (string::set(items, db), None),
+        Command::SetNx => (string::setnx(items, db), None),
+        Command::SetEx => (string::setex(items, db), None),
+        Command::PSetEx => (string::psetex(items, db), None),
+        Command::GetSet => (string::getset(items, db), None),
+        Command::GetDel => (string::getdel(items, db), None),
+        Command::GetEx => (string::getex(items, db), None),
+        Command::GetRange => (string::getrange(items, db), None),
         Command::Mset => (string::mset(items, db), None),
+        Command::MsetNx => (string::msetnx(items, db), None),
+        Command::SetRange => (string::setrange(items, db), None),
         Command::Del => (key::del(items, db), None),
         Command::Get => (string::get(items, db), None),
         Command::Mget => (string::mget(items, db), None),
         Command::Incr => (string::incr(items, db), None),
         Command::Decr => (string::decr(items, db), None),
         Command::IncrBy => (string::incrby(items, db), None),
+        Command::IncrByFloat => (string::incrbyfloat(items, db), None),
         Command::DecrBy => (string::decrby(items, db), None),
         Command::Append => (string::append(items, db), None),
         Command::StrLen => (string::strlen(items, db), None),
+        Command::StrAlgo => (string::stralgo(items, db), None),
         Command::Lpush => (list::lpush(items, conn_ctx, server_ctx), None),
+        Command::Lpushx => (list::lpushx(items, db), None),
         Command::Rpush => (list::rpush(items, conn_ctx, server_ctx), None),
+        Command::Rpushx => (list::rpushx(items, db), None),
         Command::Lpop => (list::lpop(items, db), None),
         Command::Rpop => (list::rpop(items, db), None),
         Command::Blpop => (list::blpop(items, conn_ctx, server_ctx).await, None),
         Command::Brpop => (list::brpop(items, conn_ctx, server_ctx).await, None),
         Command::Blmove => (list::blmove(items, conn_ctx, server_ctx).await, None),
         Command::Lmove => (list::lmove(items, db), None),
+        Command::Linsert => (list::linsert(items, db), None),
+        Command::Lrem => (list::lrem(items, db), None),
+        Command::Lpos => (list::lpos(items, db), None),
+        Command::Ltrim => (list::ltrim(items, db), None),
+        Command::Lindex => (list::lindex(items, db), None),
         Command::Llen => (list::llen(items, db), None),
         Command::Lrange => (list::lrange(items, db), None),
         Command::Hset => (hash::hset(items, db), None),
+        Command::HsetNx => (hash::hsetnx(items, db), None),
+        Command::HincrBy => (hash::hincrby(items, db), None),
+        Command::HincrByFloat => (hash::hincrbyfloat(items, db), None),
         Command::Hget => (hash::hget(items, db), None),
         Command::Hgetall => (hash::hgetall(items, db), None),
         Command::Hmset => (hash::hmset(items, db), None),
         Command::Hmget => (hash::hmget(items, db), None),
         Command::Hdel => (hash::hdel(items, db), None),
         Command::Hlen => (hash::hlen(items, db), None),
+        Command::Hkeys => (hash::hkeys(items, db), None),
+        Command::Hvals => (hash::hvals(items, db), None),
+        Command::HstrLen => (hash::hstrlen(items, db), None),
+        Command::HRandField => (hash::hrandfield(items, db), None),
         Command::HScan => (hash::hscan(items, db), None),
         Command::Sadd => (set::sadd(items, db), None),
         Command::Srem => (set::srem(items, db), None),
@@ -834,33 +900,58 @@ fn command_name(raw: &[u8]) -> Command {
         let mut m = HashMap::new();
         m.insert("PING".to_string(), Command::Ping);
         m.insert("SET".to_string(), Command::Set);
+        m.insert("SETNX".to_string(), Command::SetNx);
+        m.insert("SETEX".to_string(), Command::SetEx);
+        m.insert("PSETEX".to_string(), Command::PSetEx);
+        m.insert("GETSET".to_string(), Command::GetSet);
+        m.insert("GETDEL".to_string(), Command::GetDel);
+        m.insert("GETEX".to_string(), Command::GetEx);
+        m.insert("GETRANGE".to_string(), Command::GetRange);
         m.insert("MSET".to_string(), Command::Mset);
+        m.insert("MSETNX".to_string(), Command::MsetNx);
+        m.insert("SETRANGE".to_string(), Command::SetRange);
         m.insert("DEL".to_string(), Command::Del);
         m.insert("GET".to_string(), Command::Get);
         m.insert("MGET".to_string(), Command::Mget);
         m.insert("INCR".to_string(), Command::Incr);
         m.insert("DECR".to_string(), Command::Decr);
         m.insert("INCRBY".to_string(), Command::IncrBy);
+        m.insert("INCRBYFLOAT".to_string(), Command::IncrByFloat);
         m.insert("DECRBY".to_string(), Command::DecrBy);
         m.insert("APPEND".to_string(), Command::Append);
+        m.insert("STRALGO".to_string(), Command::StrAlgo);
         m.insert("STRLEN".to_string(), Command::StrLen);
         m.insert("LPUSH".to_string(), Command::Lpush);
+        m.insert("LPUSHX".to_string(), Command::Lpushx);
         m.insert("RPUSH".to_string(), Command::Rpush);
+        m.insert("RPUSHX".to_string(), Command::Rpushx);
         m.insert("LPOP".to_string(), Command::Lpop);
         m.insert("RPOP".to_string(), Command::Rpop);
         m.insert("BLPOP".to_string(), Command::Blpop);
         m.insert("BRPOP".to_string(), Command::Brpop);
         m.insert("BLMOVE".to_string(), Command::Blmove);
         m.insert("LMOVE".to_string(), Command::Lmove);
+        m.insert("LINSERT".to_string(), Command::Linsert);
+        m.insert("LREM".to_string(), Command::Lrem);
+        m.insert("LPOS".to_string(), Command::Lpos);
+        m.insert("LINDEX".to_string(), Command::Lindex);
+        m.insert("LTRIM".to_string(), Command::Ltrim);
         m.insert("LLEN".to_string(), Command::Llen);
         m.insert("LRANGE".to_string(), Command::Lrange);
         m.insert("HSET".to_string(), Command::Hset);
+        m.insert("HSETNX".to_string(), Command::HsetNx);
+        m.insert("HINCRBY".to_string(), Command::HincrBy);
+        m.insert("HINCRBYFLOAT".to_string(), Command::HincrByFloat);
         m.insert("HGET".to_string(), Command::Hget);
         m.insert("HGETALL".to_string(), Command::Hgetall);
         m.insert("HMSET".to_string(), Command::Hmset);
         m.insert("HMGET".to_string(), Command::Hmget);
         m.insert("HDEL".to_string(), Command::Hdel);
         m.insert("HLEN".to_string(), Command::Hlen);
+        m.insert("HKEYS".to_string(), Command::Hkeys);
+        m.insert("HVALS".to_string(), Command::Hvals);
+        m.insert("HSTRLEN".to_string(), Command::HstrLen);
+        m.insert("HRANDFIELD".to_string(), Command::HRandField);
         m.insert("HSCAN".to_string(), Command::HScan);
         m.insert("SADD".to_string(), Command::Sadd);
         m.insert("SREM".to_string(), Command::Srem);
@@ -937,7 +1028,7 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("PUBSUB".to_string(), Command::PubSub);
         m.insert("CLIENT".to_string(), Command::Client);
         m.insert("MONITOR".to_string(), Command::Monitor);
-        m.insert("SLOWLOG".to_string(), Command::Slowlog);
+        m.insert("SLOWLOG".to_string(), Command::Slowlog); //the 110th cmd
         m
     });
 
