@@ -165,15 +165,16 @@ fn bytes_to_human(bytes: u64) -> String {
 fn get_keyspace_info(ctx: &ServerContext) -> String {
     let mut s = String::new();
     s.push_str("# Keyspace\r\n");
-    for (i, db) in ctx.databases.iter().enumerate() {
+    for (i, db_lock) in ctx.databases.iter().enumerate() {
+        let db = db_lock.read().unwrap();
         let keys = db.len();
         if keys > 0 {
             let mut expires = 0;
             let mut total_ttl = 0;
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("Time went backwards").as_millis() as u64;
 
-            for entry in db.iter() {
-                if let Some(expires_at) = entry.value().expires_at {
+            for r in db.iter() {
+                if let Some(expires_at) = r.value().expires_at {
                     expires += 1;
                     if expires_at > now {
                         total_ttl += expires_at - now;

@@ -4,7 +4,7 @@ use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
 use bytes::Bytes;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 use crate::cmd::ServerContext;
@@ -29,7 +29,7 @@ async fn test_aof_hang_reproduction() {
         ..Config::default()
     };
 
-    let databases = Arc::new(vec![Db::default()]);
+    let databases = Arc::new(vec![RwLock::new(Db::default())]);
     let script_manager = scripting::create_script_manager();
     
     // Initialize AOF exactly like server.rs
@@ -68,6 +68,8 @@ async fn test_aof_hang_reproduction() {
         slowlog_threshold_us: Arc::new(std::sync::atomic::AtomicI64::new(10_000)),
         mem_peak_rss: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         maxmemory: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        watched_clients: Arc::new(dashmap::DashMap::new()),
+        client_watched_dirty: Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext::new(1, None, None);

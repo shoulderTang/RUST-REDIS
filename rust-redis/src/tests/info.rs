@@ -41,7 +41,7 @@ async fn test_info_keyspace() {
         Resp::BulkString(Some(Bytes::from("key1"))),
         Resp::BulkString(Some(Bytes::from("value1"))),
     ]));
-    crate::cmd::string::set(match req1 { Resp::Array(Some(ref items)) => items, _ => unreachable!() }, &server_ctx.databases[0]);
+    crate::cmd::string::set(match req1 { Resp::Array(Some(ref items)) => items, _ => unreachable!() }, &server_ctx.databases[0].read().unwrap());
 
     let req2 = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("SET"))),
@@ -50,7 +50,7 @@ async fn test_info_keyspace() {
         Resp::BulkString(Some(Bytes::from("EX"))),
         Resp::BulkString(Some(Bytes::from("100"))),
     ]));
-    crate::cmd::string::set(match req2 { Resp::Array(Some(ref items)) => items, _ => unreachable!() }, &server_ctx.databases[0]);
+    crate::cmd::string::set(match req2 { Resp::Array(Some(ref items)) => items, _ => unreachable!() }, &server_ctx.databases[0].read().unwrap());
 
     // INFO KEYSPACE
     let req = Resp::Array(Some(vec![

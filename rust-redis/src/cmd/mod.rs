@@ -23,6 +23,7 @@ pub mod stream;
 pub mod string;
 pub mod zset;
 pub mod hll;
+pub mod bitmap;
 pub mod geo;
 pub mod info;
 pub mod acl;
@@ -31,6 +32,55 @@ pub mod client;
 pub mod monitor;
 pub mod slowlog;
 
+
+fn unwatch_all_keys(conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) {
+    for (db_idx, keys) in conn_ctx.watched_keys.iter() {
+        for key in keys {
+            if let Some(mut clients) = server_ctx.watched_clients.get_mut(&(*db_idx, key.clone())) {
+                clients.remove(&conn_ctx.id);
+            }
+        }
+    }
+    conn_ctx.watched_keys.clear();
+}
+
+fn touch_watched_key(key: &[u8], db_idx: usize, server_ctx: &ServerContext) {
+    if let Some(clients) = server_ctx.watched_clients.get(&(db_idx, key.to_vec())) {
+        for client_id in clients.iter() {
+            if let Some(dirty_flag) = server_ctx.client_watched_dirty.get(client_id) {
+                dirty_flag.store(true, Ordering::SeqCst);
+            }
+        }
+    }
+}
+
+pub fn watch(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) -> Resp {
+    if items.len() < 2 {
+        return Resp::Error("ERR wrong number of arguments for 'watch' command".to_string());
+    }
+
+    if conn_ctx.in_multi {
+        return Resp::Error("ERR WATCH inside MULTI is not allowed".to_string());
+    }
+
+    for item in items.iter().skip(1) {
+        if let Some(key) = as_bytes(item) {
+            let key_vec = key.to_vec();
+            let keys = conn_ctx.watched_keys.entry(conn_ctx.db_index).or_insert_with(HashSet::new);
+            if keys.insert(key_vec.clone()) {
+                server_ctx.watched_clients.entry((conn_ctx.db_index, key_vec)).or_insert_with(HashSet::new).insert(conn_ctx.id);
+            }
+        }
+    }
+
+    Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
+}
+
+pub fn unwatch(conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) -> Resp {
+    unwatch_all_keys(conn_ctx, server_ctx);
+    conn_ctx.watched_keys_dirty.store(false, Ordering::SeqCst);
+    Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
+}
 
 #[derive(Debug, Clone)]
 pub struct ConnectionContext {
@@ -45,6 +95,8 @@ pub struct ConnectionContext {
     pub psubscriptions: HashSet<String>,
     pub shutdown: Option<tokio::sync::watch::Receiver<bool>>,
     pub is_lua: bool,
+    pub watched_keys: HashMap<usize, HashSet<Vec<u8>>>,
+    pub watched_keys_dirty: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ConnectionContext {
@@ -61,6 +113,8 @@ impl ConnectionContext {
             psubscriptions: HashSet::new(),
             shutdown,
             is_lua: false,
+            watched_keys: HashMap::new(),
+            watched_keys_dirty: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 }
@@ -82,7 +136,7 @@ pub struct ClientInfo {
 
 #[derive(Clone)]
 pub struct ServerContext {
-    pub databases: Arc<Vec<Db>>,
+    pub databases: Arc<Vec<RwLock<Db>>>,
     pub acl: Arc<RwLock<Acl>>,
     pub aof: Option<Arc<Mutex<Aof>>>,
     pub config: Arc<Config>,
@@ -103,6 +157,8 @@ pub struct ServerContext {
     pub slowlog_threshold_us: Arc<std::sync::atomic::AtomicI64>,
     pub mem_peak_rss: Arc<std::sync::atomic::AtomicU64>,
     pub maxmemory: Arc<std::sync::atomic::AtomicU64>,
+    pub watched_clients: Arc<DashMap<(usize, Vec<u8>), HashSet<u64>>>,
+    pub client_watched_dirty: Arc<DashMap<u64, Arc<std::sync::atomic::AtomicBool>>>,
 }
 
 #[derive(Clone)]
@@ -224,6 +280,8 @@ enum Command {
     GeoPos,
     GeoRadius,
     GeoRadiusByMember,
+    GeoSearch,
+    GeoSearchStore,
     Expire,
     PExpire,
     ExpireAt,
@@ -234,6 +292,8 @@ enum Command {
     Type,
     Rename,
     RenameNx,
+    Move,
+    SwapDb,
     Persist,
     FlushDb,
     FlushAll,
@@ -267,6 +327,17 @@ enum Command {
     Xreadgroup,
     Xack,
     Xinfo,
+    Xpending,
+    Xclaim,
+    Xautoclaim,
+    SetBit,
+    GetBit,
+    BitCount,
+    BitOp,
+    BitPos,
+    BitField,
+    Watch,
+    Unwatch,
     Subscribe,
     Unsubscribe,
     Publish,
@@ -287,13 +358,20 @@ fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
         Command::Llen | Command::Lrange | Command::Linsert | Command::Lrem | Command::Lpos | Command::Ltrim | Command::Hset | Command::HsetNx | Command::HincrBy | Command::HincrByFloat | Command::Hget | Command::Hgetall | Command::Hmset | Command::Hdel | Command::Hlen | Command::Hkeys | Command::Hvals | Command::HstrLen | Command::HRandField | Command::HScan | Command::Sadd | Command::Srem | Command::Sismember |
         Command::Smembers | Command::Scard | Command::SPop | Command::SRandMember | Command::SScan | Command::Zadd | Command::ZIncrBy | Command::Zrem | Command::Zscore | Command::Zcard |
         Command::Zrank | Command::ZRevRank | Command::Zrange | Command::ZRevRange | Command::Zrangebyscore | Command::Zrangebylex | Command::Zcount | Command::Zlexcount | Command::Zpopmin | Command::Bzpopmin | Command::Zpopmax | Command::Bzpopmax | Command::ZScan | Command::ZRandMember | Command::Pfadd | Command::Pfcount | Command::GeoAdd | Command::GeoDist |
-        Command::GeoHash | Command::GeoPos | Command::GeoRadius | Command::GeoRadiusByMember | Command::Expire | Command::PExpire | Command::ExpireAt | Command::PExpireAt |
-        Command::Ttl | Command::PTtl | Command::Type | Command::Persist | Command::Xadd | Command::Xlen | Command::Xrange | Command::Xrevrange | Command::Xdel | Command::Xtrim | Command::Xinfo => {
+        Command::GeoHash | Command::GeoPos | Command::GeoRadius | Command::GeoRadiusByMember | Command::GeoSearch | Command::GeoSearchStore | Command::Expire | Command::PExpire | Command::ExpireAt | Command::PExpireAt |
+        Command::Ttl | Command::PTtl | Command::Type | Command::Persist | Command::Move | Command::Xadd | Command::Xlen | Command::Xrange | Command::Xrevrange | Command::Xdel | Command::Xtrim | Command::Xinfo | Command::Xpending | Command::Xclaim | Command::Xautoclaim | Command::SetBit | Command::GetBit | Command::BitCount | Command::BitPos | Command::BitField => {
              if items.len() > 1 {
                  if let Some(key) = as_bytes(&items[1]) {
                      keys.push(key.to_vec());
                  }
              }
+        }
+        Command::BitOp => {
+            for item in items.iter().skip(2) {
+                if let Some(key) = as_bytes(item) {
+                    keys.push(key.to_vec());
+                }
+            }
         }
         Command::Rename | Command::RenameNx | Command::SMove => {
             if items.len() > 2 {
@@ -319,7 +397,7 @@ fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
                  }
              }
         }
-        Command::Mget | Command::Del | Command::Pfmerge | Command::SInter | Command::SInterStore | Command::SUnion | Command::SDiff | Command::SDiffStore => {
+        Command::Mget | Command::Del | Command::Pfmerge | Command::SInter | Command::SInterStore | Command::SUnion | Command::SDiff | Command::SDiffStore | Command::Watch => {
              for i in 1..items.len() {
                  if let Some(key) = as_bytes(&items[i]) {
                      keys.push(key.to_vec());
@@ -554,6 +632,21 @@ pub async fn process_frame(
                     let start = std::time::Instant::now();
                     let (res, log) = dispatch_command(cmd_name, &items, conn_ctx, server_ctx).await;
                     let elapsed_us = start.elapsed().as_micros() as i64;
+
+                    // Check if this was a write command and invalidate watched keys
+                    // Only trigger if the command was NOT queued
+                    let is_queued = matches!(res, Resp::SimpleString(ref s) if s.as_ref() == b"QUEUED");
+                    if !is_queued {
+                        if let Ok(s) = std::str::from_utf8(cmd_raw) {
+                            if command::is_write_command(s) {
+                                let keys = get_command_keys(cmd_name, &items);
+                                for key in keys {
+                                    touch_watched_key(&key, conn_ctx.db_index, server_ctx);
+                                }
+                            }
+                        }
+                    }
+
                     if cmd_name != Command::Slowlog && elapsed_us >= server_ctx.slowlog_threshold_us.load(Ordering::Relaxed) {
                         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
                         let timestamp = now.as_secs() as i64;
@@ -787,7 +880,11 @@ async fn dispatch_command(
         }
     }
 
-    let db = &server_ctx.databases[conn_ctx.db_index];
+    let db_idx = conn_ctx.db_index;
+    let db = {
+        let db_lock = server_ctx.databases[db_idx].read().unwrap();
+        db_lock.clone()
+    };
     match cmd {
         Command::Multi => {
             if items.len() != 1 {
@@ -812,6 +909,16 @@ async fn dispatch_command(
 
             conn_ctx.in_multi = false;
             let queued = std::mem::take(&mut conn_ctx.multi_queue);
+
+            if conn_ctx.watched_keys_dirty.load(Ordering::SeqCst) {
+                unwatch_all_keys(conn_ctx, server_ctx);
+                conn_ctx.watched_keys_dirty.store(false, Ordering::SeqCst);
+                return (Resp::Array(None), None);
+            }
+
+            unwatch_all_keys(conn_ctx, server_ctx);
+            conn_ctx.watched_keys_dirty.store(false, Ordering::SeqCst);
+
             let mut results = Vec::with_capacity(queued.len());
 
             for q in queued {
@@ -833,6 +940,17 @@ async fn dispatch_command(
                     continue;
                 }
                 let (res, _) = Box::pin(dispatch_command(inner_cmd, &q, conn_ctx, server_ctx)).await;
+
+                // Trigger watched keys invalidation
+                if let Ok(s) = std::str::from_utf8(cmd_raw) {
+                    if command::is_write_command(s) {
+                        let keys = get_command_keys(inner_cmd, &q);
+                        for key in keys {
+                            touch_watched_key(&key, conn_ctx.db_index, server_ctx);
+                        }
+                    }
+                }
+
                 results.push(res);
             }
 
@@ -847,6 +965,8 @@ async fn dispatch_command(
             }
             conn_ctx.in_multi = false;
             conn_ctx.multi_queue.clear();
+            unwatch_all_keys(conn_ctx, server_ctx);
+            conn_ctx.watched_keys_dirty.store(false, Ordering::SeqCst);
             (Resp::SimpleString(bytes::Bytes::from_static(b"OK")), None)
         }
         Command::Auth => (acl::auth(items, conn_ctx, server_ctx), None),
@@ -864,125 +984,129 @@ async fn dispatch_command(
                 (Resp::Error("ERR wrong number of arguments for 'PING'".to_string()), None)
             }
         }
-        Command::Set => (string::set(items, db), None),
-        Command::SetNx => (string::setnx(items, db), None),
-        Command::SetEx => (string::setex(items, db), None),
-        Command::PSetEx => (string::psetex(items, db), None),
-        Command::GetSet => (string::getset(items, db), None),
-        Command::GetDel => (string::getdel(items, db), None),
-        Command::GetEx => (string::getex(items, db), None),
-        Command::GetRange => (string::getrange(items, db), None),
-        Command::Mset => (string::mset(items, db), None),
-        Command::MsetNx => (string::msetnx(items, db), None),
-        Command::SetRange => (string::setrange(items, db), None),
-        Command::Del => (key::del(items, db), None),
-        Command::Get => (string::get(items, db), None),
-        Command::Mget => (string::mget(items, db), None),
-        Command::Incr => (string::incr(items, db), None),
-        Command::Decr => (string::decr(items, db), None),
-        Command::IncrBy => (string::incrby(items, db), None),
-        Command::IncrByFloat => (string::incrbyfloat(items, db), None),
-        Command::DecrBy => (string::decrby(items, db), None),
-        Command::Append => (string::append(items, db), None),
-        Command::StrLen => (string::strlen(items, db), None),
-        Command::StrAlgo => (string::stralgo(items, db), None),
+        Command::Set => (string::set(items, &db), None),
+        Command::SetNx => (string::setnx(items, &db), None),
+        Command::SetEx => (string::setex(items, &db), None),
+        Command::PSetEx => (string::psetex(items, &db), None),
+        Command::GetSet => (string::getset(items, &db), None),
+        Command::GetDel => (string::getdel(items, &db), None),
+        Command::GetEx => (string::getex(items, &db), None),
+        Command::GetRange => (string::getrange(items, &db), None),
+        Command::Mset => (string::mset(items, &db), None),
+        Command::MsetNx => (string::msetnx(items, &db), None),
+        Command::SetRange => (string::setrange(items, &db), None),
+        Command::Del => (key::del(items, &db), None),
+        Command::Get => (string::get(items, &db), None),
+        Command::Mget => (string::mget(items, &db), None),
+        Command::Incr => (string::incr(items, &db), None),
+        Command::Decr => (string::decr(items, &db), None),
+        Command::IncrBy => (string::incrby(items, &db), None),
+        Command::IncrByFloat => (string::incrbyfloat(items, &db), None),
+        Command::DecrBy => (string::decrby(items, &db), None),
+        Command::Append => (string::append(items, &db), None),
+        Command::StrLen => (string::strlen(items, &db), None),
+        Command::StrAlgo => (string::stralgo(items, &db), None),
         Command::Lpush => (list::lpush(items, conn_ctx, server_ctx), None),
-        Command::Lpushx => (list::lpushx(items, db), None),
+        Command::Lpushx => (list::lpushx(items, &db), None),
         Command::Rpush => (list::rpush(items, conn_ctx, server_ctx), None),
-        Command::Rpushx => (list::rpushx(items, db), None),
-        Command::Lpop => (list::lpop(items, db), None),
-        Command::Rpop => (list::rpop(items, db), None),
+        Command::Rpushx => (list::rpushx(items, &db), None),
+        Command::Lpop => (list::lpop(items, &db), None),
+        Command::Rpop => (list::rpop(items, &db), None),
         Command::Blpop => (list::blpop(items, conn_ctx, server_ctx).await, None),
         Command::Brpop => (list::brpop(items, conn_ctx, server_ctx).await, None),
         Command::Blmove => (list::blmove(items, conn_ctx, server_ctx).await, None),
-        Command::Lmove => (list::lmove(items, db), None),
-        Command::Linsert => (list::linsert(items, db), None),
-        Command::Lrem => (list::lrem(items, db), None),
-        Command::Lpos => (list::lpos(items, db), None),
-        Command::Ltrim => (list::ltrim(items, db), None),
-        Command::Lindex => (list::lindex(items, db), None),
-        Command::Llen => (list::llen(items, db), None),
-        Command::Lrange => (list::lrange(items, db), None),
-        Command::Hset => (hash::hset(items, db), None),
-        Command::HsetNx => (hash::hsetnx(items, db), None),
-        Command::HincrBy => (hash::hincrby(items, db), None),
-        Command::HincrByFloat => (hash::hincrbyfloat(items, db), None),
-        Command::Hget => (hash::hget(items, db), None),
-        Command::Hgetall => (hash::hgetall(items, db), None),
-        Command::Hmset => (hash::hmset(items, db), None),
-        Command::Hmget => (hash::hmget(items, db), None),
-        Command::Hdel => (hash::hdel(items, db), None),
-        Command::Hlen => (hash::hlen(items, db), None),
-        Command::Hkeys => (hash::hkeys(items, db), None),
-        Command::Hvals => (hash::hvals(items, db), None),
-        Command::HstrLen => (hash::hstrlen(items, db), None),
-        Command::HRandField => (hash::hrandfield(items, db), None),
-        Command::HScan => (hash::hscan(items, db), None),
-        Command::Sadd => (set::sadd(items, db), None),
-        Command::Srem => (set::srem(items, db), None),
-        Command::Sismember => (set::sismember(items, db), None),
-        Command::Smembers => (set::smembers(items, db), None),
-        Command::Scard => (set::scard(items, db), None),
-        Command::SPop => (set::spop(items, db), None),
-        Command::SRandMember => (set::srandmember(items, db), None),
-        Command::SScan => (set::sscan(items, db), None),
-        Command::SMove => (set::smove(items, db), None),
-        Command::SInter => (set::sinter(items, db), None),
-        Command::SInterStore => (set::sinterstore(items, db), None),
-        Command::SUnion => (set::sunion(items, db), None),
-        Command::SUnionStore => (set::sunionstore(items, db), None),
-        Command::SDiff => (set::sdiff(items, db), None),
-        Command::SDiffStore => (set::sdiffstore(items, db), None),
+        Command::Lmove => (list::lmove(items, &db), None),
+        Command::Linsert => (list::linsert(items, &db), None),
+        Command::Lrem => (list::lrem(items, &db), None),
+        Command::Lpos => (list::lpos(items, &db), None),
+        Command::Ltrim => (list::ltrim(items, &db), None),
+        Command::Lindex => (list::lindex(items, &db), None),
+        Command::Llen => (list::llen(items, &db), None),
+        Command::Lrange => (list::lrange(items, &db), None),
+        Command::Hset => (hash::hset(items, &db), None),
+        Command::HsetNx => (hash::hsetnx(items, &db), None),
+        Command::HincrBy => (hash::hincrby(items, &db), None),
+        Command::HincrByFloat => (hash::hincrbyfloat(items, &db), None),
+        Command::Hget => (hash::hget(items, &db), None),
+        Command::Hgetall => (hash::hgetall(items, &db), None),
+        Command::Hmset => (hash::hmset(items, &db), None),
+        Command::Hmget => (hash::hmget(items, &db), None),
+        Command::Hdel => (hash::hdel(items, &db), None),
+        Command::Hlen => (hash::hlen(items, &db), None),
+        Command::Hkeys => (hash::hkeys(items, &db), None),
+        Command::Hvals => (hash::hvals(items, &db), None),
+        Command::HstrLen => (hash::hstrlen(items, &db), None),
+        Command::HRandField => (hash::hrandfield(items, &db), None),
+        Command::HScan => (hash::hscan(items, &db), None),
+        Command::Sadd => (set::sadd(items, &db), None),
+        Command::Srem => (set::srem(items, &db), None),
+        Command::Sismember => (set::sismember(items, &db), None),
+        Command::Smembers => (set::smembers(items, &db), None),
+        Command::Scard => (set::scard(items, &db), None),
+        Command::SPop => (set::spop(items, &db), None),
+        Command::SRandMember => (set::srandmember(items, &db), None),
+        Command::SScan => (set::sscan(items, &db), None),
+        Command::SMove => (set::smove(items, &db), None),
+        Command::SInter => (set::sinter(items, &db), None),
+        Command::SInterStore => (set::sinterstore(items, &db), None),
+        Command::SUnion => (set::sunion(items, &db), None),
+        Command::SUnionStore => (set::sunionstore(items, &db), None),
+        Command::SDiff => (set::sdiff(items, &db), None),
+        Command::SDiffStore => (set::sdiffstore(items, &db), None),
         Command::Zadd => (zset::zadd(items, conn_ctx, server_ctx), None),
-        Command::ZIncrBy => (zset::zincrby(items, db), None),
-        Command::Zrem => (zset::zrem(items, db), None),
-        Command::Zscore => (zset::zscore(items, db), None),
-        Command::Zcard => (zset::zcard(items, db), None),
-        Command::Zrank => (zset::zrank(items, db), None),
-        Command::ZRevRank => (zset::zrevrank(items, db), None),
-        Command::Zrange => (zset::zrange(items, db), None),
-        Command::ZRevRange => (zset::zrevrange(items, db), None),
-        Command::Zrangebyscore => (zset::zrangebyscore(items, db), None),
-        Command::Zrangebylex => (zset::zrangebylex(items, db), None),
-        Command::Zcount => (zset::zcount(items, db), None),
-        Command::Zlexcount => (zset::zlexcount(items, db), None),
-        Command::Zpopmin => (zset::zpopmin(items, db), None),
+        Command::ZIncrBy => (zset::zincrby(items, &db), None),
+        Command::Zrem => (zset::zrem(items, &db), None),
+        Command::Zscore => (zset::zscore(items, &db), None),
+        Command::Zcard => (zset::zcard(items, &db), None),
+        Command::Zrank => (zset::zrank(items, &db), None),
+        Command::ZRevRank => (zset::zrevrank(items, &db), None),
+        Command::Zrange => (zset::zrange(items, &db), None),
+        Command::ZRevRange => (zset::zrevrange(items, &db), None),
+        Command::Zrangebyscore => (zset::zrangebyscore(items, &db), None),
+        Command::Zrangebylex => (zset::zrangebylex(items, &db), None),
+        Command::Zcount => (zset::zcount(items, &db), None),
+        Command::Zlexcount => (zset::zlexcount(items, &db), None),
+        Command::Zpopmin => (zset::zpopmin(items, &db), None),
         Command::Bzpopmin => (zset::bzpopmin(items, conn_ctx, server_ctx).await, None),
-        Command::Zpopmax => (zset::zpopmax(items, db), None),
+        Command::Zpopmax => (zset::zpopmax(items, &db), None),
         Command::Bzpopmax => (zset::bzpopmax(items, conn_ctx, server_ctx).await, None),
-        Command::ZScan => (zset::zscan(items, db), None),
-        Command::ZRandMember => (zset::zrandmember(items, db), None),
-        Command::Zunion => (zset::zunion(items, db), None),
-        Command::Zunionstore => (zset::zunionstore(items, db), None),
-        Command::Zinter => (zset::zinter(items, db), None),
-        Command::Zinterstore => (zset::zinterstore(items, db), None),
-        Command::Zdiff => (zset::zdiff(items, db), None),
-        Command::Zdiffstore => (zset::zdiffstore(items, db), None),
-        Command::Pfadd => (hll::pfadd(items, db), None),
-        Command::Pfcount => (hll::pfcount(items, db), None),
-        Command::Pfmerge => (hll::pfmerge(items, db), None),
-        Command::GeoAdd => (geo::geoadd(items, db), None),
-        Command::GeoDist => (geo::geodist(items, db), None),
-        Command::GeoHash => (geo::geohash(items, db), None),
-        Command::GeoPos => (geo::geopos(items, db), None),
-        Command::GeoRadius => (geo::georadius(items, db), None),
-        Command::GeoRadiusByMember => (geo::georadiusbymember(items, db), None),
-        Command::Expire => (key::expire(items, db), None),
-        Command::PExpire => (key::pexpire(items, db), None),
-        Command::ExpireAt => (key::expireat(items, db), None),
-        Command::PExpireAt => (key::pexpireat(items, db), None),
-        Command::Ttl => (key::ttl(items, db), None),
-        Command::PTtl => (key::pttl(items, db), None),
-        Command::Exists => (key::exists(items, db), None),
-        Command::Type => (key::type_(items, db), None),
-        Command::Rename => (key::rename(items, db), None),
-        Command::RenameNx => (key::renamenx(items, db), None),
-        Command::Persist => (key::persist(items, db), None),
-        Command::FlushDb => (key::flushdb(items, db), None),
+        Command::ZScan => (zset::zscan(items, &db), None),
+        Command::ZRandMember => (zset::zrandmember(items, &db), None),
+        Command::Zunion => (zset::zunion(items, &db), None),
+        Command::Zunionstore => (zset::zunionstore(items, &db), None),
+        Command::Zinter => (zset::zinter(items, &db), None),
+        Command::Zinterstore => (zset::zinterstore(items, &db), None),
+        Command::Zdiff => (zset::zdiff(items, &db), None),
+        Command::Zdiffstore => (zset::zdiffstore(items, &db), None),
+        Command::Pfadd => (hll::pfadd(items, &db), None),
+        Command::Pfcount => (hll::pfcount(items, &db), None),
+        Command::Pfmerge => (hll::pfmerge(items, &db), None),
+        Command::GeoAdd => (geo::geoadd(items, &db), None),
+        Command::GeoDist => (geo::geodist(items, &db), None),
+        Command::GeoHash => (geo::geohash(items, &db), None),
+        Command::GeoPos => (geo::geopos(items, &db), None),
+        Command::GeoRadius => (geo::georadius(items, &db), None),
+        Command::GeoRadiusByMember => (geo::georadiusbymember(items, &db), None),
+        Command::GeoSearch => (geo::geosearch(items, &db), None),
+        Command::GeoSearchStore => (geo::geosearchstore(items, &db), None),
+        Command::Expire => (key::expire(items, &db), None),
+        Command::PExpire => (key::pexpire(items, &db), None),
+        Command::ExpireAt => (key::expireat(items, &db), None),
+        Command::PExpireAt => (key::pexpireat(items, &db), None),
+        Command::Ttl => (key::ttl(items, &db), None),
+        Command::PTtl => (key::pttl(items, &db), None),
+        Command::Exists => (key::exists(items, &db), None),
+        Command::Type => (key::type_(items, &db), None),
+        Command::Rename => (key::rename(items, &db), None),
+        Command::RenameNx => (key::renamenx(items, &db), None),
+        Command::Persist => (key::persist(items, &db), None),
+        Command::Move => (key::move_(items, conn_ctx, server_ctx), None),
+        Command::SwapDb => (key::swapdb(items, server_ctx), None),
+        Command::FlushDb => (key::flushdb(items, &db), None),
         Command::FlushAll => (key::flushall(items, &server_ctx.databases), None),
-        Command::Dbsize => (key::dbsize(items, db), None),
-        Command::Keys => (key::keys(items, db), None),
-        Command::Scan => (key::scan(items, db), None),
+        Command::Dbsize => (key::dbsize(items, &db), None),
+        Command::Keys => (key::keys(items, &db), None),
+        Command::Scan => (key::scan(items, &db), None),
         Command::Save => (save::save(items, &server_ctx.databases, &server_ctx.config), None),
         Command::Bgsave => (save::bgsave(items, &server_ctx.databases, &server_ctx.config), None),
         Command::Shutdown => {
@@ -1017,17 +1141,26 @@ async fn dispatch_command(
                 }
             }
         }
-        Command::Xadd => stream::xadd(items, db),
-        Command::Xlen => (stream::xlen(items, db), None),
-        Command::Xrange => (stream::xrange(items, db), None),
-        Command::Xrevrange => (stream::xrevrange(items, db), None),
-        Command::Xdel => stream::xdel(items, db),
-        Command::Xtrim => stream::xtrim(items, db),
+        Command::Xadd => stream::xadd(items, &db),
+        Command::Xlen => (stream::xlen(items, &db), None),
+        Command::Xrange => (stream::xrange(items, &db), None),
+        Command::Xrevrange => (stream::xrevrange(items, &db), None),
+        Command::Xdel => stream::xdel(items, &db),
+        Command::Xtrim => stream::xtrim(items, &db),
         Command::Xread => (stream::xread_cmd(items, conn_ctx, server_ctx).await, None),
-        Command::Xgroup => stream::xgroup(items, db),
+        Command::Xgroup => stream::xgroup(items, &db),
         Command::Xreadgroup => stream::xreadgroup_cmd(items, conn_ctx, server_ctx).await,
-        Command::Xack => stream::xack(items, db),
-        Command::Xinfo => (stream::xinfo(items, db), None),
+        Command::Xack => stream::xack(items, &db),
+        Command::Xinfo => (stream::xinfo(items, &db), None),
+        Command::Xpending => (stream::xpending(items, &db), None),
+        Command::Xclaim => stream::xclaim(items, &db),
+        Command::Xautoclaim => stream::xautoclaim(items, &db),
+        Command::SetBit => (bitmap::setbit(items, &db), None),
+        Command::GetBit => (bitmap::getbit(items, &db), None),
+        Command::BitCount => (bitmap::bitcount(items, &db), None),
+        Command::BitOp => bitmap::bitop(items, &db),
+        Command::BitPos => (bitmap::bitpos(items, &db), None),
+        Command::BitField => bitmap::bitfield(items, &db),
         Command::Publish => (pubsub::publish(items.to_vec(), conn_ctx, server_ctx).await, None),
         Command::Subscribe => (pubsub::subscribe(items.to_vec(), conn_ctx, server_ctx).await, None),
         Command::Unsubscribe => (pubsub::unsubscribe(items.to_vec(), conn_ctx, server_ctx).await, None),
@@ -1037,6 +1170,8 @@ async fn dispatch_command(
         Command::Client => client::client(items, conn_ctx, server_ctx),
         Command::Monitor => monitor::monitor(conn_ctx, server_ctx),
         Command::Slowlog => slowlog::slowlog(items, server_ctx).await,
+        Command::Watch => (watch(items, conn_ctx, server_ctx), None),
+        Command::Unwatch => (unwatch(conn_ctx, server_ctx), None),
         Command::BgRewriteAof => {
             if let Some(aof) = &server_ctx.aof {
                 let aof = aof.clone();
@@ -1164,6 +1299,8 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("GEOPOS".to_string(), Command::GeoPos);
         m.insert("GEORADIUS".to_string(), Command::GeoRadius);
         m.insert("GEORADIUSBYMEMBER".to_string(), Command::GeoRadiusByMember);
+        m.insert("GEOSEARCH".to_string(), Command::GeoSearch);
+        m.insert("GEOSEARCHSTORE".to_string(), Command::GeoSearchStore);
         m.insert("EXPIRE".to_string(), Command::Expire);
         m.insert("PEXPIRE".to_string(), Command::PExpire);
         m.insert("EXPIREAT".to_string(), Command::ExpireAt);
@@ -1174,6 +1311,8 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("TYPE".to_string(), Command::Type);
         m.insert("RENAME".to_string(), Command::Rename);
         m.insert("RENAMENX".to_string(), Command::RenameNx);
+        m.insert("MOVE".to_string(), Command::Move);
+        m.insert("SWAPDB".to_string(), Command::SwapDb);
         m.insert("PERSIST".to_string(), Command::Persist);
         m.insert("FLUSHDB".to_string(), Command::FlushDb);
         m.insert("FLUSHALL".to_string(), Command::FlushAll);
@@ -1203,6 +1342,17 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("XREADGROUP".to_string(), Command::Xreadgroup);
         m.insert("XACK".to_string(), Command::Xack);
         m.insert("XINFO".to_string(), Command::Xinfo);
+        m.insert("XPENDING".to_string(), Command::Xpending);
+        m.insert("XCLAIM".to_string(), Command::Xclaim);
+        m.insert("XAUTOCLAIM".to_string(), Command::Xautoclaim);
+        m.insert("SETBIT".to_string(), Command::SetBit);
+        m.insert("GETBIT".to_string(), Command::GetBit);
+        m.insert("BITCOUNT".to_string(), Command::BitCount);
+        m.insert("BITOP".to_string(), Command::BitOp);
+        m.insert("BITPOS".to_string(), Command::BitPos);
+        m.insert("BITFIELD".to_string(), Command::BitField);
+        m.insert("WATCH".to_string(), Command::Watch);
+        m.insert("UNWATCH".to_string(), Command::Unwatch);
         m.insert("BGREWRITEAOF".to_string(), Command::BgRewriteAof);
         m.insert("MULTI".to_string(), Command::Multi);
         m.insert("EXEC".to_string(), Command::Exec);

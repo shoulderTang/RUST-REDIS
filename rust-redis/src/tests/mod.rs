@@ -53,3 +53,8 @@ mod test_zlexcount;
 mod test_zrangeby;
 mod test_xtrim;
 mod test_xinfo;
+mod test_xpending;
+mod test_xclaim;
+mod test_bit;
+mod test_watch;
+mod test_move_swapdb;

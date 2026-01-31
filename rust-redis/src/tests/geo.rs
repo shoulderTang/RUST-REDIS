@@ -287,3 +287,119 @@ async fn test_georadiusbymember() {
         _ => panic!("Expected Array, got {:?}", res),
     }
 }
+
+#[tokio::test]
+async fn test_geosearch() {
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
+    let server_ctx = crate::tests::helper::create_server_context();
+
+    // GEOADD Sicily 13.361389 38.115556 "Palermo" 15.087269 37.502669 "Catania"
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("GEOADD"))),
+        Resp::BulkString(Some(Bytes::from("Sicily"))),
+        Resp::BulkString(Some(Bytes::from("13.361389"))),
+        Resp::BulkString(Some(Bytes::from("38.115556"))),
+        Resp::BulkString(Some(Bytes::from("Palermo"))),
+        Resp::BulkString(Some(Bytes::from("15.087269"))),
+        Resp::BulkString(Some(Bytes::from("37.502669"))),
+        Resp::BulkString(Some(Bytes::from("Catania"))),
+    ]));
+    process_frame(req, &mut conn_ctx, &server_ctx).await;
+
+    // GEOSEARCH Sicily FROMLONLAT 15 37 BYRADIUS 200 km ASC WITHDIST
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("GEOSEARCH"))),
+        Resp::BulkString(Some(Bytes::from("Sicily"))),
+        Resp::BulkString(Some(Bytes::from("FROMLONLAT"))),
+        Resp::BulkString(Some(Bytes::from("15"))),
+        Resp::BulkString(Some(Bytes::from("37"))),
+        Resp::BulkString(Some(Bytes::from("BYRADIUS"))),
+        Resp::BulkString(Some(Bytes::from("200"))),
+        Resp::BulkString(Some(Bytes::from("km"))),
+        Resp::BulkString(Some(Bytes::from("ASC"))),
+        Resp::BulkString(Some(Bytes::from("WITHDIST"))),
+    ]));
+
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    match res {
+        Resp::Array(Some(arr)) => {
+            assert_eq!(arr.len(), 2);
+            if let Resp::Array(Some(item)) = &arr[0] {
+                assert_eq!(std::str::from_utf8(match &item[0] { Resp::BulkString(Some(b)) => b, _ => b"" }).unwrap(), "Catania");
+            }
+        },
+        _ => panic!("Expected Array, got {:?}", res),
+    }
+
+    // GEOSEARCH Sicily FROMMEMBER Palermo BYBOX 100 100 km
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("GEOSEARCH"))),
+        Resp::BulkString(Some(Bytes::from("Sicily"))),
+        Resp::BulkString(Some(Bytes::from("FROMMEMBER"))),
+        Resp::BulkString(Some(Bytes::from("Palermo"))),
+        Resp::BulkString(Some(Bytes::from("BYBOX"))),
+        Resp::BulkString(Some(Bytes::from("100"))),
+        Resp::BulkString(Some(Bytes::from("100"))),
+        Resp::BulkString(Some(Bytes::from("km"))),
+    ]));
+
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    match res {
+        Resp::Array(Some(arr)) => {
+            assert_eq!(arr.len(), 1);
+            assert_eq!(std::str::from_utf8(match &arr[0] { Resp::BulkString(Some(b)) => b, _ => b"" }).unwrap(), "Palermo");
+        },
+        _ => panic!("Expected Array, got {:?}", res),
+    }
+}
+
+#[tokio::test]
+async fn test_geosearchstore() {
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
+    let server_ctx = crate::tests::helper::create_server_context();
+
+    // GEOADD Sicily 13.361389 38.115556 "Palermo" 15.087269 37.502669 "Catania"
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("GEOADD"))),
+        Resp::BulkString(Some(Bytes::from("Sicily"))),
+        Resp::BulkString(Some(Bytes::from("13.361389"))),
+        Resp::BulkString(Some(Bytes::from("38.115556"))),
+        Resp::BulkString(Some(Bytes::from("Palermo"))),
+        Resp::BulkString(Some(Bytes::from("15.087269"))),
+        Resp::BulkString(Some(Bytes::from("37.502669"))),
+        Resp::BulkString(Some(Bytes::from("Catania"))),
+    ]));
+    process_frame(req, &mut conn_ctx, &server_ctx).await;
+
+    // GEOSEARCHSTORE out Sicily FROMLONLAT 15 37 BYRADIUS 200 km STOREDIST
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("GEOSEARCHSTORE"))),
+        Resp::BulkString(Some(Bytes::from("out"))),
+        Resp::BulkString(Some(Bytes::from("Sicily"))),
+        Resp::BulkString(Some(Bytes::from("FROMLONLAT"))),
+        Resp::BulkString(Some(Bytes::from("15"))),
+        Resp::BulkString(Some(Bytes::from("37"))),
+        Resp::BulkString(Some(Bytes::from("BYRADIUS"))),
+        Resp::BulkString(Some(Bytes::from("200"))),
+        Resp::BulkString(Some(Bytes::from("km"))),
+        Resp::BulkString(Some(Bytes::from("STOREDIST"))),
+    ]));
+
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    assert_eq!(res, Resp::Integer(2));
+
+    // ZSCORE out Catania (should be the distance in km)
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("ZSCORE"))),
+        Resp::BulkString(Some(Bytes::from("out"))),
+        Resp::BulkString(Some(Bytes::from("Catania"))),
+    ]));
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    match res {
+        Resp::BulkString(Some(b)) => {
+            let dist: f64 = std::str::from_utf8(&b).unwrap().parse().unwrap();
+            assert!(dist > 50.0 && dist < 60.0);
+        },
+        _ => panic!("Expected BulkString, got {:?}", res),
+    }
+}

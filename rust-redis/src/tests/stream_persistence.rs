@@ -8,7 +8,7 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::str::FromStr;
-    use std::sync::Arc;
+    use std::sync::{Arc, RwLock};
     use dashmap::DashMap;
 
     use crate::aof::{Aof, AppendFsync};
@@ -25,7 +25,7 @@ mod tests {
         let path = path_str.to_str().unwrap();
 
         // 1. Setup DB with Stream data
-        let db = Arc::new(vec![Db::default()]);
+        let db = Arc::new(vec![RwLock::new(Db::default())]);
         let key = Bytes::from("mystream_aof");
         
         let mut stream = Stream::new();
@@ -37,14 +37,14 @@ mod tests {
         let group = crate::stream::ConsumerGroup::new(group_name.clone(), StreamID::new(0, 0));
         stream.groups.insert(group_name.clone(), group);
 
-        db[0].insert(key.clone(), crate::db::Entry::new(Value::Stream(stream), None));
+        db[0].read().unwrap().insert(key.clone(), crate::db::Entry::new(Value::Stream(stream), None));
 
         // 2. Perform AOF Rewrite
         let mut aof = Aof::new(path, AppendFsync::No).await.unwrap();
         aof.rewrite(&db).await.unwrap();
 
         // 3. Load AOF into new DB
-        let new_db = Arc::new(vec![Db::default()]);
+        let new_db = Arc::new(vec![RwLock::new(Db::default())]);
         // let config = Config::default();
         // let script_manager = create_script_manager();
         
@@ -58,7 +58,11 @@ mod tests {
         //loader.load(path, &new_db, &config, &script_manager).await.unwrap();
 
         // 4. Verify
-        let entry = new_db[0].get(&key).unwrap();
+        let entry = {
+            let db_lock = new_db[0].read().unwrap();
+            let e = db_lock.get(&key).unwrap();
+            e.clone()
+        };
         match &entry.value {
              Value::Stream(s) => {
                  assert_eq!(s.len(), 1);
@@ -117,7 +121,8 @@ mod tests {
         
         // 4. XACK
         let stream_id_bob = {
-            let entry = db[0].get(&Bytes::from("mystream")).unwrap();
+            let db_lock = db[0].read().unwrap();
+            let entry = db_lock.get(&Bytes::from("mystream")).unwrap();
             match &entry.value {
                 Value::Stream(s) => s.last_id.to_string(),
                 _ => panic!("Expected stream"),
@@ -129,7 +134,8 @@ mod tests {
 
         // 5. XDEL (delete alice)
         let alice_id = {
-            let entry = db[0].get(&Bytes::from("mystream")).unwrap();
+            let db_lock = db[0].read().unwrap();
+            let entry = db_lock.get(&Bytes::from("mystream")).unwrap();
             let stream_ids: Vec<String> = match &entry.value {
                 Value::Stream(s) => s.range(&StreamID::new(0,0), &StreamID::new(u64::MAX, u64::MAX)).iter().map(|e| e.id.to_string()).collect(),
                 _ => panic!(""),
@@ -142,7 +148,7 @@ mod tests {
 
 
         // 6. Load AOF into new DB
-        let new_db = Arc::new(vec![Db::default()]);
+        let new_db = Arc::new(vec![RwLock::new(Db::default())]);
         // We need to close the file/ensure it is flushed? write_resp_to_file opens and closes it each time.
         
         let loader = Aof::new(path, AppendFsync::No).await.unwrap();
@@ -155,7 +161,10 @@ mod tests {
         //loader.load(path, &new_db, &config, &script_manager_loader).await.unwrap();
 
         // 7. Verify
-        let entry = new_db[0].get(&Bytes::from("mystream")).unwrap();
+        let entry = {
+            let db_lock = new_db[0].read().unwrap();
+            db_lock.get(&Bytes::from("mystream")).unwrap().clone()
+        };
         match &entry.value {
              Value::Stream(s) => {
                  // We added 2 items, deleted 1. Should have 1.
@@ -225,7 +234,7 @@ mod tests {
         let save_path = path.to_str().unwrap();
 
         // 1. Setup DB with Stream data
-        let db = Arc::new(vec![Db::default()]);
+        let db = Arc::new(vec![RwLock::new(Db::default())]);
         let key = Bytes::from("mystream");
         
         let mut stream = Stream::new();
@@ -268,7 +277,7 @@ mod tests {
              }
         }
 
-        db[0].insert(key.clone(), crate::db::Entry::new(Value::Stream(stream), None));
+        db[0].read().unwrap().insert(key.clone(), crate::db::Entry::new(Value::Stream(stream), None));
 
         // 2. Save RDB
         let mut encoder = RdbEncoder::new(save_path).unwrap();
@@ -277,12 +286,15 @@ mod tests {
 
         // 3. Load RDB
         let mut loader = RdbLoader::new(save_path).unwrap();
-        let loaded_db = Arc::new(vec![Db::default()]);
+        let loaded_db = Arc::new(vec![RwLock::new(Db::default())]);
         loader.load(&loaded_db).unwrap();
 
         // 4. Verify data
-        assert_eq!(loaded_db[0].len(), 1);
-        let entry = loaded_db[0].get(&key).unwrap();
+        let entry = {
+            let db_lock = loaded_db[0].read().unwrap();
+            assert_eq!(db_lock.len(), 1);
+            db_lock.get(&key).unwrap().clone()
+        };
         match &entry.value {
             Value::Stream(s) => {
                 assert_eq!(s.len(), 2);

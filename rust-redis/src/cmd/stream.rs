@@ -3,6 +3,7 @@ use crate::db::{Db, Value};
 use crate::resp::Resp;
 use crate::stream::{Stream, StreamID, ConsumerGroup, Consumer, PendingEntry};
 use bytes::Bytes;
+use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH, Duration, Instant};
 use tokio::time::sleep;
@@ -907,10 +908,13 @@ pub async fn xread_cmd(
         }
     }
 
-    let db = &server_ctx.databases[conn_ctx.db_index];
+    let db = {
+        let db_lock = server_ctx.databases[conn_ctx.db_index].read().unwrap();
+        db_lock.clone()
+    };
 
     match block_ms {
-        None => xread(args, db),
+        None => xread(args, &db),
         Some(ms) => {
             server_ctx.blocked_client_count.fetch_add(1, Ordering::Relaxed);
             let (_shutdown_tx, mut shutdown_rx) = if let Some(rx) = &conn_ctx.shutdown {
@@ -922,7 +926,7 @@ pub async fn xread_cmd(
 
             let result = if ms == 0 {
                 loop {
-                    let resp = xread(args, db);
+                    let resp = xread(args, &db);
                     match resp {
                         Resp::BulkString(None) => {
                             tokio::select! {
@@ -937,7 +941,7 @@ pub async fn xread_cmd(
             } else {
                 let deadline = Instant::now() + Duration::from_millis(ms);
                 loop {
-                    let resp = xread(args, db);
+                    let resp = xread(args, &db);
                     match resp {
                         Resp::BulkString(None) => {
                             let now = Instant::now();
@@ -973,21 +977,27 @@ pub async fn xreadgroup_cmd(
     let mut arg_idx = 1;
 
     if arg_idx >= args.len() {
-        let db = &server_ctx.databases[conn_ctx.db_index];
-        return xreadgroup(args, db);
+        let db = {
+        let db_lock = server_ctx.databases[conn_ctx.db_index].read().unwrap();
+        db_lock.clone()
+    };
+        return xreadgroup(args, &db);
     }
 
     let first = match as_bytes(&args[arg_idx]) {
         Some(b) => String::from_utf8_lossy(&b).to_string().to_uppercase(),
         None => {
-            let db = &server_ctx.databases[conn_ctx.db_index];
-            return xreadgroup(args, db);
+            let db = {
+        let db_lock = server_ctx.databases[conn_ctx.db_index].read().unwrap();
+        db_lock.clone()
+    };
+            return xreadgroup(args, &db);
         }
     };
 
     if first != "GROUP" {
-        let db = &server_ctx.databases[conn_ctx.db_index];
-        return xreadgroup(args, db);
+        let db = server_ctx.databases[conn_ctx.db_index].read().unwrap().clone();
+        return xreadgroup(args, &db);
     }
 
     arg_idx += 3;
@@ -1019,10 +1029,10 @@ pub async fn xreadgroup_cmd(
         }
     }
 
-    let db = &server_ctx.databases[conn_ctx.db_index];
+    let db = server_ctx.databases[conn_ctx.db_index].read().unwrap().clone();
 
     match block_ms {
-        None => xreadgroup(args, db),
+        None => xreadgroup(args, &db),
         Some(ms) => {
             server_ctx.blocked_client_count.fetch_add(1, Ordering::Relaxed);
             let (_shutdown_tx, mut shutdown_rx) = if let Some(rx) = &conn_ctx.shutdown {
@@ -1034,7 +1044,7 @@ pub async fn xreadgroup_cmd(
 
                 let result = if ms == 0 {
                     loop {
-                        let (resp, log) = xreadgroup(args, db);
+                        let (resp, log) = xreadgroup(args, &db);
                         match resp {
                             Resp::BulkString(None) => {
                                 tokio::select! {
@@ -1049,7 +1059,7 @@ pub async fn xreadgroup_cmd(
                 } else {
                     let deadline = Instant::now() + Duration::from_millis(ms);
                     loop {
-                        let (resp, log) = xreadgroup(args, db);
+                        let (resp, log) = xreadgroup(args, &db);
                         match resp {
                             Resp::BulkString(None) => {
                                 let now = Instant::now();
@@ -1343,4 +1353,523 @@ pub fn xinfo(args: &[Resp], db: &Db) -> Resp {
     } else {
         Resp::Error("ERR no such key".to_string())
     }
+}
+
+pub fn xpending(args: &[Resp], db: &Db) -> Resp {
+    if args.len() < 3 {
+        return Resp::Error("ERR wrong number of arguments for 'xpending' command".to_string());
+    }
+
+    let key = match as_bytes(&args[1]) {
+        Some(b) => b,
+        None => return Resp::Error("ERR invalid key".to_string()),
+    };
+
+    let group_name = match as_bytes(&args[2]) {
+        Some(b) => String::from_utf8_lossy(&b).to_string(),
+        None => return Resp::Error("ERR invalid group name".to_string()),
+    };
+
+    if let Some(entry) = db.get(&key) {
+        if let Value::Stream(stream) = &entry.value {
+            if let Some(group) = stream.groups.get(&group_name) {
+                if args.len() == 3 {
+                    // Summary form: XPENDING key group
+                    let mut res = Vec::new();
+                    res.push(Resp::Integer(group.pel.len() as i64));
+                    
+                    if group.pel.is_empty() {
+                        res.push(Resp::BulkString(None));
+                        res.push(Resp::BulkString(None));
+                        res.push(Resp::Array(Some(Vec::new())));
+                    } else {
+                        let mut min_id = StreamID::new(u64::MAX, u64::MAX);
+                        let mut max_id = StreamID::new(0, 0);
+                        let mut consumer_stats: HashMap<String, i64> = HashMap::new();
+
+                        for pe in group.pel.values() {
+                            if pe.id < min_id { min_id = pe.id; }
+                            if pe.id > max_id { max_id = pe.id; }
+                            *consumer_stats.entry(pe.owner.clone()).or_insert(0) += 1;
+                        }
+
+                        res.push(Resp::BulkString(Some(Bytes::from(min_id.to_string()))));
+                        res.push(Resp::BulkString(Some(Bytes::from(max_id.to_string()))));
+
+                        let mut consumers_arr = Vec::new();
+                        let mut sorted_consumers: Vec<_> = consumer_stats.into_iter().collect();
+                        sorted_consumers.sort_by(|a, b| a.0.cmp(&b.0));
+                        for (name, count) in sorted_consumers {
+                            let mut c_arr = Vec::new();
+                            c_arr.push(Resp::BulkString(Some(Bytes::from(name))));
+                            c_arr.push(Resp::BulkString(Some(Bytes::from(count.to_string()))));
+                            consumers_arr.push(Resp::Array(Some(c_arr)));
+                        }
+                        res.push(Resp::Array(Some(consumers_arr)));
+                    }
+                    return Resp::Array(Some(res));
+                } else {
+                    // Detailed form: XPENDING key group [IDLE min-idle-time] start end count [consumer]
+                    let mut arg_idx = 3;
+                    let mut min_idle = None;
+
+                    if let Some(arg) = as_bytes(&args[arg_idx]) {
+                        if String::from_utf8_lossy(&arg).to_uppercase() == "IDLE" {
+                            if args.len() < arg_idx + 5 { // [IDLE time] start end count
+                                return Resp::Error("ERR syntax error".to_string());
+                            }
+                            if let Some(idle_bytes) = as_bytes(&args[arg_idx + 1]) {
+                                if let Ok(idle) = String::from_utf8_lossy(&idle_bytes).parse::<u128>() {
+                                    min_idle = Some(idle);
+                                    arg_idx += 2;
+                                } else {
+                                    return Resp::Error("ERR invalid idle time".to_string());
+                                }
+                            }
+                        }
+                    }
+
+                    if args.len() < arg_idx + 3 {
+                        return Resp::Error("ERR syntax error".to_string());
+                    }
+
+                    let start_str = match as_bytes(&args[arg_idx]) {
+                        Some(b) => String::from_utf8_lossy(&b).to_string(),
+                        None => return Resp::Error("ERR invalid start ID".to_string()),
+                    };
+                    let start_id = if start_str == "-" { StreamID::new(0, 0) } else {
+                        match StreamID::from_str(&start_str) {
+                            Ok(id) => id,
+                            Err(_) => return Resp::Error("ERR invalid start ID".to_string()),
+                        }
+                    };
+
+                    let end_str = match as_bytes(&args[arg_idx + 1]) {
+                        Some(b) => String::from_utf8_lossy(&b).to_string(),
+                        None => return Resp::Error("ERR invalid end ID".to_string()),
+                    };
+                    let end_id = if end_str == "+" { StreamID::new(u64::MAX, u64::MAX) } else {
+                        match StreamID::from_str(&end_str) {
+                            Ok(id) => id,
+                            Err(_) => return Resp::Error("ERR invalid end ID".to_string()),
+                        }
+                    };
+
+                    let count = match as_bytes(&args[arg_idx + 2]) {
+                        Some(b) => match String::from_utf8_lossy(&b).parse::<usize>() {
+                            Ok(c) => c,
+                            Err(_) => return Resp::Error("ERR invalid count".to_string()),
+                        },
+                        None => return Resp::Error("ERR invalid count".to_string()),
+                    };
+
+                    let consumer_filter = if args.len() > arg_idx + 3 {
+                        match as_bytes(&args[arg_idx + 3]) {
+                            Some(b) => Some(String::from_utf8_lossy(&b).to_string()),
+                            None => None,
+                        }
+                    } else {
+                        None
+                    };
+
+                    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+                    let mut pel_entries: Vec<&PendingEntry> = group.pel.values()
+                        .filter(|pe| pe.id >= start_id && pe.id <= end_id)
+                        .filter(|pe| {
+                            if let Some(filter) = &consumer_filter {
+                                &pe.owner == filter
+                            } else {
+                                true
+                            }
+                        })
+                        .filter(|pe| {
+                            if let Some(idle) = min_idle {
+                                (now - pe.delivery_time) >= idle
+                            } else {
+                                true
+                            }
+                        })
+                        .collect();
+
+                    pel_entries.sort_by(|a, b| a.id.cmp(&b.id));
+
+                    let mut res_arr = Vec::new();
+                    for pe in pel_entries.iter().take(count) {
+                        let mut entry_arr = Vec::new();
+                        entry_arr.push(Resp::BulkString(Some(Bytes::from(pe.id.to_string()))));
+                        entry_arr.push(Resp::BulkString(Some(Bytes::from(pe.owner.clone()))));
+                        entry_arr.push(Resp::Integer((now - pe.delivery_time) as i64));
+                        entry_arr.push(Resp::Integer(pe.delivery_count as i64));
+                        res_arr.push(Resp::Array(Some(entry_arr)));
+                    }
+                    return Resp::Array(Some(res_arr));
+                }
+            } else {
+                return Resp::Error(format!("NOGROUP No such key '{}' or consumer group '{}' in key '{}'", String::from_utf8_lossy(&key), group_name, String::from_utf8_lossy(&key)));
+            }
+        } else {
+            return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
+        }
+    } else {
+        // Redis behavior for XPENDING on non-existent key is NOGROUP if group name is provided.
+        return Resp::Error(format!("NOGROUP No such key '{}' or consumer group '{}' in key '{}'", String::from_utf8_lossy(&key), group_name, String::from_utf8_lossy(&key)));
+    }
+}
+
+pub fn xclaim(args: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
+    if args.len() < 6 {
+        return (Resp::Error("ERR wrong number of arguments for 'xclaim' command".to_string()), None);
+    }
+
+    let key = match as_bytes(&args[1]) {
+        Some(b) => b,
+        None => return (Resp::Error("ERR invalid key".to_string()), None),
+    };
+
+    let group_name = match as_bytes(&args[2]) {
+        Some(b) => String::from_utf8_lossy(&b).to_string(),
+        None => return (Resp::Error("ERR invalid group name".to_string()), None),
+    };
+
+    let consumer_name = match as_bytes(&args[3]) {
+        Some(b) => String::from_utf8_lossy(&b).to_string(),
+        None => return (Resp::Error("ERR invalid consumer name".to_string()), None),
+    };
+
+    let min_idle_time = match as_bytes(&args[4]) {
+        Some(b) => match String::from_utf8_lossy(&b).parse::<u128>() {
+            Ok(t) => t,
+            Err(_) => return (Resp::Error("ERR invalid min-idle-time".to_string()), None),
+        },
+        None => return (Resp::Error("ERR invalid min-idle-time".to_string()), None),
+    };
+
+    let mut ids = Vec::new();
+    let mut arg_idx = 5;
+    while arg_idx < args.len() {
+        let arg_bytes = match as_bytes(&args[arg_idx]) {
+            Some(b) => b,
+            None => break,
+        };
+        let arg_str = String::from_utf8_lossy(&arg_bytes).to_string();
+        if let Ok(id) = StreamID::from_str(&arg_str) {
+            ids.push(id);
+            arg_idx += 1;
+        } else {
+            break;
+        }
+    }
+
+    let mut idle = None;
+    let mut time = None;
+    let mut retry_count = None;
+    let mut force = false;
+    let mut justid = false;
+
+    while arg_idx < args.len() {
+        let opt = match as_bytes(&args[arg_idx]) {
+            Some(b) => String::from_utf8_lossy(&b).to_string().to_uppercase(),
+            None => break,
+        };
+        match opt.as_str() {
+            "IDLE" => {
+                if arg_idx + 1 >= args.len() { return (Resp::Error("ERR syntax error".to_string()), None); }
+                idle = Some(match as_bytes(&args[arg_idx + 1]) {
+                    Some(b) => match String::from_utf8_lossy(&b).parse::<u128>() {
+                        Ok(t) => t,
+                        Err(_) => return (Resp::Error("ERR invalid idle time".to_string()), None),
+                    },
+                    None => return (Resp::Error("ERR invalid idle time".to_string()), None),
+                });
+                arg_idx += 2;
+            }
+            "TIME" => {
+                if arg_idx + 1 >= args.len() { return (Resp::Error("ERR syntax error".to_string()), None); }
+                time = Some(match as_bytes(&args[arg_idx + 1]) {
+                    Some(b) => match String::from_utf8_lossy(&b).parse::<u128>() {
+                        Ok(t) => t,
+                        Err(_) => return (Resp::Error("ERR invalid time".to_string()), None),
+                    },
+                    None => return (Resp::Error("ERR invalid time".to_string()), None),
+                });
+                arg_idx += 2;
+            }
+            "RETRYCOUNT" => {
+                if arg_idx + 1 >= args.len() { return (Resp::Error("ERR syntax error".to_string()), None); }
+                retry_count = Some(match as_bytes(&args[arg_idx + 1]) {
+                    Some(b) => match String::from_utf8_lossy(&b).parse::<u64>() {
+                        Ok(c) => c,
+                        Err(_) => return (Resp::Error("ERR invalid retry count".to_string()), None),
+                    },
+                    None => return (Resp::Error("ERR invalid retry count".to_string()), None),
+                });
+                arg_idx += 2;
+            }
+            "FORCE" => { force = true; arg_idx += 1; }
+            "JUSTID" => { justid = true; arg_idx += 1; }
+            "LASTID" => {
+                // LASTID is parsed but not strictly used in standard XCLAIM logic for claiming
+                if arg_idx + 1 >= args.len() { return (Resp::Error("ERR syntax error".to_string()), None); }
+                arg_idx += 2;
+            }
+            _ => return (Resp::Error("ERR syntax error".to_string()), None),
+        }
+    }
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+    let delivery_time = if let Some(i) = idle {
+        now.saturating_sub(i)
+    } else if let Some(t) = time {
+        t
+    } else {
+        now
+    };
+
+    let mut claimed_entries = Vec::new();
+    let mut needs_log = false;
+
+    if let Some(mut db_entry) = db.get_mut(&key) {
+        if let Value::Stream(stream) = &mut db_entry.value {
+            let Stream { rax, groups, .. } = stream;
+            if let Some(group) = groups.get_mut(&group_name) {
+                // Ensure consumer exists
+                if !group.consumers.contains_key(&consumer_name) {
+                    group.consumers.insert(consumer_name.clone(), Consumer::new(consumer_name.clone()));
+                }
+
+                for id in ids {
+                    let mut pe_opt = group.pel.get(&id).cloned();
+                    
+                    if pe_opt.is_none() && force {
+                        // FORCE creates PEL entry if it exists in stream
+                        if let Some(se) = rax.get(&id.to_be_bytes()) {
+                            pe_opt = Some(PendingEntry {
+                                id: se.id,
+                                delivery_time: 0, // Will be updated below
+                                delivery_count: 0, // Will be incremented below
+                                owner: String::new(), // Will be updated below
+                            });
+                        }
+                    }
+
+                    if let Some(mut pe) = pe_opt {
+                        let current_idle = now.saturating_sub(pe.delivery_time);
+                        if current_idle >= min_idle_time || force {
+                            needs_log = true;
+                            // Update old owner's pending list
+                            if !pe.owner.is_empty() {
+                                if let Some(old_consumer) = group.consumers.get_mut(&pe.owner) {
+                                    old_consumer.pending_ids.remove(&id);
+                                }
+                            }
+
+                            // Update entry
+                            pe.owner = consumer_name.clone();
+                            pe.delivery_time = delivery_time;
+                            if let Some(rc) = retry_count {
+                                pe.delivery_count = rc;
+                            } else {
+                                pe.delivery_count += 1;
+                            }
+
+                            // Update consumer and PEL
+                            group.pel.insert(id, pe.clone());
+                            let consumer = group.consumers.get_mut(&consumer_name).unwrap();
+                            consumer.pending_ids.insert(id);
+                            consumer.seen_time = now;
+
+                            // Add to results
+                            if justid {
+                                claimed_entries.push(Resp::BulkString(Some(Bytes::from(id.to_string()))));
+                            } else if let Some(se) = rax.get(&id.to_be_bytes()) {
+                                let mut entry_arr = Vec::new();
+                                entry_arr.push(Resp::BulkString(Some(Bytes::from(se.id.to_string()))));
+                                let mut fields_arr = Vec::new();
+                                for (f, v) in &se.fields {
+                                    fields_arr.push(Resp::BulkString(Some(f.clone())));
+                                    fields_arr.push(Resp::BulkString(Some(v.clone())));
+                                }
+                                entry_arr.push(Resp::Array(Some(fields_arr)));
+                                claimed_entries.push(Resp::Array(Some(entry_arr)));
+                            }
+                        }
+                    }
+                }
+            } else {
+                return (Resp::Error("NOGROUP No such consumer group".to_string()), None);
+            }
+        } else {
+            return (Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()), None);
+        }
+    } else {
+        return (Resp::Error("NOGROUP No such key".to_string()), None);
+    }
+
+    let res = Resp::Array(Some(claimed_entries));
+    let log = if needs_log {
+        let mut log_args = Vec::new();
+        for arg in args { log_args.push(arg.clone()); }
+        Some(Resp::Array(Some(log_args)))
+    } else {
+        None
+    };
+
+    (res, log)
+}
+
+pub fn xautoclaim(args: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
+    if args.len() < 6 {
+        return (Resp::Error("ERR wrong number of arguments for 'xautoclaim' command".to_string()), None);
+    }
+
+    let key = match as_bytes(&args[1]) {
+        Some(b) => b,
+        None => return (Resp::Error("ERR invalid key".to_string()), None),
+    };
+
+    let group_name = match as_bytes(&args[2]) {
+        Some(b) => String::from_utf8_lossy(&b).to_string(),
+        None => return (Resp::Error("ERR invalid group name".to_string()), None),
+    };
+
+    let consumer_name = match as_bytes(&args[3]) {
+        Some(b) => String::from_utf8_lossy(&b).to_string(),
+        None => return (Resp::Error("ERR invalid consumer name".to_string()), None),
+    };
+
+    let min_idle_time = match as_bytes(&args[4]) {
+        Some(b) => match String::from_utf8_lossy(&b).parse::<u128>() {
+            Ok(t) => t,
+            Err(_) => return (Resp::Error("ERR invalid min-idle-time".to_string()), None),
+        },
+        None => return (Resp::Error("ERR invalid min-idle-time".to_string()), None),
+    };
+
+    let start_str = match as_bytes(&args[5]) {
+        Some(b) => String::from_utf8_lossy(&b).to_string(),
+        None => return (Resp::Error("ERR invalid start ID".to_string()), None),
+    };
+    let start_id = match StreamID::from_str(&start_str) {
+        Ok(id) => id,
+        Err(_) => return (Resp::Error("ERR invalid start ID".to_string()), None),
+    };
+
+    let mut count = 100;
+    let mut justid = false;
+    let mut arg_idx = 6;
+    while arg_idx < args.len() {
+        let opt = match as_bytes(&args[arg_idx]) {
+            Some(b) => String::from_utf8_lossy(&b).to_string().to_uppercase(),
+            None => break,
+        };
+        if opt == "COUNT" {
+            if arg_idx + 1 >= args.len() { return (Resp::Error("ERR syntax error".to_string()), None); }
+            count = match as_bytes(&args[arg_idx + 1]) {
+                Some(b) => match String::from_utf8_lossy(&b).parse::<usize>() {
+                    Ok(c) => c,
+                    Err(_) => return (Resp::Error("ERR invalid count".to_string()), None),
+                },
+                None => return (Resp::Error("ERR invalid count".to_string()), None),
+            };
+            arg_idx += 2;
+        } else if opt == "JUSTID" {
+            justid = true;
+            arg_idx += 1;
+        } else {
+            return (Resp::Error("ERR syntax error".to_string()), None);
+        }
+    }
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+    let mut claimed_entries = Vec::new();
+    let mut next_start_id = StreamID::new(0, 0);
+    let mut needs_log = false;
+
+    if let Some(mut db_entry) = db.get_mut(&key) {
+        if let Value::Stream(stream) = &mut db_entry.value {
+            let Stream { rax, groups, .. } = stream;
+            if let Some(group) = groups.get_mut(&group_name) {
+                if !group.consumers.contains_key(&consumer_name) {
+                    group.consumers.insert(consumer_name.clone(), Consumer::new(consumer_name.clone()));
+                }
+
+                let mut pel_ids: Vec<StreamID> = group.pel.keys().cloned().collect();
+                pel_ids.sort();
+
+                let mut claimed_count = 0;
+                let mut found_next = false;
+
+                for id in pel_ids {
+                    if id < start_id { continue; }
+                    
+                    if claimed_count >= count {
+                        next_start_id = id;
+                        found_next = true;
+                        break;
+                    }
+
+                    let pe = group.pel.get_mut(&id).unwrap();
+                    let current_idle = now.saturating_sub(pe.delivery_time);
+
+                    if current_idle >= min_idle_time {
+                        needs_log = true;
+                        // Claim it
+                        if !pe.owner.is_empty() && pe.owner != consumer_name {
+                            if let Some(old_consumer) = group.consumers.get_mut(&pe.owner) {
+                                old_consumer.pending_ids.remove(&id);
+                            }
+                        }
+
+                        pe.owner = consumer_name.clone();
+                        pe.delivery_time = now;
+                        pe.delivery_count += 1;
+
+                        let consumer = group.consumers.get_mut(&consumer_name).unwrap();
+                        consumer.pending_ids.insert(id);
+                        consumer.seen_time = now;
+
+                        if justid {
+                            claimed_entries.push(Resp::BulkString(Some(Bytes::from(id.to_string()))));
+                        } else if let Some(se) = rax.get(&id.to_be_bytes()) {
+                            let mut entry_arr = Vec::new();
+                            entry_arr.push(Resp::BulkString(Some(Bytes::from(se.id.to_string()))));
+                            let mut fields_arr = Vec::new();
+                            for (f, v) in &se.fields {
+                                fields_arr.push(Resp::BulkString(Some(f.clone())));
+                                fields_arr.push(Resp::BulkString(Some(v.clone())));
+                            }
+                            entry_arr.push(Resp::Array(Some(fields_arr)));
+                            claimed_entries.push(Resp::Array(Some(entry_arr)));
+                        }
+                        claimed_count += 1;
+                    }
+                }
+
+                if !found_next {
+                    next_start_id = StreamID::new(0, 0);
+                }
+            } else {
+                return (Resp::Error("NOGROUP No such consumer group".to_string()), None);
+            }
+        } else {
+            return (Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()), None);
+        }
+    } else {
+        return (Resp::Error("NOGROUP No such key".to_string()), None);
+    }
+
+    let mut final_res = Vec::new();
+    final_res.push(Resp::BulkString(Some(Bytes::from(next_start_id.to_string()))));
+    final_res.push(Resp::Array(Some(claimed_entries)));
+    final_res.push(Resp::Array(Some(Vec::new()))); // Deleted entries (simplified)
+
+    let log = if needs_log {
+        let mut log_args = Vec::new();
+        for arg in args { log_args.push(arg.clone()); }
+        Some(Resp::Array(Some(log_args)))
+    } else {
+        None
+    };
+
+    (Resp::Array(Some(final_res)), log)
 }

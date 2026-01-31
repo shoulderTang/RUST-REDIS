@@ -19,7 +19,7 @@ pub async fn run_cmd(args: Vec<&str>, conn_ctx: &mut ConnectionContext, server_c
 }
 
 pub fn create_server_context() -> ServerContext {
-    let db = Arc::new(vec![Db::default()]);
+    let db = Arc::new(vec![RwLock::new(Db::default())]);
     let config = Config::default();
     let script_manager = crate::cmd::scripting::create_script_manager();
     let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
@@ -49,21 +49,13 @@ pub fn create_server_context() -> ServerContext {
         slowlog_threshold_us: Arc::new(std::sync::atomic::AtomicI64::new(10_000)),
         mem_peak_rss: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         maxmemory: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        watched_clients: Arc::new(DashMap::new()),
+        client_watched_dirty: Arc::new(DashMap::new()),
     }
 }
 
 pub fn create_connection_context() -> ConnectionContext {
-    ConnectionContext {
-        db_index: 0,
-        authenticated: true,
-        current_username: "default".to_string(),
-        in_multi: false,
-        multi_queue: Vec::new(),
-        msg_sender: None,
-        subscriptions: std::collections::HashSet::new(),
-        psubscriptions: std::collections::HashSet::new(),
-        id: 0,
-        shutdown: None,
-        is_lua: false,
-    }
+    let mut ctx = ConnectionContext::new(0, None, None);
+    ctx.authenticated = true;
+    ctx
 }

@@ -17,7 +17,10 @@ pub fn lpush(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCo
         _ => return Resp::Error("ERR invalid key".to_string()),
     };
 
-    let db = &server_ctx.databases[conn_ctx.db_index];
+    let db = {
+        let db_lock = server_ctx.databases[conn_ctx.db_index].read().unwrap();
+        db_lock.clone()
+    };
 
     let mut count = 0;
     for i in 2..items.len() {
@@ -122,7 +125,10 @@ pub fn rpush(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCo
         _ => return Resp::Error("ERR invalid key".to_string()),
     };
 
-    let db = &server_ctx.databases[conn_ctx.db_index];
+    let db = {
+        let db_lock = server_ctx.databases[conn_ctx.db_index].read().unwrap();
+        db_lock.clone()
+    };
 
     let mut count = 0;
     for i in 2..items.len() {
@@ -379,7 +385,7 @@ async fn blocking_pop_generic(
         Err(_) => return Resp::Error("ERR timeout is not a float or out of range".to_string()),
     };
 
-    let db = &server_ctx.databases[conn_ctx.db_index];
+    let db = server_ctx.databases[conn_ctx.db_index].read().unwrap().clone();
     let mut keys = Vec::new();
 
     // 1. Try to serve from existing lists immediately
@@ -752,9 +758,9 @@ pub async fn blmove(
         Err(_) => return Resp::Error("ERR timeout is not a float or out of range".to_string()),
     };
 
-    let db = &server_ctx.databases[conn_ctx.db_index];
+    let db = server_ctx.databases[conn_ctx.db_index].read().unwrap().clone();
 
-    match lmove_execute(db, &src_key, &dst_key, where_from, where_to) {
+    match lmove_execute(&db, &src_key, &dst_key, where_from, where_to) {
         Ok(Some(v)) => return Resp::BulkString(Some(v)),
         Ok(None) => {}
         Err(e) => return e,
@@ -788,8 +794,8 @@ pub async fn blmove(
     match result {
         Some(v) => {
             let value = bytes::Bytes::from(v);
-            let db = &server_ctx.databases[conn_ctx.db_index];
-            match blmove_push_to_dest(db, &dst_key, where_to, value.clone()) {
+            let db = server_ctx.databases[conn_ctx.db_index].read().unwrap().clone();
+            match blmove_push_to_dest(&db, &dst_key, where_to, value.clone()) {
                 Ok(()) => Resp::BulkString(Some(value)),
                 Err(e) => e,
             }

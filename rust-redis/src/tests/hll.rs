@@ -91,7 +91,10 @@ async fn test_hll_string_promotion() {
     // Manually insert a String that looks like an HLL (16k zero bytes)
     let key = Bytes::from("hll_str");
     let raw_hll = vec![0u8; HLL_REGISTERS];
-    server_ctx.databases[0].insert(key.clone(), Entry::new(Value::String(Bytes::from(raw_hll)), None));
+    {
+        let db = server_ctx.databases[0].read().unwrap();
+        db.insert(key.clone(), Entry::new(Value::String(Bytes::from(raw_hll)), None));
+    }
 
     // PFCOUNT should work and return 0
     let req = Resp::Array(Some(vec![
@@ -114,12 +117,15 @@ async fn test_hll_string_promotion() {
     assert_eq!(res, Resp::Integer(1));
 
     // Verify it is now Value::HyperLogLog in DB
-    if let Some(entry) = server_ctx.databases[0].get(&key) {
-        match &entry.value {
-            Value::HyperLogLog(_) => {}, // Good
-            _ => panic!("Value should have been promoted to HyperLogLog"),
+    {
+        let db = server_ctx.databases[0].read().unwrap();
+        if let Some(entry) = db.get(&key) {
+            match &entry.value {
+                Value::HyperLogLog(_) => {}, // Good
+                _ => panic!("Value should have been promoted to HyperLogLog"),
+            }
+        } else {
+            panic!("Key missing");
         }
-    } else {
-        panic!("Key missing");
     }
 }

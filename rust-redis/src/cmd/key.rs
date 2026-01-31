@@ -327,13 +327,15 @@ pub fn flushdb(items: &[Resp], db: &Db) -> Resp {
     Resp::SimpleString(Bytes::from("OK"))
 }
 
-pub fn flushall(items: &[Resp], databases: &Arc<Vec<Db>>) -> Resp {
+use std::sync::RwLock;
+
+pub fn flushall(items: &[Resp], databases: &Arc<Vec<RwLock<Db>>>) -> Resp {
     if items.len() > 2 {
         // Just warning or handling if needed. For now simple clear.
     }
     
-    for db in databases.iter() {
-        db.clear();
+    for db_lock in databases.iter() {
+        db_lock.read().unwrap().clear();
     }
     Resp::SimpleString(Bytes::from("OK"))
 }
@@ -492,6 +494,117 @@ pub fn persist(items: &[Resp], db: &Db) -> Resp {
         }
     }
     Resp::Integer(0)
+}
+
+use crate::cmd::{as_bytes, ConnectionContext, ServerContext};
+
+pub fn move_(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) -> Resp {
+    if items.len() != 3 {
+        return Resp::Error("ERR wrong number of arguments for 'move' command".to_string());
+    }
+
+    let key = match &items[1] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid key".to_string()),
+    };
+
+    let db_idx_bytes = match &items[2] {
+        Resp::BulkString(Some(b)) => b,
+        Resp::SimpleString(s) => s,
+        _ => return Resp::Error("ERR invalid database index".to_string()),
+    };
+
+    let db_idx_str = match std::str::from_utf8(db_idx_bytes) {
+        Ok(s) => s,
+        Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+    };
+
+    let dst_idx: usize = match db_idx_str.parse() {
+        Ok(idx) => idx,
+        Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+    };
+
+    if dst_idx == conn_ctx.db_index {
+        return Resp::Error("ERR source and destination objects are the same".to_string());
+    }
+
+    if dst_idx >= server_ctx.databases.len() {
+        return Resp::Error("ERR DB index is out of range".to_string());
+    }
+
+    let src_db = server_ctx.databases[conn_ctx.db_index].read().unwrap().clone();
+    let dst_db = server_ctx.databases[dst_idx].read().unwrap().clone();
+
+    if let Some(entry) = src_db.get(&key) {
+        if entry.is_expired() {
+            drop(entry);
+            src_db.remove(&key);
+            return Resp::Integer(0);
+        }
+
+        // Check if key exists in destination
+        if let Some(dst_entry) = dst_db.get(&key) {
+            if !dst_entry.is_expired() {
+                return Resp::Integer(0);
+            }
+            drop(dst_entry);
+            dst_db.remove(&key);
+        }
+
+        // Move it
+        drop(entry);
+        if let Some((_, entry)) = src_db.remove(&key) {
+            dst_db.insert(key, entry);
+            return Resp::Integer(1);
+        }
+    }
+
+    Resp::Integer(0)
+}
+
+pub fn swapdb(items: &[Resp], server_ctx: &ServerContext) -> Resp {
+    if items.len() != 3 {
+        return Resp::Error("ERR wrong number of arguments for 'swapdb' command".to_string());
+    }
+
+    let idx1: usize = match as_bytes(&items[1]) {
+        Some(b) => match std::str::from_utf8(&b) {
+            Ok(s) => match s.parse() {
+                Ok(idx) => idx,
+                Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+            },
+            Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        },
+        None => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+    };
+
+    let idx2: usize = match as_bytes(&items[2]) {
+        Some(b) => match std::str::from_utf8(&b) {
+            Ok(s) => match s.parse() {
+                Ok(idx) => idx,
+                Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+            },
+            Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        },
+        None => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+    };
+
+    if idx1 >= server_ctx.databases.len() || idx2 >= server_ctx.databases.len() {
+        return Resp::Error("ERR DB index is out of range".to_string());
+    }
+
+    if idx1 == idx2 {
+        return Resp::SimpleString(Bytes::from("OK"));
+    }
+
+    // Swap the databases in the map
+    let mut db1 = server_ctx.databases[idx1].write().unwrap();
+    let mut db2 = server_ctx.databases[idx2].write().unwrap();
+
+    std::mem::swap(&mut *db1, &mut *db2);
+
+    Resp::SimpleString(Bytes::from("OK"))
 }
 
 pub fn scan(items: &[Resp], db: &Db) -> Resp {

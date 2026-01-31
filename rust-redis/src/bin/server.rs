@@ -84,7 +84,7 @@ async fn run_server(
     // Initialize multiple databases
     let mut dbs = Vec::with_capacity(cfg.databases as usize);
     for _ in 0..cfg.databases {
-        dbs.push(db::Db::default());
+        dbs.push(std::sync::RwLock::new(db::Db::default()));
     }
     let databases = Arc::new(dbs);
 
@@ -158,6 +158,8 @@ async fn run_server(
         slowlog_threshold_us: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(cfg.slowlog_log_slower_than)),
         mem_peak_rss: std::sync::Arc::new(AtomicU64::new(0)),
         maxmemory: std::sync::Arc::new(AtomicU64::new(cfg.maxmemory)),
+        watched_clients: std::sync::Arc::new(dashmap::DashMap::new()),
+        client_watched_dirty: std::sync::Arc::new(dashmap::DashMap::new()),
     };
     
     if let Some(ref aof) = server_ctx.aof {
@@ -172,8 +174,8 @@ async fn run_server(
         let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
         loop {
             interval.tick().await;
-            for db in databases_for_cleanup.iter() {
-                db.retain(|_, v| !v.is_expired());
+            for db_lock in databases_for_cleanup.iter() {
+                db_lock.write().unwrap().retain(|_, v| !v.is_expired());
             }
         }
     });
@@ -256,6 +258,7 @@ async fn run_server(
             });
 
             let mut conn_ctx = cmd::ConnectionContext::new(connection_id, Some(tx_for_conn), Some(shutdown_rx.clone()));
+            server_ctx_cloned.client_watched_dirty.insert(connection_id, conn_ctx.watched_keys_dirty.clone());
 
             loop {
                 tokio::select! {
@@ -337,6 +340,15 @@ async fn run_server(
                     subscribers.remove(&conn_ctx.id);
                 }
             }
+            // Cleanup watched keys
+            for (db_idx, keys) in conn_ctx.watched_keys.iter() {
+                for key in keys {
+                    if let Some(mut clients) = server_ctx_cloned.watched_clients.get_mut(&(*db_idx, key.clone())) {
+                        clients.remove(&conn_ctx.id);
+                    }
+                }
+            }
+            server_ctx_cloned.client_watched_dirty.remove(&conn_ctx.id);
             server_ctx_cloned.client_count.fetch_sub(1, Ordering::Relaxed);
             server_ctx_cloned.clients.remove(&conn_ctx.id);
             server_ctx_cloned.monitors.remove(&conn_ctx.id);

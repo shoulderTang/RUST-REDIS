@@ -151,8 +151,8 @@ async fn test_flushdb() {
 
 #[tokio::test]
 async fn test_flushall() {
-    let db1 = Db::default();
-    let db2 = Db::default();
+    let db1 = RwLock::new(Db::default());
+    let db2 = RwLock::new(Db::default());
     let db = Arc::new(vec![db1, db2]);
     let mut server_ctx = crate::tests::helper::create_server_context();
     server_ctx.databases = db.clone();

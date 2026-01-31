@@ -282,7 +282,10 @@ pub fn zadd(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCon
         _ => return Resp::Error("ERR invalid key".to_string()),
     };
 
-    let db = &server_ctx.databases[conn_ctx.db_index];
+    let db = {
+        let db_lock = server_ctx.databases[conn_ctx.db_index].read().unwrap();
+        db_lock.clone()
+    };
 
     let mut entry = db
         .entry(key.clone())
@@ -1331,7 +1334,10 @@ async fn blocking_zpop_generic(
         Err(_) => return Resp::Error("ERR timeout is not a float or out of range".to_string()),
     };
 
-    let db = &server_ctx.databases[conn_ctx.db_index];
+    let db = {
+        let db_lock = server_ctx.databases[conn_ctx.db_index].read().unwrap();
+        db_lock.clone()
+    };
     let mut keys = Vec::new();
 
     // 1. Try to serve from existing sets immediately

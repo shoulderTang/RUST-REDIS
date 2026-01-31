@@ -153,3 +153,27 @@ pub fn geohash_to_base32(lat: f64, lon: f64) -> String {
     
     result
 }
+
+pub fn is_in_box(
+    lat: f64,
+    lon: f64,
+    lat_center: f64,
+    lon_center: f64,
+    width_m: f64,
+    height_m: f64,
+) -> bool {
+    // Simple box check on a sphere:
+    // 1. Latitude check: distance along the meridian
+    let lat_dist = geodist(lat, lon_center, lat_center, lon_center);
+    if lat_dist > height_m / 2.0 {
+        return false;
+    }
+
+    // 2. Longitude check: distance along the parallel at center latitude
+    let lon_dist = geodist(lat_center, lon, lat_center, lon_center);
+    if lon_dist > width_m / 2.0 {
+        return false;
+    }
+
+    true
+}

@@ -6,7 +6,7 @@ use crate::resp::{Resp, read_frame};
 use bytes::Bytes;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{self, AsyncWriteExt, BufWriter};
@@ -90,19 +90,8 @@ impl Aof {
         let file = tokio::fs::File::open(path).await?;
         let mut reader = tokio::io::BufReader::new(file);
 
-        let mut conn_ctx = crate::cmd::ConnectionContext {
-            id: 0,
-            db_index: 0,
-            authenticated: true,
-            current_username: "default".to_string(),
-            in_multi: false,
-            multi_queue: Vec::new(),
-            msg_sender: None,
-            subscriptions: std::collections::HashSet::new(),
-            psubscriptions: std::collections::HashSet::new(),
-            shutdown: None,
-            is_lua: false,
-        };
+        let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None, None);
+        conn_ctx.authenticated = true;
         loop {
             match read_frame(&mut reader).await {
                 Ok(Some(frame)) => {
@@ -142,7 +131,7 @@ impl Aof {
         Ok(())
     }
 
-    pub async fn rewrite(&mut self, databases: &Arc<Vec<Db>>) -> io::Result<()> {
+    pub async fn rewrite(&mut self, databases: &Arc<Vec<RwLock<Db>>>) -> io::Result<()> {
         let temp_path = format!("{}.tmp", self.path);
         let file = OpenOptions::new()
             .write(true)
@@ -153,7 +142,8 @@ impl Aof {
         let mut writer = BufWriter::new(file);
 
         // Iterate over DB and write reconstruction commands
-        for (i, db) in databases.iter().enumerate() {
+        for (i, db_lock) in databases.iter().enumerate() {
+            let db = db_lock.read().unwrap().clone();
             if db.is_empty() {
                 continue;
             }

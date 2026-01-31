@@ -284,8 +284,11 @@ async fn test_del() {
     }
 
     // Verify deletion
-    let db = server_ctx.databases.get(0).unwrap();
-    assert!(!db.contains_key(&Bytes::from("k1")));
-    assert!(!db.contains_key(&Bytes::from("k2")));
-    assert!(db.contains_key(&Bytes::from("k3")));
+    {
+        let db_lock = server_ctx.databases.get(0).unwrap();
+        let db = db_lock.read().unwrap();
+        assert!(!db.contains_key(&Bytes::from("k1")));
+        assert!(!db.contains_key(&Bytes::from("k2")));
+        assert!(db.contains_key(&Bytes::from("k3")));
+    }
 }

@@ -5,7 +5,7 @@ use bytes::{Buf, Bytes};
 use std::collections::{VecDeque, HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Write};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use dashmap::DashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -220,7 +220,7 @@ impl RdbEncoder {
         Ok(())
     }
 
-    pub fn save(&mut self, databases: &Arc<Vec<Db>>) -> io::Result<()> {
+    pub fn save(&mut self, databases: &Arc<Vec<RwLock<Db>>>) -> io::Result<()> {
         self.write_magic()?;
 
         self.write_aux("redis-ver", "6.2.5")?;
@@ -232,7 +232,8 @@ impl RdbEncoder {
             .as_secs();
         self.write_aux("ctime", &now.to_string())?;
 
-        for (i, db) in databases.iter().enumerate() {
+        for (i, db_lock) in databases.iter().enumerate() {
+            let db = db_lock.read().unwrap();
             if db.is_empty() {
                 continue;
             }
@@ -850,7 +851,7 @@ impl RdbLoader {
         Ok(stream)
     }
 
-    pub fn load(&mut self, databases: &Arc<Vec<Db>>) -> io::Result<()> {
+    pub fn load(&mut self, databases: &Arc<Vec<RwLock<Db>>>) -> io::Result<()> {
         // Simple loader: assumes only one DB and reads until EOF
         // Real RDB loader handles opcodes
         
@@ -946,8 +947,8 @@ impl RdbLoader {
                         }
                     };
                     
-                    if current_db_index < databases.len() {
-                        databases[current_db_index].insert(key, Entry::new(val, expire_at));
+                    if let Some(db_lock) = databases.get(current_db_index) {
+                        db_lock.read().unwrap().insert(key, Entry::new(val, expire_at));
                     }
                     expire_at = None;
                 }
@@ -958,12 +959,12 @@ impl RdbLoader {
     }
 }
 
-pub fn rdb_save(databases: &Arc<Vec<Db>>, conf: &Config) -> io::Result<()> {
+pub fn rdb_save(databases: &Arc<Vec<RwLock<Db>>>, conf: &Config) -> io::Result<()> {
     let mut encoder = RdbEncoder::new(&conf.dbfilename)?;
     encoder.save(databases)
 }
 
-pub fn rdb_load(databases: &Arc<Vec<Db>>, conf: &Config) -> io::Result<()> {
+pub fn rdb_load(databases: &Arc<Vec<RwLock<Db>>>, conf: &Config) -> io::Result<()> {
     if !std::path::Path::new(&conf.dbfilename).exists() {
         return Ok(());
     }

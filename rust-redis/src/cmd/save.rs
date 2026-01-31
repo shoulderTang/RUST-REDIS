@@ -6,14 +6,16 @@ use bytes::Bytes;
 use std::sync::Arc;
 use tracing::{error, info};
 
-pub fn save(_items: &[Resp], databases: &Arc<Vec<Db>>, config: &Config) -> Resp {
+use std::sync::RwLock;
+
+pub fn save(_items: &[Resp], databases: &Arc<Vec<RwLock<Db>>>, config: &Config) -> Resp {
     match rdb::rdb_save(databases, config) {
         Ok(_) => Resp::SimpleString(Bytes::from("OK")),
         Err(e) => Resp::Error(format!("ERR {}", e)),
     }
 }
 
-pub fn bgsave(_items: &[Resp], databases: &Arc<Vec<Db>>, config: &Config) -> Resp {
+pub fn bgsave(_items: &[Resp], databases: &Arc<Vec<RwLock<Db>>>, config: &Config) -> Resp {
     let databases_clone = databases.clone();
     let config_clone = config.clone();
 

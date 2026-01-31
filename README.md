@@ -21,5 +21,7 @@ Rewrite the redis in Rust language and in Rust way.
 
 2026.1.29 1.tests下代码结构优化，避免重复修改每个用例创建server_context和connection_context的代码。2.增加info,client,monitor,slowlog相关命令的实现。 3.修复aof阻塞写命令需要重写为非阻塞命令的问题。
 
-2026.1.30 1.string,list,hash,set,zset 类型命令补全. 2.run_cmd 函数优化，避免重复创建resp_args。
+2026.1.30 1.string,list,hash,set,zset 类型命令补全. 2.run_cmd 函数优化，避免重复创建resp_args。 3.实现 XPENDING, XCLAIM, XAUTOCLAIM 命令。 4.实现 SETBIT, GETBIT, BITCOUNT, BITOP, BITPOS, BITFIELD 命令。
+
+2026.1.31 1.实现 WATCH, UNWATCH 命令。 2.实现 GEOSEARCH, GEOSEARCHSTORE 命令。 3.实现 MOVE, SWAPDB 命令。
 
