@@ -42,6 +42,44 @@ pub fn hset(items: &[Resp], db: &Db) -> Resp {
     }
 }
 
+pub fn hexists(items: &[Resp], db: &Db) -> Resp {
+    if items.len() != 3 {
+        return Resp::Error("ERR wrong number of arguments for 'HEXISTS'".to_string());
+    }
+    let key = match &items[1] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid key".to_string()),
+    };
+    let field = match &items[2] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid field".to_string()),
+    };
+
+    if let Some(entry) = db.get(&key) {
+        if entry.is_expired() {
+            drop(entry);
+            db.remove(&key);
+            return Resp::Integer(0);
+        }
+        match &entry.value {
+            Value::Hash(map) => {
+                if map.contains_key(&field) {
+                    Resp::Integer(1)
+                } else {
+                    Resp::Integer(0)
+                }
+            }
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
+        }
+    } else {
+        Resp::Integer(0)
+    }
+}
+
 pub fn hsetnx(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 4 {
         return Resp::Error("ERR wrong number of arguments for 'HSETNX'".to_string());

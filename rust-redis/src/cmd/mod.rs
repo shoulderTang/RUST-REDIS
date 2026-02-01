@@ -31,6 +31,10 @@ pub mod pubsub;
 pub mod client;
 pub mod monitor;
 pub mod slowlog;
+pub mod dump;
+pub mod sort;
+pub mod hello;
+pub mod reset;
 
 
 fn unwatch_all_keys(conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) {
@@ -225,6 +229,7 @@ enum Command {
     Hmset,
     Hmget,
     Hdel,
+    HExists,
     Hlen,
     Hkeys,
     Hvals,
@@ -347,6 +352,14 @@ enum Command {
     Client,
     Monitor,
     Slowlog,
+    Dump,
+    Restore,
+    Touch,
+    Sort,
+    SortRo,
+    Echo,
+    Hello,
+    Reset,
     Unknown,
 }
 
@@ -355,11 +368,11 @@ fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
     match cmd {
         Command::Set | Command::SetNx | Command::SetEx | Command::PSetEx | Command::GetSet | Command::Get | Command::GetDel | Command::GetEx | Command::GetRange | Command::SetRange | Command::Incr | Command::Decr | Command::IncrBy | Command::IncrByFloat | Command::DecrBy |
         Command::Append | Command::StrLen | Command::Lpush | Command::Rpush | Command::Lpop | Command::Rpop | Command::Blpop | Command::Brpop |
-        Command::Llen | Command::Lrange | Command::Linsert | Command::Lrem | Command::Lpos | Command::Ltrim | Command::Hset | Command::HsetNx | Command::HincrBy | Command::HincrByFloat | Command::Hget | Command::Hgetall | Command::Hmset | Command::Hdel | Command::Hlen | Command::Hkeys | Command::Hvals | Command::HstrLen | Command::HRandField | Command::HScan | Command::Sadd | Command::Srem | Command::Sismember |
+        Command::Llen | Command::Lrange | Command::Linsert | Command::Lrem | Command::Lpos | Command::Ltrim | Command::Hset | Command::HsetNx | Command::HincrBy | Command::HincrByFloat | Command::Hget | Command::Hgetall | Command::Hmset | Command::Hdel | Command::HExists | Command::Hlen | Command::Hkeys | Command::Hvals | Command::HstrLen | Command::HRandField | Command::HScan | Command::Sadd | Command::Srem | Command::Sismember |
         Command::Smembers | Command::Scard | Command::SPop | Command::SRandMember | Command::SScan | Command::Zadd | Command::ZIncrBy | Command::Zrem | Command::Zscore | Command::Zcard |
         Command::Zrank | Command::ZRevRank | Command::Zrange | Command::ZRevRange | Command::Zrangebyscore | Command::Zrangebylex | Command::Zcount | Command::Zlexcount | Command::Zpopmin | Command::Bzpopmin | Command::Zpopmax | Command::Bzpopmax | Command::ZScan | Command::ZRandMember | Command::Pfadd | Command::Pfcount | Command::GeoAdd | Command::GeoDist |
         Command::GeoHash | Command::GeoPos | Command::GeoRadius | Command::GeoRadiusByMember | Command::GeoSearch | Command::GeoSearchStore | Command::Expire | Command::PExpire | Command::ExpireAt | Command::PExpireAt |
-        Command::Ttl | Command::PTtl | Command::Type | Command::Persist | Command::Move | Command::Xadd | Command::Xlen | Command::Xrange | Command::Xrevrange | Command::Xdel | Command::Xtrim | Command::Xinfo | Command::Xpending | Command::Xclaim | Command::Xautoclaim | Command::SetBit | Command::GetBit | Command::BitCount | Command::BitPos | Command::BitField => {
+        Command::Ttl | Command::PTtl | Command::Type | Command::Persist | Command::Move | Command::Xadd | Command::Xlen | Command::Xrange | Command::Xrevrange | Command::Xdel | Command::Xtrim | Command::Xinfo | Command::Xpending | Command::Xclaim | Command::Xautoclaim | Command::SetBit | Command::GetBit | Command::BitCount | Command::BitPos | Command::BitField | Command::Dump | Command::Restore | Command::Sort | Command::SortRo => {
              if items.len() > 1 {
                  if let Some(key) = as_bytes(&items[1]) {
                      keys.push(key.to_vec());
@@ -390,7 +403,7 @@ fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
                  }
              }
         }
-        Command::Exists => {
+        Command::Exists | Command::Touch => {
              for i in 1..items.len() {
                  if let Some(key) = as_bytes(&items[i]) {
                      keys.push(key.to_vec());
@@ -860,7 +873,7 @@ async fn dispatch_command(
                     None,
                 );
             }
-            Command::Exec | Command::Discard => {}
+            Command::Exec | Command::Discard | Command::Reset => {}
             _ => {
                 conn_ctx.multi_queue.push(items.to_vec());
                 return (
@@ -873,9 +886,9 @@ async fn dispatch_command(
 
     if !conn_ctx.subscriptions.is_empty() {
         match cmd {
-            Command::Subscribe | Command::Unsubscribe | Command::Ping => {},
+            Command::Subscribe | Command::Unsubscribe | Command::Ping | Command::Reset => {},
             _ => {
-                 return (Resp::Error("ERR only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT allowed in this context".to_string()), None);
+                 return (Resp::Error("ERR only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT / RESET allowed in this context".to_string()), None);
             }
         }
     }
@@ -984,6 +997,19 @@ async fn dispatch_command(
                 (Resp::Error("ERR wrong number of arguments for 'PING'".to_string()), None)
             }
         }
+        Command::Echo => {
+            if items.len() != 2 {
+                (Resp::Error("ERR wrong number of arguments for 'echo' command".to_string()), None)
+            } else {
+                match &items[1] {
+                    Resp::BulkString(Some(b)) => (Resp::BulkString(Some(b.clone())), None),
+                    Resp::SimpleString(s) => (Resp::BulkString(Some(s.clone())), None),
+                    _ => (Resp::BulkString(None), None),
+                }
+            }
+        }
+        Command::Hello => (hello::hello(items, conn_ctx, &server_ctx), None),
+        Command::Reset => (reset::reset(conn_ctx, server_ctx), None),
         Command::Set => (string::set(items, &db), None),
         Command::SetNx => (string::setnx(items, &db), None),
         Command::SetEx => (string::setex(items, &db), None),
@@ -1032,6 +1058,7 @@ async fn dispatch_command(
         Command::Hmset => (hash::hmset(items, &db), None),
         Command::Hmget => (hash::hmget(items, &db), None),
         Command::Hdel => (hash::hdel(items, &db), None),
+        Command::HExists => (hash::hexists(items, &db), None),
         Command::Hlen => (hash::hlen(items, &db), None),
         Command::Hkeys => (hash::hkeys(items, &db), None),
         Command::Hvals => (hash::hvals(items, &db), None),
@@ -1170,6 +1197,11 @@ async fn dispatch_command(
         Command::Client => client::client(items, conn_ctx, server_ctx),
         Command::Monitor => monitor::monitor(conn_ctx, server_ctx),
         Command::Slowlog => slowlog::slowlog(items, server_ctx).await,
+        Command::Dump => (dump::dump(items, &db), None),
+        Command::Restore => (dump::restore(items, &db), None),
+        Command::Touch => (key::touch(items, &db), None),
+        Command::Sort => (sort::sort(items, &db), None),
+        Command::SortRo => (sort::sort_ro(items, &db), None),
         Command::Watch => (watch(items, conn_ctx, server_ctx), None),
         Command::Unwatch => (unwatch(conn_ctx, server_ctx), None),
         Command::BgRewriteAof => {
@@ -1243,6 +1275,7 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("HMSET".to_string(), Command::Hmset);
         m.insert("HMGET".to_string(), Command::Hmget);
         m.insert("HDEL".to_string(), Command::Hdel);
+        m.insert("HEXISTS".to_string(), Command::HExists);
         m.insert("HLEN".to_string(), Command::Hlen);
         m.insert("HKEYS".to_string(), Command::Hkeys);
         m.insert("HVALS".to_string(), Command::Hvals);
@@ -1366,6 +1399,14 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("CLIENT".to_string(), Command::Client);
         m.insert("MONITOR".to_string(), Command::Monitor);
         m.insert("SLOWLOG".to_string(), Command::Slowlog); //the 110th cmd
+        m.insert("DUMP".to_string(), Command::Dump);
+        m.insert("RESTORE".to_string(), Command::Restore);
+        m.insert("TOUCH".to_string(), Command::Touch);
+        m.insert("SORT".to_string(), Command::Sort);
+        m.insert("SORT_RO".to_string(), Command::SortRo);
+        m.insert("ECHO".to_string(), Command::Echo);
+        m.insert("HELLO".to_string(), Command::Hello);
+        m.insert("RESET".to_string(), Command::Reset);
         m
     });
 

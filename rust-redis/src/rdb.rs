@@ -44,18 +44,77 @@ impl Crc64 {
     }
 }
 
-pub struct RdbEncoder {
-    writer: BufWriter<File>,
+pub struct RdbEncoder<W: Write> {
+    writer: W,
     crc: Crc64,
 }
 
-impl RdbEncoder {
-    pub fn new(path: &str) -> io::Result<Self> {
-        let file = File::create(path)?;
-        Ok(RdbEncoder {
-            writer: BufWriter::new(file),
+impl<W: Write> RdbEncoder<W> {
+    pub fn new(writer: W) -> Self {
+        RdbEncoder {
+            writer,
             crc: Crc64::new(),
-        })
+        }
+    }
+
+    pub fn digest(&self) -> u64 {
+        self.crc.digest()
+    }
+
+    pub fn write_u16_le(&mut self, v: u16) -> io::Result<()> {
+        let bytes = v.to_le_bytes();
+        self.writer.write_all(&bytes)?;
+        self.crc.update(&bytes);
+        Ok(())
+    }
+
+    pub fn dump_value(&mut self, value: &Value) -> io::Result<()> {
+        match value {
+            Value::String(s) => {
+                self.write_u8(RDB_TYPE_STRING)?;
+                self.write_string(s)?;
+            }
+            Value::List(l) => {
+                self.write_u8(RDB_TYPE_LIST)?;
+                self.write_len(l.len() as u64)?;
+                for item in l {
+                    self.write_string(item)?;
+                }
+            }
+            Value::Set(s) => {
+                self.write_u8(RDB_TYPE_SET)?;
+                self.write_len(s.len() as u64)?;
+                for item in s {
+                    self.write_string(item)?;
+                }
+            }
+            Value::Hash(h) => {
+                self.write_u8(RDB_TYPE_HASH)?;
+                self.write_len(h.len() as u64)?;
+                for (k, v) in h {
+                    self.write_string(k)?;
+                    self.write_string(v)?;
+                }
+            }
+            Value::ZSet(z) => {
+                self.write_u8(RDB_TYPE_ZSET)?;
+                self.write_len(z.scores.len() as u64)?;
+                for (score, member) in &z.scores {
+                    self.write_string(member)?;
+                    let score_str = score.0.to_string();
+                    self.write_string(score_str.as_bytes())?;
+                }
+            }
+            Value::HyperLogLog(hll) => {
+                self.write_u8(RDB_TYPE_STRING)?;
+                self.write_string(&hll.registers)?;
+            }
+            Value::Stream(stream) => {
+                self.write_u8(RDB_TYPE_STREAM_LISTPACKS)?;
+                self.save_stream(stream)?;
+            }
+        }
+        Ok(())
     }
 
     fn write_magic(&mut self) -> io::Result<()> {
@@ -83,7 +142,7 @@ impl RdbEncoder {
         Ok(())
     }
 
-    fn write_u64_le(&mut self, v: u64) -> io::Result<()> {
+    pub fn write_u64_le(&mut self, v: u64) -> io::Result<()> {
         let bytes = v.to_le_bytes();
         self.writer.write_all(&bytes)?;
         self.crc.update(&bytes);
@@ -589,20 +648,27 @@ impl<'a> ListpackReader<'a> {
     }
 }
 
-pub struct RdbLoader {
-    reader: BufReader<File>,
+pub struct RdbLoader<R: Read> {
+    reader: R,
+    crc: Crc64,
 }
 
-impl RdbLoader {
-    pub fn new(path: &str) -> io::Result<Self> {
-        let file = File::open(path)?;
-        Ok(RdbLoader {
-            reader: BufReader::new(file),
-        })
+impl<R: Read> RdbLoader<R> {
+    pub fn new(reader: R) -> Self {
+        RdbLoader {
+            reader,
+            crc: Crc64::new(),
+        }
+    }
+    
+    pub fn digest(&self) -> u64 {
+        self.crc.digest()
     }
 
     fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
-        self.reader.read_exact(buf)
+        self.reader.read_exact(buf)?;
+        self.crc.update(buf);
+        Ok(())
     }
 
     fn read_u8(&mut self) -> io::Result<u8> {
@@ -623,7 +689,13 @@ impl RdbLoader {
         Ok(u64::from_be_bytes(buf))
     }
 
-    fn read_u64_le(&mut self) -> io::Result<u64> {
+    pub fn read_u16_le(&mut self) -> io::Result<u16> {
+        let mut buf = [0u8; 2];
+        self.read_exact(&mut buf)?;
+        Ok(u16::from_le_bytes(buf))
+    }
+
+    pub fn read_u64_le(&mut self) -> io::Result<u64> {
         let mut buf = [0u8; 8];
         self.read_exact(&mut buf)?;
         Ok(u64::from_le_bytes(buf))
@@ -699,6 +771,60 @@ impl RdbLoader {
             let mut buf = vec![0u8; len as usize];
             self.read_exact(&mut buf)?;
             Ok(Bytes::from(buf))
+        }
+    }
+
+    pub fn restore_value(&mut self) -> io::Result<Value> {
+        let type_code = self.read_u8()?;
+        match type_code {
+            RDB_TYPE_STRING => {
+                let s = self.read_string()?;
+                Ok(Value::String(s))
+            }
+            RDB_TYPE_LIST => {
+                let (len, _) = self.read_len()?;
+                let mut list = VecDeque::new();
+                for _ in 0..len {
+                    list.push_back(self.read_string()?);
+                }
+                Ok(Value::List(list))
+            }
+            RDB_TYPE_SET => {
+                let (len, _) = self.read_len()?;
+                let mut set = HashSet::new();
+                for _ in 0..len {
+                    set.insert(self.read_string()?);
+                }
+                Ok(Value::Set(set))
+            }
+            RDB_TYPE_HASH => {
+                let (len, _) = self.read_len()?;
+                let mut hash = HashMap::new();
+                for _ in 0..len {
+                    let k = self.read_string()?;
+                    let v = self.read_string()?;
+                    hash.insert(k, v);
+                }
+                Ok(Value::Hash(hash))
+            }
+            RDB_TYPE_ZSET => {
+                let (len, _) = self.read_len()?;
+                let mut zset = SortedSet::new();
+                for _ in 0..len {
+                    let member = self.read_string()?;
+                    let score_bytes = self.read_string()?;
+                    let score_str = String::from_utf8_lossy(&score_bytes);
+                    let score = score_str.parse::<f64>().unwrap_or(0.0);
+                    zset.members.insert(member.clone(), score);
+                    zset.scores.insert((TotalOrderF64(score), member));
+                }
+                Ok(Value::ZSet(zset))
+            }
+            RDB_TYPE_STREAM_LISTPACKS => {
+                let stream = self.load_stream()?;
+                Ok(Value::Stream(stream))
+            }
+            _ => Err(io::Error::new(io::ErrorKind::InvalidData, format!("Unknown value type: {}", type_code))),
         }
     }
 
@@ -960,7 +1086,9 @@ impl RdbLoader {
 }
 
 pub fn rdb_save(databases: &Arc<Vec<RwLock<Db>>>, conf: &Config) -> io::Result<()> {
-    let mut encoder = RdbEncoder::new(&conf.dbfilename)?;
+    let file = File::create(&conf.dbfilename)?;
+    let writer = BufWriter::new(file);
+    let mut encoder = RdbEncoder::new(writer);
     encoder.save(databases)
 }
 
@@ -968,6 +1096,8 @@ pub fn rdb_load(databases: &Arc<Vec<RwLock<Db>>>, conf: &Config) -> io::Result<(
     if !std::path::Path::new(&conf.dbfilename).exists() {
         return Ok(());
     }
-    let mut loader = RdbLoader::new(&conf.dbfilename)?;
+    let file = File::open(&conf.dbfilename)?;
+    let reader = BufReader::new(file);
+    let mut loader = RdbLoader::new(reader);
     loader.load(databases)
 }

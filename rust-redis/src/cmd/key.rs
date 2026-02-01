@@ -286,6 +286,32 @@ pub fn exists(items: &[Resp], db: &Db) -> Resp {
     Resp::Integer(count)
 }
 
+pub fn touch(items: &[Resp], db: &Db) -> Resp {
+    if items.len() < 2 {
+        return Resp::Error("ERR wrong number of arguments for 'TOUCH'".to_string());
+    }
+
+    let mut count = 0;
+    for item in &items[1..] {
+        let key = match item {
+            Resp::BulkString(Some(b)) => b,
+            Resp::SimpleString(s) => s,
+            _ => continue,
+        };
+        
+        if let Some(entry) = db.get(key) {
+            if !entry.is_expired() {
+                count += 1;
+                // TODO: Update LRU/LFU access time when implemented in Entry
+            } else {
+                drop(entry);
+                db.remove(key);
+            }
+        }
+    }
+    Resp::Integer(count)
+}
+
 pub fn type_(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 2 {
         return Resp::Error("ERR wrong number of arguments for 'TYPE'".to_string());

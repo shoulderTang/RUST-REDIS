@@ -280,12 +280,16 @@ mod tests {
         db[0].read().unwrap().insert(key.clone(), crate::db::Entry::new(Value::Stream(stream), None));
 
         // 2. Save RDB
-        let mut encoder = RdbEncoder::new(save_path).unwrap();
+        let file = std::fs::File::create(save_path).unwrap();
+        let writer = std::io::BufWriter::new(file);
+        let mut encoder = RdbEncoder::new(writer);
         encoder.save(&db).unwrap();
         assert!(path.exists());
 
         // 3. Load RDB
-        let mut loader = RdbLoader::new(save_path).unwrap();
+        let file = std::fs::File::open(save_path).unwrap();
+        let reader = std::io::BufReader::new(file);
+        let mut loader = RdbLoader::new(reader);
         let loaded_db = Arc::new(vec![RwLock::new(Db::default())]);
         loader.load(&loaded_db).unwrap();
 

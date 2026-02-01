@@ -5,7 +5,7 @@ use bytes::Bytes;
 use std::sync::atomic::Ordering;
 
 pub async fn config(items: &[Resp], ctx: &ServerContext) -> Resp {
-    if items.len() < 3 {
+    if items.len() < 2 {
         return Resp::Error("ERR wrong number of arguments for 'config' command".to_string());
     }
 
@@ -18,6 +18,7 @@ pub async fn config(items: &[Resp], ctx: &ServerContext) -> Resp {
     match subcommand.as_str() {
         "GET" => config_get(items, ctx).await,
         "SET" => config_set(items, ctx).await,
+        "REWRITE" => config_rewrite(items, ctx).await,
         _ => Resp::Error(format!("ERR unknown subcommand '{}'. Try GET, SET, HELP.", subcommand)),
     }
 }
@@ -161,5 +162,53 @@ async fn config_set(items: &[Resp], ctx: &ServerContext) -> Resp {
             }
         }
         _ => Resp::Error("ERR Unsupported CONFIG parameter".to_string()),
+    }
+}
+
+async fn config_rewrite(_items: &[Resp], ctx: &ServerContext) -> Resp {
+    if let Some(config_file) = &ctx.config.config_file {
+        // Construct config content
+        let mut content = String::new();
+        let cfg = &ctx.config;
+        
+        // Helper to append config line
+        let mut append_cfg = |k: &str, v: &str| {
+            content.push_str(&format!("{} {}\n", k, v));
+        };
+
+        // port
+        append_cfg("port", &cfg.port.to_string());
+        // bind
+        append_cfg("bind", &cfg.bind);
+        // databases
+        append_cfg("databases", &cfg.databases.to_string());
+        // maxmemory
+        append_cfg("maxmemory", &ctx.maxmemory.load(Ordering::Relaxed).to_string());
+        // appendonly
+        append_cfg("appendonly", if cfg.appendonly { "yes" } else { "no" });
+        // appendfilename
+        append_cfg("appendfilename", &cfg.appendfilename);
+        // appendfsync
+        let appendfsync_str = match cfg.appendfsync {
+            AppendFsync::Always => "always",
+            AppendFsync::EverySec => "everysec",
+            AppendFsync::No => "no",
+        };
+        append_cfg("appendfsync", appendfsync_str);
+        
+        // slowlog
+        append_cfg("slowlog-log-slower-than", &ctx.slowlog_threshold_us.load(Ordering::Relaxed).to_string());
+        append_cfg("slowlog-max-len", &ctx.slowlog_max_len.load(Ordering::Relaxed).to_string());
+        
+        // maxclients
+        append_cfg("maxclients", &cfg.maxclients.to_string());
+
+        // Write to file
+        match std::fs::write(config_file, content) {
+            Ok(_) => Resp::SimpleString(Bytes::from("OK")),
+            Err(e) => Resp::Error(format!("ERR Rewriting config file: {}", e)),
+        }
+    } else {
+        Resp::Error("ERR The server is running without a config file".to_string())
     }
 }
