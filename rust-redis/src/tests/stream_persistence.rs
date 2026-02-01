@@ -282,7 +282,7 @@ mod tests {
         // 2. Save RDB
         let file = std::fs::File::create(save_path).unwrap();
         let writer = std::io::BufWriter::new(file);
-        let mut encoder = RdbEncoder::new(writer);
+        let mut encoder = RdbEncoder::new(writer, true, true);
         encoder.save(&db).unwrap();
         assert!(path.exists());
 

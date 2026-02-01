@@ -50,9 +50,18 @@ async fn config_get(items: &[Resp], ctx: &ServerContext) -> Resp {
     let slowlog_threshold = ctx.slowlog_threshold_us.load(Ordering::Relaxed);
     let slowlog_max_len = ctx.slowlog_max_len.load(Ordering::Relaxed);
     let maxmemory = ctx.maxmemory.load(Ordering::Relaxed);
+    let maxmemory_policy = *ctx.maxmemory_policy.read().unwrap();
+    let maxmemory_samples = ctx.maxmemory_samples.load(Ordering::Relaxed);
+    let notify_flags = ctx.notify_keyspace_events.load(Ordering::Relaxed);
+    let notify_str = crate::cmd::notify::flags_to_string(notify_flags);
+    let rdbcompression = ctx.rdbcompression.load(Ordering::Relaxed);
+    let rdbchecksum = ctx.rdbchecksum.load(Ordering::Relaxed);
+    let stop_writes_on_bgsave_error = ctx.stop_writes_on_bgsave_error.load(Ordering::Relaxed);
+    let save_params = ctx.save_params.read().unwrap();
+    let save_str = save_params.iter().map(|(s, c)| format!("{} {}", s, c)).collect::<Vec<_>>().join(" ");
 
     let configs = vec![
-        //("save", "3600 1 300 100 60 10000".to_string()),
+        ("save", save_str),
         (
             "appendonly",
             if cfg.appendonly {
@@ -69,6 +78,12 @@ async fn config_get(items: &[Resp], ctx: &ServerContext) -> Resp {
         ("slowlog-log-slower-than", slowlog_threshold.to_string()),
         ("slowlog-max-len", slowlog_max_len.to_string()),
         ("maxmemory", maxmemory.to_string()),
+        ("maxmemory-policy", maxmemory_policy.as_str().to_string()),
+        ("maxmemory-samples", maxmemory_samples.to_string()),
+        ("notify-keyspace-events", notify_str),
+        ("rdbcompression", if rdbcompression { "yes".to_string() } else { "no".to_string() }),
+        ("rdbchecksum", if rdbchecksum { "yes".to_string() } else { "no".to_string() }),
+        ("stop-writes-on-bgsave-error", if stop_writes_on_bgsave_error { "yes".to_string() } else { "no".to_string() }),
     ];
 
     if param_lower == "*" {
@@ -131,14 +146,6 @@ async fn config_set(items: &[Resp], ctx: &ServerContext) -> Resp {
             }
         }
         "maxmemory" => {
-            // Need to parse with units potentially, but simple integer for now or reuse parse_memory logic?
-            // Since parse_memory is in conf module and private or public, I should check.
-            // It is private in previous toolcall but I made it public? No, I added it inside conf.rs but didn't make it public.
-            // Let's check conf.rs again or just duplicate/move the logic.
-            // Actually I should make `parse_memory` public in `conf.rs` to reuse it.
-            // For now, I'll try to use a simple parse and if it fails, maybe implement unit parsing here or call a helper.
-            // Re-implementing unit parsing here is safer if I can't easily access the other one.
-            
             let s = value.to_lowercase();
             let (num, unit) = if s.ends_with("gb") {
                 (s.trim_end_matches("gb"), 1024 * 1024 * 1024)
@@ -160,6 +167,60 @@ async fn config_set(items: &[Resp], ctx: &ServerContext) -> Resp {
                 }
                 Err(_) => Resp::Error("ERR value is not an integer or out of range".to_string()),
             }
+        }
+        "maxmemory-policy" => {
+            if let Some(p) = crate::conf::EvictionPolicy::from_str(&value) {
+                let mut policy = ctx.maxmemory_policy.write().unwrap();
+                *policy = p;
+                Resp::SimpleString(Bytes::from("OK"))
+            } else {
+                Resp::Error("ERR Invalid maxmemory-policy".to_string())
+            }
+        }
+        "maxmemory-samples" => {
+            match value.parse::<usize>() {
+                Ok(v) => {
+                    ctx.maxmemory_samples.store(v, Ordering::Relaxed);
+                    Resp::SimpleString(Bytes::from("OK"))
+                }
+                Err(_) => Resp::Error("ERR value is not an integer or out of range".to_string()),
+            }
+        }
+        "notify-keyspace-events" => {
+            let flags = crate::cmd::notify::parse_notify_flags(&value);
+            ctx.notify_keyspace_events.store(flags, Ordering::Relaxed);
+            Resp::SimpleString(Bytes::from("OK"))
+        }
+        "rdbcompression" => {
+            ctx.rdbcompression.store(value.eq_ignore_ascii_case("yes"), Ordering::Relaxed);
+            Resp::SimpleString(Bytes::from("OK"))
+        }
+        "rdbchecksum" => {
+            ctx.rdbchecksum.store(value.eq_ignore_ascii_case("yes"), Ordering::Relaxed);
+            Resp::SimpleString(Bytes::from("OK"))
+        }
+        "stop-writes-on-bgsave-error" => {
+            ctx.stop_writes_on_bgsave_error.store(value.eq_ignore_ascii_case("yes"), Ordering::Relaxed);
+            Resp::SimpleString(Bytes::from("OK"))
+        }
+        "save" => {
+            let mut new_params = Vec::new();
+            if !value.is_empty() {
+                let parts: Vec<&str> = value.split_whitespace().collect();
+                if parts.len() % 2 != 0 {
+                    return Resp::Error("ERR Invalid save parameters".to_string());
+                }
+                for i in (0..parts.len()).step_by(2) {
+                    if let (Ok(s), Ok(c)) = (parts[i].parse::<u64>(), parts[i+1].parse::<u64>()) {
+                        new_params.push((s, c));
+                    } else {
+                        return Resp::Error("ERR Invalid save parameters".to_string());
+                    }
+                }
+            }
+            let mut params = ctx.save_params.write().unwrap();
+            *params = new_params;
+            Resp::SimpleString(Bytes::from("OK"))
         }
         _ => Resp::Error("ERR Unsupported CONFIG parameter".to_string()),
     }
@@ -184,6 +245,29 @@ async fn config_rewrite(_items: &[Resp], ctx: &ServerContext) -> Resp {
         append_cfg("databases", &cfg.databases.to_string());
         // maxmemory
         append_cfg("maxmemory", &ctx.maxmemory.load(Ordering::Relaxed).to_string());
+        // maxmemory-policy
+        append_cfg("maxmemory-policy", ctx.maxmemory_policy.read().unwrap().as_str());
+        // maxmemory-samples
+        append_cfg("maxmemory-samples", &ctx.maxmemory_samples.load(Ordering::Relaxed).to_string());
+        // notify-keyspace-events
+        let notify_flags = ctx.notify_keyspace_events.load(Ordering::Relaxed);
+        append_cfg("notify-keyspace-events", &crate::cmd::notify::flags_to_string(notify_flags));
+        // rdbcompression
+        append_cfg("rdbcompression", if ctx.rdbcompression.load(Ordering::Relaxed) { "yes" } else { "no" });
+        // rdbchecksum
+        append_cfg("rdbchecksum", if ctx.rdbchecksum.load(Ordering::Relaxed) { "yes" } else { "no" });
+        // stop-writes-on-bgsave-error
+        append_cfg("stop-writes-on-bgsave-error", if ctx.stop_writes_on_bgsave_error.load(Ordering::Relaxed) { "yes" } else { "no" });
+        // save
+        {
+            let params = ctx.save_params.read().unwrap();
+            for (s, c) in params.iter() {
+                append_cfg("save", &format!("{} {}", s, c));
+            }
+            if params.is_empty() {
+                append_cfg("save", "\"\"");
+            }
+        }
         // appendonly
         append_cfg("appendonly", if cfg.appendonly { "yes" } else { "no" });
         // appendfilename

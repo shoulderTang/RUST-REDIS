@@ -186,7 +186,7 @@ pub fn set(items: &[Resp], db: &Db) -> Resp {
          }
     }
 
-    db.insert(key, Entry { value: Value::String(val), expires_at: expire_at });
+    db.insert(key, Entry::new_with_expire(Value::String(val), expire_at));
     
     if get {
         Resp::BulkString(old_val)
@@ -230,7 +230,7 @@ fn incr_decr_helper(items: &[Resp], db: &Db, inc: i64) -> Resp {
         return Resp::Error("ERR increment or decrement would overflow".to_string());
     }
     
-    db.insert(key, Entry { value: Value::String(Bytes::from(new_val.to_string())), expires_at: expire_at });
+    db.insert(key, Entry::new_with_expire(Value::String(Bytes::from(new_val.to_string())), expire_at));
     Resp::Integer(new_val)
 }
 
@@ -761,7 +761,7 @@ pub fn incrbyfloat(items: &[Resp], db: &Db) -> Resp {
     }
     
     let new_val_str = new_val.to_string();
-    db.insert(key, Entry::new(Value::String(Bytes::from(new_val_str.clone())), expire_at));
+    db.insert(key, Entry::new_with_expire(Value::String(Bytes::from(new_val_str.clone())), expire_at));
     Resp::BulkString(Some(Bytes::from(new_val_str)))
 }
 

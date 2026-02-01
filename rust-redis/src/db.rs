@@ -57,27 +57,55 @@ pub enum Value {
 pub struct Entry {
     pub value: Value,
     pub expires_at: Option<u64>, // absolute timestamp in milliseconds
+    pub lru: u64,               // last access time in seconds (simplified Redis LRU)
+    pub lfu: u32,               // access counter (simplified Redis LFU)
 }
 
 impl Entry {
     pub fn new(value: Value, ttl_ms: Option<u64>) -> Self {
-        let expires_at = ttl_ms.map(|ms| {
-            let start = SystemTime::now();
-            let since_the_epoch = start
-                .duration_since(UNIX_EPOCH)
-                .expect("Time went backwards");
-            since_the_epoch.as_millis() as u64 + ms
-        });
-        Self { value, expires_at }
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards");
+        let now_ms = now.as_millis() as u64;
+        
+        let expires_at = ttl_ms.map(|ms| now_ms + ms);
+        
+        Self { 
+            value, 
+            expires_at,
+            lru: now.as_secs(),
+            lfu: 1,
+        }
+    }
+
+    pub fn new_with_expire(value: Value, expires_at: Option<u64>) -> Self {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards");
+        
+        Self { 
+            value, 
+            expires_at,
+            lru: now.as_secs(),
+            lfu: 1,
+        }
+    }
+
+    pub fn touch(&mut self) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_secs();
+        self.lru = now;
+        self.lfu = self.lfu.saturating_add(1);
     }
 
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
-            let start = SystemTime::now();
-            let since_the_epoch = start
+            let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .expect("Time went backwards");
-            let now = since_the_epoch.as_millis() as u64;
+                .expect("Time went backwards")
+                .as_millis() as u64;
             now >= expires_at
         } else {
             false

@@ -43,6 +43,7 @@ async fn test_reset_basics() {
         connect_time: Instant::now(),
         last_activity: Instant::now(),
         shutdown_tx: None,
+        msg_sender: None,
     });
     
     // Add user "alice" to ACL so check_access passes

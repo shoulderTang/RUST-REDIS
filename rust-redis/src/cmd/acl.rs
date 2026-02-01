@@ -1,6 +1,7 @@
 use crate::resp::{Resp, as_bytes};
-use crate::cmd::{ConnectionContext, ServerContext};
+use crate::cmd::{ConnectionContext, ServerContext, AclLogEntry};
 use bytes::Bytes;
+use std::collections::VecDeque;
 
 pub fn auth(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) -> Resp {
     if items.len() == 2 {
@@ -143,7 +144,108 @@ pub fn acl(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCont
                      }
                  }
              },
+             "LOG" => {
+                 if items.len() > 3 {
+                      return Resp::Error("ERR wrong number of arguments for 'acl log' command".to_string());
+                 }
+                 if items.len() == 3 {
+                     let arg = match as_bytes(&items[2]) {
+                         Some(b) => String::from_utf8_lossy(b).to_uppercase(),
+                         None => return Resp::Error("ERR syntax error".to_string()),
+                     };
+                     if arg == "RESET" {
+                         let mut log = server_ctx.acl_log.write().unwrap();
+                         log.clear();
+                         return Resp::SimpleString(Bytes::from("OK"));
+                     } else {
+                         // ACL LOG <count>
+                         if let Ok(count) = arg.parse::<usize>() {
+                             let log = server_ctx.acl_log.read().unwrap();
+                             let mut results = Vec::new();
+                             for entry in log.iter().take(count) {
+                                 results.push(format_acl_log_entry(entry));
+                             }
+                             return Resp::Array(Some(results));
+                         } else {
+                             return Resp::Error("ERR value is not an integer or out of range".to_string());
+                         }
+                     }
+                 } else {
+                     // ACL LOG (returns all)
+                     let log = server_ctx.acl_log.read().unwrap();
+                     let mut results = Vec::new();
+                     for entry in log.iter() {
+                         results.push(format_acl_log_entry(entry));
+                     }
+                     return Resp::Array(Some(results))
+                 }
+             },
+             "DRYRUN" => {
+                 if items.len() < 4 {
+                      return Resp::Error("ERR wrong number of arguments for 'acl dryrun' command".to_string());
+                 }
+                 let username = match as_bytes(&items[2]) {
+                     Some(b) => String::from_utf8_lossy(b).to_string(),
+                     None => return Resp::Error("ERR invalid username".to_string()),
+                 };
+                 let cmd_to_test = match as_bytes(&items[3]) {
+                     Some(b) => String::from_utf8_lossy(b).to_string(),
+                     None => return Resp::Error("ERR invalid command".to_string()),
+                 };
+
+                 let acl_guard = server_ctx.acl.read().unwrap();
+                 if let Some(user) = acl_guard.get_user(&username) {
+                     if user.can_execute(&cmd_to_test) {
+                         // Check keys if provided
+                         let mut all_keys_allowed = true;
+                         for i in 4..items.len() {
+                             if let Some(key) = as_bytes(&items[i]) {
+                                 if !user.can_access_key(key) {
+                                     all_keys_allowed = false;
+                                     break;
+                                 }
+                             }
+                         }
+                         if all_keys_allowed {
+                             Resp::SimpleString(Bytes::from("OK"))
+                         } else {
+                             Resp::Error(format!("user {} has no permissions to access one of the keys used as arguments", username))
+                         }
+                     } else {
+                         Resp::Error(format!("user {} has no permissions to run the '{}' command", username, cmd_to_test))
+                     }
+                 } else {
+                     Resp::Error(format!("user {} not found", username))
+                 }
+             },
              _ => Resp::Error("ERR unknown or unsupported ACL subcommand".to_string()),
          }
+    }
+}
+
+fn format_acl_log_entry(entry: &AclLogEntry) -> Resp {
+    let mut map = Vec::new();
+    map.push(Resp::BulkString(Some(Bytes::from("count"))));
+    map.push(Resp::Integer(entry.count as i64));
+    map.push(Resp::BulkString(Some(Bytes::from("reason"))));
+    map.push(Resp::BulkString(Some(Bytes::from(entry.reason.clone()))));
+    map.push(Resp::BulkString(Some(Bytes::from("context"))));
+    map.push(Resp::BulkString(Some(Bytes::from(entry.context.clone()))));
+    map.push(Resp::BulkString(Some(Bytes::from("object"))));
+    map.push(Resp::BulkString(Some(Bytes::from(entry.object.clone()))));
+    map.push(Resp::BulkString(Some(Bytes::from("username"))));
+    map.push(Resp::BulkString(Some(Bytes::from(entry.username.clone()))));
+    map.push(Resp::BulkString(Some(Bytes::from("age-seconds"))));
+    map.push(Resp::Integer(entry.age as i64));
+    map.push(Resp::BulkString(Some(Bytes::from("client-id"))));
+    map.push(Resp::Integer(entry.client_id as i64));
+    Resp::Array(Some(map))
+}
+
+pub fn record_acl_log(server_ctx: &ServerContext, entry: AclLogEntry) {
+    let mut log = server_ctx.acl_log.write().unwrap();
+    log.push_front(entry);
+    if log.len() > 128 {
+        log.pop_back();
     }
 }

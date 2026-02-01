@@ -3,6 +3,47 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use tracing::{info, warn};
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum EvictionPolicy {
+    NoEviction,
+    AllKeysLru,
+    VolatileLru,
+    AllKeysLfu,
+    VolatileLfu,
+    AllKeysRandom,
+    VolatileRandom,
+    VolatileTtl,
+}
+
+impl EvictionPolicy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EvictionPolicy::NoEviction => "noeviction",
+            EvictionPolicy::AllKeysLru => "allkeys-lru",
+            EvictionPolicy::VolatileLru => "volatile-lru",
+            EvictionPolicy::AllKeysLfu => "allkeys-lfu",
+            EvictionPolicy::VolatileLfu => "volatile-lfu",
+            EvictionPolicy::AllKeysRandom => "allkeys-random",
+            EvictionPolicy::VolatileRandom => "volatile-random",
+            EvictionPolicy::VolatileTtl => "volatile-ttl",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "noeviction" => Some(EvictionPolicy::NoEviction),
+            "allkeys-lru" => Some(EvictionPolicy::AllKeysLru),
+            "volatile-lru" => Some(EvictionPolicy::VolatileLru),
+            "allkeys-lfu" => Some(EvictionPolicy::AllKeysLfu),
+            "volatile-lfu" => Some(EvictionPolicy::VolatileLfu),
+            "allkeys-random" => Some(EvictionPolicy::AllKeysRandom),
+            "volatile-random" => Some(EvictionPolicy::VolatileRandom),
+            "volatile-ttl" => Some(EvictionPolicy::VolatileTtl),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct Config {
     pub bind: String,
@@ -22,6 +63,12 @@ pub struct Config {
     pub slowlog_log_slower_than: i64,
     pub slowlog_max_len: u64,
     pub maxmemory: u64,
+    pub maxmemory_policy: EvictionPolicy,
+    pub maxmemory_samples: usize,
+    pub notify_keyspace_events: String,
+    pub rdbcompression: bool,
+    pub rdbchecksum: bool,
+    pub stop_writes_on_bgsave_error: bool,
 }
 
 impl Default for Config {
@@ -44,6 +91,12 @@ impl Default for Config {
             slowlog_log_slower_than: 10000,
             slowlog_max_len: 128,
             maxmemory: 0,
+            maxmemory_policy: EvictionPolicy::NoEviction,
+            maxmemory_samples: 5,
+            notify_keyspace_events: String::new(),
+            rdbcompression: true,
+            rdbchecksum: true,
+            stop_writes_on_bgsave_error: true,
         }
     }
 }
@@ -114,6 +167,9 @@ pub fn load_config(path: Option<&str>) -> io::Result<Config> {
                     );
                 }
             }
+            "notify-keyspace-events" if parts.len() >= 2 => {
+                cfg.notify_keyspace_events = parts[1].trim_matches('"').to_string();
+            }
             "databases" if parts.len() >= 2 => {
                 if let Ok(db) = parts[1].parse::<usize>() {
                     cfg.databases = db;
@@ -164,6 +220,32 @@ pub fn load_config(path: Option<&str>) -> io::Result<Config> {
                     );
                 }
             }
+            "maxmemory-policy" if parts.len() >= 2 => {
+                cfg.maxmemory_policy = match parts[1].to_lowercase().as_str() {
+                    "noeviction" => EvictionPolicy::NoEviction,
+                    "allkeys-lru" => EvictionPolicy::AllKeysLru,
+                    "volatile-lru" => EvictionPolicy::VolatileLru,
+                    "allkeys-lfu" => EvictionPolicy::AllKeysLfu,
+                    "volatile-lfu" => EvictionPolicy::VolatileLfu,
+                    "allkeys-random" => EvictionPolicy::AllKeysRandom,
+                    "volatile-random" => EvictionPolicy::VolatileRandom,
+                    "volatile-ttl" => EvictionPolicy::VolatileTtl,
+                    _ => {
+                        warn!("invalid maxmemory-policy '{}', using default", parts[1]);
+                        EvictionPolicy::NoEviction
+                    }
+                };
+            }
+            "maxmemory-samples" if parts.len() >= 2 => {
+                if let Ok(ms) = parts[1].parse::<usize>() {
+                    cfg.maxmemory_samples = ms;
+                } else {
+                    warn!(
+                        "invalid maxmemory-samples value '{}', keep previous {}",
+                        parts[1], cfg.maxmemory_samples
+                    );
+                }
+            }
             "logfile" if parts.len() >= 2 => {
                 let logfile = parts[1].trim_matches('"').to_string();
                 if !logfile.is_empty() {
@@ -200,8 +282,20 @@ pub fn load_config(path: Option<&str>) -> io::Result<Config> {
             "dbfilename" if parts.len() >= 2 => {
                 cfg.dbfilename = parts[1].trim_matches('"').to_string();
             }
+            "rdbcompression" if parts.len() >= 2 => {
+                cfg.rdbcompression = parts[1].eq_ignore_ascii_case("yes");
+            }
+            "rdbchecksum" if parts.len() >= 2 => {
+                cfg.rdbchecksum = parts[1].eq_ignore_ascii_case("yes");
+            }
+            "stop-writes-on-bgsave-error" if parts.len() >= 2 => {
+                cfg.stop_writes_on_bgsave_error = parts[1].eq_ignore_ascii_case("yes");
+            }
             "dir" if parts.len() >= 2 => {
                 cfg.dir = parts[1].trim_matches('"').to_string();
+            }
+            "notify-keyspace-events" if parts.len() >= 2 => {
+                cfg.notify_keyspace_events = parts[1].to_string();
             }
             "save" => {
                 if !save_seen {

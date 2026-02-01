@@ -68,8 +68,21 @@ async fn test_aof_hang_reproduction() {
         slowlog_threshold_us: Arc::new(std::sync::atomic::AtomicI64::new(10_000)),
         mem_peak_rss: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         maxmemory: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        notify_keyspace_events: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+        rdbcompression: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        rdbchecksum: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        stop_writes_on_bgsave_error: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        maxmemory_policy: Arc::new(RwLock::new(crate::conf::EvictionPolicy::NoEviction)),
+        maxmemory_samples: Arc::new(std::sync::atomic::AtomicUsize::new(5)),
+        save_params: Arc::new(RwLock::new(vec![(3600, 1), (300, 100), (60, 10000)])),
+        last_bgsave_ok: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        dirty: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        last_save_time: Arc::new(std::sync::atomic::AtomicI64::new(0)),
         watched_clients: Arc::new(dashmap::DashMap::new()),
         client_watched_dirty: Arc::new(dashmap::DashMap::new()),
+        tracking_clients: Arc::new(dashmap::DashMap::new()),
+        acl_log: Arc::new(RwLock::new(std::collections::VecDeque::new())),
+        latency_events: Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext::new(1, None, None);

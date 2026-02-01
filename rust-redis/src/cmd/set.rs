@@ -113,6 +113,53 @@ pub fn sismember(items: &[Resp], db: &Db) -> Resp {
     }
 }
 
+pub fn smismember(items: &[Resp], db: &Db) -> Resp {
+    if items.len() < 3 {
+        return Resp::Error("ERR wrong number of arguments for 'SMISMEMBER'".to_string());
+    }
+    let key = match &items[1] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid key".to_string()),
+    };
+
+    let mut results = Vec::with_capacity(items.len() - 2);
+
+    if let Some(entry) = db.get(&key) {
+        if entry.is_expired() {
+            drop(entry);
+            db.remove(&key);
+            for _ in 2..items.len() {
+                results.push(Resp::Integer(0));
+            }
+            return Resp::Array(Some(results));
+        }
+
+        match &entry.value {
+            Value::Set(set) => {
+                for i in 2..items.len() {
+                    let member = match &items[i] {
+                        Resp::BulkString(Some(b)) => b,
+                        Resp::SimpleString(s) => s,
+                        _ => {
+                            results.push(Resp::Integer(0));
+                            continue;
+                        }
+                    };
+                    results.push(Resp::Integer(if set.contains(member) { 1 } else { 0 }));
+                }
+                Resp::Array(Some(results))
+            }
+            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+        }
+    } else {
+        for _ in 2..items.len() {
+            results.push(Resp::Integer(0));
+        }
+        Resp::Array(Some(results))
+    }
+}
+
 fn compute_sintersection(keys: &[Bytes], db: &Db) -> Result<HashSet<Bytes>, Resp> {
     // Pass 1: Check existence, type, and find cardinalities
     let mut key_sizes: Vec<(usize, usize)> = Vec::with_capacity(keys.len());

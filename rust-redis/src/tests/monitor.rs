@@ -36,6 +36,7 @@ async fn test_monitor() {
         connect_time: std::time::Instant::now(),
         last_activity: std::time::Instant::now(),
         shutdown_tx: None,
+        msg_sender: None,
     };
     server_ctx.clients.insert(2, client_info);
 
@@ -94,6 +95,7 @@ async fn test_monitor_lua() {
         connect_time: std::time::Instant::now(),
         last_activity: std::time::Instant::now(),
         shutdown_tx: None,
+        msg_sender: None,
     };
     server_ctx.clients.insert(2, client_info);
 

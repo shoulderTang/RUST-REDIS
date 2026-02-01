@@ -19,7 +19,11 @@ pub async fn run_cmd(args: Vec<&str>, conn_ctx: &mut ConnectionContext, server_c
 }
 
 pub fn create_server_context() -> ServerContext {
-    let db = Arc::new(vec![RwLock::new(Db::default())]);
+    let mut dbs = Vec::new();
+    for _ in 0..16 {
+        dbs.push(RwLock::new(Db::default()));
+    }
+    let db = Arc::new(dbs);
     let config = Config::default();
     let script_manager = crate::cmd::scripting::create_script_manager();
     let acl = Arc::new(RwLock::new(crate::acl::Acl::new()));
@@ -27,6 +31,9 @@ pub fn create_server_context() -> ServerContext {
     let mut rng = rand::rng();
     let run_id: String = (0..40).map(|_| rng.sample(rand::distr::Alphanumeric) as char).collect();
 
+    let save_params = config.save_params.clone();
+    let maxmemory_policy = config.maxmemory_policy;
+    let maxmemory_samples = config.maxmemory_samples;
     ServerContext {
         databases: db,
         acl: acl,
@@ -49,8 +56,21 @@ pub fn create_server_context() -> ServerContext {
         slowlog_threshold_us: Arc::new(std::sync::atomic::AtomicI64::new(10_000)),
         mem_peak_rss: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         maxmemory: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        notify_keyspace_events: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+        rdbcompression: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        rdbchecksum: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        stop_writes_on_bgsave_error: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        maxmemory_policy: Arc::new(RwLock::new(maxmemory_policy)),
+        maxmemory_samples: Arc::new(std::sync::atomic::AtomicUsize::new(maxmemory_samples)),
+        save_params: Arc::new(RwLock::new(save_params)),
+        last_bgsave_ok: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        dirty: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        last_save_time: Arc::new(std::sync::atomic::AtomicI64::new(0)),
         watched_clients: Arc::new(DashMap::new()),
         client_watched_dirty: Arc::new(DashMap::new()),
+        tracking_clients: Arc::new(DashMap::new()),
+        acl_log: Arc::new(RwLock::new(std::collections::VecDeque::new())),
+        latency_events: Arc::new(DashMap::new()),
     }
 }
 

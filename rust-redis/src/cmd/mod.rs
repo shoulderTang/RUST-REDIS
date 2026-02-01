@@ -32,9 +32,30 @@ pub mod client;
 pub mod monitor;
 pub mod slowlog;
 pub mod dump;
+pub mod evict;
 pub mod sort;
 pub mod hello;
 pub mod reset;
+pub mod notify;
+pub mod memory;
+pub mod latency;
+
+#[derive(Debug, Clone)]
+pub struct AclLogEntry {
+    pub count: u64,
+    pub reason: String,
+    pub context: String,
+    pub object: String,
+    pub username: String,
+    pub age: u64,
+    pub client_id: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct LatencyEvent {
+    pub timestamp: u64,
+    pub duration: u64,
+}
 
 
 fn unwatch_all_keys(conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) {
@@ -49,12 +70,41 @@ fn unwatch_all_keys(conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext
 }
 
 fn touch_watched_key(key: &[u8], db_idx: usize, server_ctx: &ServerContext) {
+    // 1. Transaction WATCH
     if let Some(clients) = server_ctx.watched_clients.get(&(db_idx, key.to_vec())) {
         for client_id in clients.iter() {
             if let Some(dirty_flag) = server_ctx.client_watched_dirty.get(client_id) {
                 dirty_flag.store(true, Ordering::SeqCst);
             }
         }
+    }
+
+    // 2. Client Side Caching Tracking
+    let client_ids = if let Some(entry) = server_ctx.tracking_clients.get(&(db_idx, key.to_vec())) {
+        Some(entry.value().clone())
+    } else {
+        None
+    };
+
+    if let Some(ids) = client_ids {
+        let mut keys_to_invalidate = Vec::new();
+        keys_to_invalidate.push(Resp::BulkString(Some(bytes::Bytes::from(key.to_vec()))));
+        
+        let invalidation_msg = Resp::Array(Some(vec![
+            Resp::BulkString(Some(bytes::Bytes::from("invalidate"))),
+            Resp::Array(Some(keys_to_invalidate)),
+        ]));
+        
+        for client_id in ids.iter() {
+             if let Some(client_info) = server_ctx.clients.get(client_id) {
+                 if let Some(sender) = &client_info.msg_sender {
+                     let _ = sender.try_send(invalidation_msg.clone());
+                 }
+             }
+         }
+         // Redis 6.0 tracking usually removes keys after invalidation (except BCAST mode)
+         // For simplicity we remove them here.
+         server_ctx.tracking_clients.remove(&(db_idx, key.to_vec()));
     }
 }
 
@@ -101,6 +151,10 @@ pub struct ConnectionContext {
     pub is_lua: bool,
     pub watched_keys: HashMap<usize, HashSet<Vec<u8>>>,
     pub watched_keys_dirty: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub client_tracking: bool,
+    pub client_caching: bool,
+    pub client_redir_id: i64, // -1 means no redirection
+    pub client_tracking_broken: bool,
 }
 
 impl ConnectionContext {
@@ -119,6 +173,10 @@ impl ConnectionContext {
             is_lua: false,
             watched_keys: HashMap::new(),
             watched_keys_dirty: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            client_tracking: false,
+            client_caching: true, // Default to true as per Redis spec for BCAST or prefix-less
+            client_redir_id: -1,
+            client_tracking_broken: false,
         }
     }
 }
@@ -136,6 +194,7 @@ pub struct ClientInfo {
     pub connect_time: std::time::Instant,
     pub last_activity: std::time::Instant,
     pub shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
+    pub msg_sender: Option<tokio::sync::mpsc::Sender<Resp>>,
 }
 
 #[derive(Clone)]
@@ -161,8 +220,21 @@ pub struct ServerContext {
     pub slowlog_threshold_us: Arc<std::sync::atomic::AtomicI64>,
     pub mem_peak_rss: Arc<std::sync::atomic::AtomicU64>,
     pub maxmemory: Arc<std::sync::atomic::AtomicU64>,
+    pub notify_keyspace_events: Arc<std::sync::atomic::AtomicU32>,
+    pub rdbcompression: Arc<std::sync::atomic::AtomicBool>,
+    pub rdbchecksum: Arc<std::sync::atomic::AtomicBool>,
+    pub stop_writes_on_bgsave_error: Arc<std::sync::atomic::AtomicBool>,
+    pub maxmemory_policy: Arc<RwLock<crate::conf::EvictionPolicy>>,
+    pub maxmemory_samples: Arc<std::sync::atomic::AtomicUsize>,
+    pub save_params: Arc<RwLock<Vec<(u64, u64)>>>,
+    pub last_bgsave_ok: Arc<std::sync::atomic::AtomicBool>,
+    pub dirty: Arc<std::sync::atomic::AtomicU64>,
+    pub last_save_time: Arc<std::sync::atomic::AtomicI64>,
     pub watched_clients: Arc<DashMap<(usize, Vec<u8>), HashSet<u64>>>,
     pub client_watched_dirty: Arc<DashMap<u64, Arc<std::sync::atomic::AtomicBool>>>,
+    pub tracking_clients: Arc<DashMap<(usize, Vec<u8>), HashSet<u64>>>,
+    pub acl_log: Arc<RwLock<VecDeque<AclLogEntry>>>,
+    pub latency_events: Arc<DashMap<String, VecDeque<LatencyEvent>>>,
 }
 
 #[derive(Clone)]
@@ -179,7 +251,7 @@ pub struct SlowLogEntry {
 
 
 #[derive(Debug, PartialEq, Copy, Clone)]
-enum Command {
+pub(crate) enum Command {
     Ping,
     Set,
     SetNx,
@@ -193,6 +265,7 @@ enum Command {
     MsetNx,
     SetRange,
     Del,
+    Unlink,
     Get,
     Mget,
     Incr,
@@ -244,6 +317,7 @@ enum Command {
     SPop,
     SRandMember,
     SScan,
+    SMismember,
     SMove,
     SInter,
     SInterStore,
@@ -255,6 +329,7 @@ enum Command {
     ZIncrBy,
     Zrem,
     Zscore,
+    Zmscore,
     Zcard,
     Zrank,
     ZRevRank,
@@ -300,6 +375,8 @@ enum Command {
     Move,
     SwapDb,
     Persist,
+    Copy,
+    Object,
     FlushDb,
     FlushAll,
     Dbsize,
@@ -307,6 +384,9 @@ enum Command {
     Scan,
     Save,
     Bgsave,
+    LastSave,
+    Role,
+    Time,
     Shutdown,
     Command,
     Config,
@@ -351,7 +431,9 @@ enum Command {
     PubSub,
     Client,
     Monitor,
+    Memory,
     Slowlog,
+    Latency,
     Dump,
     Restore,
     Touch,
@@ -363,16 +445,16 @@ enum Command {
     Unknown,
 }
 
-fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
+pub(crate) fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
     let mut keys = Vec::new();
     match cmd {
         Command::Set | Command::SetNx | Command::SetEx | Command::PSetEx | Command::GetSet | Command::Get | Command::GetDel | Command::GetEx | Command::GetRange | Command::SetRange | Command::Incr | Command::Decr | Command::IncrBy | Command::IncrByFloat | Command::DecrBy |
         Command::Append | Command::StrLen | Command::Lpush | Command::Rpush | Command::Lpop | Command::Rpop | Command::Blpop | Command::Brpop |
         Command::Llen | Command::Lrange | Command::Linsert | Command::Lrem | Command::Lpos | Command::Ltrim | Command::Hset | Command::HsetNx | Command::HincrBy | Command::HincrByFloat | Command::Hget | Command::Hgetall | Command::Hmset | Command::Hdel | Command::HExists | Command::Hlen | Command::Hkeys | Command::Hvals | Command::HstrLen | Command::HRandField | Command::HScan | Command::Sadd | Command::Srem | Command::Sismember |
         Command::Smembers | Command::Scard | Command::SPop | Command::SRandMember | Command::SScan | Command::Zadd | Command::ZIncrBy | Command::Zrem | Command::Zscore | Command::Zcard |
-        Command::Zrank | Command::ZRevRank | Command::Zrange | Command::ZRevRange | Command::Zrangebyscore | Command::Zrangebylex | Command::Zcount | Command::Zlexcount | Command::Zpopmin | Command::Bzpopmin | Command::Zpopmax | Command::Bzpopmax | Command::ZScan | Command::ZRandMember | Command::Pfadd | Command::Pfcount | Command::GeoAdd | Command::GeoDist |
+        Command::Zrank | Command::ZRevRank | Command::Zrange | Command::ZRevRange | Command::Zrangebyscore | Command::Zrangebylex | Command::Zcount | Command::Zlexcount | Command::Zpopmin | Command::Bzpopmin | Command::Zpopmax | Command::Bzpopmax | Command::ZScan | Command::ZRandMember | Command::Zmscore | Command::Pfadd | Command::Pfcount | Command::GeoAdd | Command::GeoDist |
         Command::GeoHash | Command::GeoPos | Command::GeoRadius | Command::GeoRadiusByMember | Command::GeoSearch | Command::GeoSearchStore | Command::Expire | Command::PExpire | Command::ExpireAt | Command::PExpireAt |
-        Command::Ttl | Command::PTtl | Command::Type | Command::Persist | Command::Move | Command::Xadd | Command::Xlen | Command::Xrange | Command::Xrevrange | Command::Xdel | Command::Xtrim | Command::Xinfo | Command::Xpending | Command::Xclaim | Command::Xautoclaim | Command::SetBit | Command::GetBit | Command::BitCount | Command::BitPos | Command::BitField | Command::Dump | Command::Restore | Command::Sort | Command::SortRo => {
+        Command::Ttl | Command::PTtl | Command::Type | Command::Persist | Command::Move | Command::Xadd | Command::Xlen | Command::Xrange | Command::Xrevrange | Command::Xdel | Command::Xtrim | Command::Xinfo | Command::Xpending | Command::Xclaim | Command::Xautoclaim | Command::SetBit | Command::GetBit | Command::BitCount | Command::BitPos | Command::BitField | Command::Dump | Command::Restore | Command::Sort | Command::SortRo | Command::SMismember => {
              if items.len() > 1 {
                  if let Some(key) = as_bytes(&items[1]) {
                      keys.push(key.to_vec());
@@ -386,11 +468,18 @@ fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
                 }
             }
         }
-        Command::Rename | Command::RenameNx | Command::SMove => {
+        Command::Rename | Command::RenameNx | Command::SMove | Command::Copy => {
             if items.len() > 2 {
                 if let Some(key) = as_bytes(&items[1]) {
                     keys.push(key.to_vec());
                 }
+                if let Some(key) = as_bytes(&items[2]) {
+                    keys.push(key.to_vec());
+                }
+            }
+        }
+        Command::Object => {
+            if items.len() > 2 {
                 if let Some(key) = as_bytes(&items[2]) {
                     keys.push(key.to_vec());
                 }
@@ -410,7 +499,7 @@ fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
                  }
              }
         }
-        Command::Mget | Command::Del | Command::Pfmerge | Command::SInter | Command::SInterStore | Command::SUnion | Command::SDiff | Command::SDiffStore | Command::Watch => {
+        Command::Mget | Command::Del | Command::Unlink | Command::Pfmerge | Command::SInter | Command::SInterStore | Command::SUnion | Command::SDiff | Command::SDiffStore | Command::Watch => {
              for i in 1..items.len() {
                  if let Some(key) = as_bytes(&items[i]) {
                      keys.push(key.to_vec());
@@ -572,6 +661,17 @@ fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
                  }
              }
         }
+        Command::Memory => {
+            if items.len() >= 3 {
+                if let Some(sub) = as_bytes(&items[1]) {
+                    if sub.eq_ignore_ascii_case(b"USAGE") {
+                        if let Some(key) = as_bytes(&items[2]) {
+                            keys.push(key.to_vec());
+                        }
+                    }
+                }
+            }
+        }
         _ => {}
     }
     keys
@@ -607,8 +707,47 @@ pub async fn process_frame(
 
                 // ACL Check
                 if let Err(e) = check_access(cmd_name, cmd_raw, &items, conn_ctx, server_ctx) {
+                    // Record ACL log
+                    acl::record_acl_log(server_ctx, AclLogEntry {
+                        count: 1,
+                        reason: "command not allowed".to_string(),
+                        context: "toplevel".to_string(),
+                        object: String::from_utf8_lossy(cmd_raw).to_string(),
+                        username: conn_ctx.current_username.clone(),
+                        age: 0,
+                        client_id: conn_ctx.id,
+                    });
                     (e, None, Some(cmd_name))
+                } else if server_ctx.maxmemory.load(Ordering::Relaxed) > 0
+                    && evict::is_over_maxmemory(server_ctx.maxmemory.load(Ordering::Relaxed))
+                    && std::str::from_utf8(cmd_raw).map_or(false, |s| command::is_write_command(s))
+                    && *server_ctx.maxmemory_policy.read().unwrap()
+                        == crate::conf::EvictionPolicy::NoEviction
+                {
+                    (
+                        Resp::Error(
+                            "OOM command not allowed when used memory > 'maxmemory'.".to_string(),
+                        ),
+                        None,
+                        Some(cmd_name),
+                    )
+                } else if server_ctx.stop_writes_on_bgsave_error.load(Ordering::Relaxed)
+                    && !server_ctx.last_bgsave_ok.load(Ordering::Relaxed)
+                    && std::str::from_utf8(cmd_raw).map_or(false, |s| command::is_write_command(s))
+                {
+                    (
+                        Resp::Error("MISCONF Redis is configured to report errors after a last background save failed. Writing commands are disabled.".to_string()),
+                        None,
+                        Some(cmd_name),
+                    )
                 } else {
+                    // Perform eviction if needed (already checked it's not noeviction or we are not over limit for write cmd)
+                    if server_ctx.maxmemory.load(Ordering::Relaxed) > 0 {
+                        if let Err(e) = evict::perform_eviction(server_ctx) {
+                            error!("Eviction error: {}", e);
+                        }
+                    }
+
                     // Monitor broadcasting
                     if !server_ctx.monitors.is_empty() {
                         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
@@ -645,16 +784,47 @@ pub async fn process_frame(
                     let start = std::time::Instant::now();
                     let (res, log) = dispatch_command(cmd_name, &items, conn_ctx, server_ctx).await;
                     let elapsed_us = start.elapsed().as_micros() as i64;
+                    
+                    // Record latency
+                    if elapsed_us > 1000 { // > 1ms
+                         let cmd_str = String::from_utf8_lossy(cmd_raw).to_lowercase();
+                         latency::record_latency(server_ctx, &cmd_str, (elapsed_us / 1000) as u64);
+                    }
+
+                    // Handle client tracking
+                    if conn_ctx.client_tracking && conn_ctx.client_caching {
+                        if let Ok(s) = std::str::from_utf8(cmd_raw) {
+                            if !command::is_write_command(s) {
+                                let keys = get_command_keys(cmd_name, &items);
+                                for key in keys {
+                                    server_ctx.tracking_clients.entry((conn_ctx.db_index, key)).or_insert_with(HashSet::new).insert(conn_ctx.id);
+                                }
+                            }
+                        }
+                    }
 
                     // Check if this was a write command and invalidate watched keys
                     // Only trigger if the command was NOT queued
                     let is_queued = matches!(res, Resp::SimpleString(ref s) if s.as_ref() == b"QUEUED");
-                    if !is_queued {
+                    let is_error = matches!(res, Resp::Error(_));
+                    if !is_queued && !is_error {
                         if let Ok(s) = std::str::from_utf8(cmd_raw) {
                             if command::is_write_command(s) {
+                                // Increment dirty counter
+                                let changes = match &res {
+                                    Resp::Integer(n) if *n > 0 => *n as u64,
+                                    _ => 1,
+                                };
+                                server_ctx.dirty.fetch_add(changes, Ordering::Relaxed);
+
                                 let keys = get_command_keys(cmd_name, &items);
                                 for key in keys {
                                     touch_watched_key(&key, conn_ctx.db_index, server_ctx);
+                                    
+                                    // Trigger keyspace notification
+                                    let event = s.to_lowercase();
+                                    let flags = notify::get_notify_flags_for_command(cmd_name);
+                                    notify::notify_keyspace_event(server_ctx, flags, &event, &key, conn_ctx.db_index).await;
                                 }
                             }
                         }
@@ -840,6 +1010,9 @@ fn check_access(
 ) -> Result<(), Resp> {
     let acl_guard = server_ctx.acl.read().unwrap();
     if let Some(user) = acl_guard.get_user(&conn_ctx.current_username) {
+        if !user.enabled {
+             return Err(Resp::Error(format!("NOPERM this user is disabled")));
+        }
         let cmd_str = String::from_utf8_lossy(cmd_raw);
         if !user.can_execute(&cmd_str) {
              return Err(Resp::Error(format!("NOPERM this user has no permissions to run the '{}' command", cmd_str)));
@@ -1022,6 +1195,7 @@ async fn dispatch_command(
         Command::MsetNx => (string::msetnx(items, &db), None),
         Command::SetRange => (string::setrange(items, &db), None),
         Command::Del => (key::del(items, &db), None),
+        Command::Unlink => (key::unlink(items, &db), None),
         Command::Get => (string::get(items, &db), None),
         Command::Mget => (string::mget(items, &db), None),
         Command::Incr => (string::incr(items, &db), None),
@@ -1068,6 +1242,7 @@ async fn dispatch_command(
         Command::Sadd => (set::sadd(items, &db), None),
         Command::Srem => (set::srem(items, &db), None),
         Command::Sismember => (set::sismember(items, &db), None),
+        Command::SMismember => (set::smismember(items, &db), None),
         Command::Smembers => (set::smembers(items, &db), None),
         Command::Scard => (set::scard(items, &db), None),
         Command::SPop => (set::spop(items, &db), None),
@@ -1084,6 +1259,7 @@ async fn dispatch_command(
         Command::ZIncrBy => (zset::zincrby(items, &db), None),
         Command::Zrem => (zset::zrem(items, &db), None),
         Command::Zscore => (zset::zscore(items, &db), None),
+        Command::Zmscore => (zset::zmscore(items, &db), None),
         Command::Zcard => (zset::zcard(items, &db), None),
         Command::Zrank => (zset::zrank(items, &db), None),
         Command::ZRevRank => (zset::zrevrank(items, &db), None),
@@ -1127,6 +1303,8 @@ async fn dispatch_command(
         Command::Rename => (key::rename(items, &db), None),
         Command::RenameNx => (key::renamenx(items, &db), None),
         Command::Persist => (key::persist(items, &db), None),
+        Command::Copy => (key::copy(items, conn_ctx, server_ctx), None),
+        Command::Object => (key::object(items, &db), None),
         Command::Move => (key::move_(items, conn_ctx, server_ctx), None),
         Command::SwapDb => (key::swapdb(items, server_ctx), None),
         Command::FlushDb => (key::flushdb(items, &db), None),
@@ -1134,14 +1312,24 @@ async fn dispatch_command(
         Command::Dbsize => (key::dbsize(items, &db), None),
         Command::Keys => (key::keys(items, &db), None),
         Command::Scan => (key::scan(items, &db), None),
-        Command::Save => (save::save(items, &server_ctx.databases, &server_ctx.config), None),
-        Command::Bgsave => (save::bgsave(items, &server_ctx.databases, &server_ctx.config), None),
+        Command::Save => (save::save(items, server_ctx), None),
+        Command::Bgsave => (save::bgsave(items, server_ctx), None),
+        Command::LastSave => (save::lastsave(items, server_ctx), None),
+        Command::Role => (info::role(items, server_ctx), None),
+        Command::Time => {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
+            let mut res = Vec::new();
+            res.push(Resp::BulkString(Some(bytes::Bytes::from(now.as_secs().to_string()))));
+            res.push(Resp::BulkString(Some(bytes::Bytes::from(now.subsec_micros().to_string()))));
+            (Resp::Array(Some(res)), None)
+        }
         Command::Shutdown => {
             std::process::exit(0);
         }
         Command::Command => (command::command(items), None),
         Command::Config => (config::config(items, server_ctx).await, None),
         Command::Info => (info::info(items, server_ctx), None),
+        Command::Memory => (memory::memory(items, &db, server_ctx).await, None),
         Command::Eval => scripting::eval(items, conn_ctx, server_ctx).await,
         Command::EvalSha => scripting::evalsha(items, conn_ctx, server_ctx).await,
         Command::Script => (scripting::script(items, &server_ctx.script_manager), None),
@@ -1197,6 +1385,7 @@ async fn dispatch_command(
         Command::Client => client::client(items, conn_ctx, server_ctx),
         Command::Monitor => monitor::monitor(conn_ctx, server_ctx),
         Command::Slowlog => slowlog::slowlog(items, server_ctx).await,
+        Command::Latency => (latency::latency(items, server_ctx), None),
         Command::Dump => (dump::dump(items, &db), None),
         Command::Restore => (dump::restore(items, &db), None),
         Command::Touch => (key::touch(items, &db), None),
@@ -1222,7 +1411,7 @@ async fn dispatch_command(
     }
 }
 
-fn command_name(raw: &[u8]) -> Command {
+pub(crate) fn command_name(raw: &[u8]) -> Command {
     static COMMAND_MAP: OnceLock<HashMap<String, Command>> = OnceLock::new();
     let map = COMMAND_MAP.get_or_init(|| {
         let mut m = HashMap::new();
@@ -1239,6 +1428,7 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("MSETNX".to_string(), Command::MsetNx);
         m.insert("SETRANGE".to_string(), Command::SetRange);
         m.insert("DEL".to_string(), Command::Del);
+        m.insert("UNLINK".to_string(), Command::Unlink);
         m.insert("GET".to_string(), Command::Get);
         m.insert("MGET".to_string(), Command::Mget);
         m.insert("INCR".to_string(), Command::Incr);
@@ -1285,6 +1475,7 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("SADD".to_string(), Command::Sadd);
         m.insert("SREM".to_string(), Command::Srem);
         m.insert("SISMEMBER".to_string(), Command::Sismember);
+        m.insert("SMISMEMBER".to_string(), Command::SMismember);
         m.insert("SMEMBERS".to_string(), Command::Smembers);
         m.insert("SCARD".to_string(), Command::Scard);
         m.insert("SPOP".to_string(), Command::SPop);
@@ -1301,6 +1492,7 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("ZINCRBY".to_string(), Command::ZIncrBy);
         m.insert("ZREM".to_string(), Command::Zrem);
         m.insert("ZSCORE".to_string(), Command::Zscore);
+        m.insert("ZMSCORE".to_string(), Command::Zmscore);
         m.insert("ZCARD".to_string(), Command::Zcard);
         m.insert("ZRANK".to_string(), Command::Zrank);
         m.insert("ZREVRANK".to_string(), Command::ZRevRank);
@@ -1347,6 +1539,8 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("MOVE".to_string(), Command::Move);
         m.insert("SWAPDB".to_string(), Command::SwapDb);
         m.insert("PERSIST".to_string(), Command::Persist);
+        m.insert("COPY".to_string(), Command::Copy);
+        m.insert("OBJECT".to_string(), Command::Object);
         m.insert("FLUSHDB".to_string(), Command::FlushDb);
         m.insert("FLUSHALL".to_string(), Command::FlushAll);
         m.insert("DBSIZE".to_string(), Command::Dbsize);
@@ -1354,6 +1548,9 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("SCAN".to_string(), Command::Scan);
         m.insert("SAVE".to_string(), Command::Save);
         m.insert("BGSAVE".to_string(), Command::Bgsave);
+        m.insert("LASTSAVE".to_string(), Command::LastSave);
+        m.insert("ROLE".to_string(), Command::Role);
+        m.insert("TIME".to_string(), Command::Time);
         m.insert("SHUTDOWN".to_string(), Command::Shutdown);
         m.insert("COMMAND".to_string(), Command::Command);
         m.insert("CONFIG".to_string(), Command::Config);
@@ -1398,7 +1595,9 @@ fn command_name(raw: &[u8]) -> Command {
         m.insert("PUBSUB".to_string(), Command::PubSub);
         m.insert("CLIENT".to_string(), Command::Client);
         m.insert("MONITOR".to_string(), Command::Monitor);
-        m.insert("SLOWLOG".to_string(), Command::Slowlog); //the 110th cmd
+        m.insert("MEMORY".to_string(), Command::Memory);
+        m.insert("SLOWLOG".to_string(), Command::Slowlog);
+        m.insert("LATENCY".to_string(), Command::Latency);
         m.insert("DUMP".to_string(), Command::Dump);
         m.insert("RESTORE".to_string(), Command::Restore);
         m.insert("TOUCH".to_string(), Command::Touch);

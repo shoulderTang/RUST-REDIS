@@ -44,6 +44,14 @@ pub fn info(items: &[Resp], ctx: &ServerContext) -> Resp {
     Resp::BulkString(Some(Bytes::from(info)))
 }
 
+pub fn role(_items: &[Resp], _ctx: &ServerContext) -> Resp {
+    let mut role_info = Vec::new();
+    role_info.push(Resp::BulkString(Some(Bytes::from("master"))));
+    role_info.push(Resp::Integer(0)); // Replication offset
+    role_info.push(Resp::Array(Some(Vec::new()))); // Slaves
+    Resp::Array(Some(role_info))
+}
+
 fn get_server_info(_ctx: &ServerContext) -> String {
     let mut s = String::new();
     s.push_str("# Server\r\n");
@@ -105,9 +113,8 @@ fn get_memory_info(ctx: &ServerContext) -> String {
     let maxmemory = ctx.maxmemory.load(Ordering::Relaxed);
     s.push_str(&format!("maxmemory:{}\r\n", maxmemory));
     s.push_str(&format!("maxmemory_human:{}\r\n", bytes_to_human(maxmemory)));
-    s.push_str("maxmemory_policy:noeviction\r\n");
-    //s.push_str("mem_fragmentation_ratio:1.00\r\n");
-    //s.push_str("mem_allocator:libc\r\n");
+    let policy = *ctx.maxmemory_policy.read().unwrap();
+    s.push_str(&format!("maxmemory_policy:{}\r\n", policy.as_str()));
     s
 }
 

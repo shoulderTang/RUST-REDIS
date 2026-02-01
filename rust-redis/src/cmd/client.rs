@@ -158,6 +158,85 @@ pub fn client(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &Se
             }
             (Resp::SimpleString(Bytes::from("OK")), None)
         }
+        "TRACKING" => {
+            if items.len() < 3 {
+                return (Resp::Error("ERR wrong number of arguments for 'client tracking' command".to_string()), None);
+            }
+            let mode = match &items[2] {
+                Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_uppercase(),
+                Resp::SimpleString(s) => String::from_utf8_lossy(s).to_uppercase(),
+                _ => return (Resp::Error("ERR syntax error".to_string()), None),
+            };
+
+            match mode.as_str() {
+                "ON" => {
+                    _conn_ctx.client_tracking = true;
+                    // Handle options like REDIRECT, BCAST, PREFIX etc.
+                    let mut i = 3;
+                    while i < items.len() {
+                        let opt = match &items[i] {
+                            Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_uppercase(),
+                            Resp::SimpleString(s) => String::from_utf8_lossy(s).to_uppercase(),
+                            _ => return (Resp::Error("ERR syntax error".to_string()), None),
+                        };
+                        match opt.as_str() {
+                            "REDIRECT" => {
+                                if i + 1 >= items.len() {
+                                    return (Resp::Error("ERR syntax error".to_string()), None);
+                                }
+                                let id_str = match &items[i+1] {
+                                    Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_string(),
+                                    Resp::SimpleString(s) => String::from_utf8_lossy(s).to_string(),
+                                    _ => return (Resp::Error("ERR syntax error".to_string()), None),
+                                };
+                                if let Ok(id) = id_str.parse::<i64>() {
+                                    _conn_ctx.client_redir_id = id;
+                                } else {
+                                    return (Resp::Error("ERR value is not an integer or out of range".to_string()), None);
+                                }
+                                i += 2;
+                            }
+                            "BCAST" | "PREFIX" | "OPTIN" | "OPTOUT" | "NOLOOP" => {
+                                // For now, we only support basic tracking (default mode)
+                                // We can implement these more complex modes later if needed.
+                                i += 1;
+                            }
+                            _ => return (Resp::Error(format!("ERR unknown option for 'CLIENT TRACKING ON': {}", opt)), None),
+                        }
+                    }
+                    (Resp::SimpleString(Bytes::from("OK")), None)
+                }
+                "OFF" => {
+                    _conn_ctx.client_tracking = false;
+                    _conn_ctx.client_redir_id = -1;
+                    // Cleanup tracked keys for this client
+                    for mut entry in server_ctx.tracking_clients.iter_mut() {
+                        entry.value_mut().remove(&_conn_ctx.id);
+                    }
+                    (Resp::SimpleString(Bytes::from("OK")), None)
+                }
+                _ => (Resp::Error("ERR syntax error".to_string()), None),
+            }
+        }
+        "CACHING" => {
+            if items.len() != 3 {
+                return (Resp::Error("ERR wrong number of arguments for 'client caching' command".to_string()), None);
+            }
+            let val = match &items[2] {
+                Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_uppercase(),
+                Resp::SimpleString(s) => String::from_utf8_lossy(s).to_uppercase(),
+                _ => return (Resp::Error("ERR syntax error".to_string()), None),
+            };
+            match val.as_str() {
+                "YES" => _conn_ctx.client_caching = true,
+                "NO" => _conn_ctx.client_caching = false,
+                _ => return (Resp::Error("ERR syntax error".to_string()), None),
+            }
+            (Resp::SimpleString(Bytes::from("OK")), None)
+        }
+        "GETREDIR" => {
+            (Resp::Integer(_conn_ctx.client_redir_id), None)
+        }
         _ => (Resp::Error("ERR Unsupported CLIENT subcommand".to_string()), None),
     }
 }

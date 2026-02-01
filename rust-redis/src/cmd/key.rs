@@ -31,6 +31,41 @@ pub fn del(items: &[Resp], db: &Db) -> Resp {
     Resp::Integer(deleted)
 }
 
+pub fn unlink(items: &[Resp], db: &Db) -> Resp {
+    if items.len() < 2 {
+        return Resp::Error("ERR wrong number of arguments for 'UNLINK'".to_string());
+    }
+
+    let mut deleted = 0;
+    for item in &items[1..] {
+        let key = match item {
+            Resp::BulkString(Some(b)) => b,
+            Resp::SimpleString(s) => s,
+            _ => continue,
+        };
+
+        if let Some(entry) = db.get(key) {
+            if entry.is_expired() {
+                drop(entry);
+                db.remove(key);
+            } else {
+                drop(entry);
+                if let Some((_, val)) = db.remove(key) {
+                    deleted += 1;
+                    // In Redis, UNLINK is non-blocking. Here we can simulate it by
+                    // dropping the value in a separate thread if it's potentially large.
+                    // For now, DashMap's remove is fast, but we'll explicitly drop val
+                    // in a spawn to be true to the "UNLINK" semantics.
+                    tokio::spawn(async move {
+                        drop(val);
+                    });
+                }
+            }
+        }
+    }
+    Resp::Integer(deleted)
+}
+
 pub fn expire(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 3 {
         return Resp::Error("ERR wrong number of arguments for 'EXPIRE'".to_string());
@@ -371,6 +406,172 @@ pub fn dbsize(items: &[Resp], db: &Db) -> Resp {
          return Resp::Error("ERR wrong number of arguments for 'DBSIZE'".to_string());
     }
     Resp::Integer(db.len() as i64)
+}
+
+pub fn copy(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) -> Resp {
+    if items.len() < 3 {
+        return Resp::Error("ERR wrong number of arguments for 'COPY' command".to_string());
+    }
+
+    let source = match &items[1] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid source key".to_string()),
+    };
+    let destination = match &items[2] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid destination key".to_string()),
+    };
+
+    let mut db_idx = conn_ctx.db_index;
+    let mut replace = false;
+
+    let mut i = 3;
+    while i < items.len() {
+        let arg = match &items[i] {
+            Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_uppercase(),
+            Resp::SimpleString(s) => String::from_utf8_lossy(s).to_uppercase(),
+            _ => return Resp::Error("ERR syntax error".to_string()),
+        };
+
+        match arg.as_str() {
+            "DB" => {
+                if i + 1 >= items.len() {
+                    return Resp::Error("ERR syntax error".to_string());
+                }
+                let idx_str = match &items[i + 1] {
+                    Resp::BulkString(Some(b)) => String::from_utf8_lossy(b),
+                    Resp::SimpleString(s) => String::from_utf8_lossy(s),
+                    _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+                };
+                db_idx = match idx_str.parse() {
+                    Ok(idx) if idx < server_ctx.databases.len() => idx,
+                    _ => return Resp::Error("ERR DB index is out of range".to_string()),
+                };
+                i += 2;
+            }
+            "REPLACE" => {
+                replace = true;
+                i += 1;
+            }
+            _ => return Resp::Error("ERR syntax error".to_string()),
+        }
+    }
+
+    let src_db = server_ctx.databases[conn_ctx.db_index].read().unwrap().clone();
+    let dst_db = server_ctx.databases[db_idx].read().unwrap().clone();
+
+    if let Some(entry) = src_db.get(&source) {
+        if entry.is_expired() {
+            drop(entry);
+            src_db.remove(&source);
+            return Resp::Integer(0);
+        }
+
+        if !replace {
+            if let Some(dst_entry) = dst_db.get(&destination) {
+                if !dst_entry.is_expired() {
+                    return Resp::Integer(0);
+                }
+                drop(dst_entry);
+                dst_db.remove(&destination);
+            }
+        }
+
+        dst_db.insert(destination, entry.clone());
+        Resp::Integer(1)
+    } else {
+        Resp::Integer(0)
+    }
+}
+
+pub fn object(items: &[Resp], db: &Db) -> Resp {
+    if items.len() < 3 {
+        return Resp::Error("ERR wrong number of arguments for 'OBJECT' command".to_string());
+    }
+
+    let subcommand = match &items[1] {
+        Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_uppercase(),
+        Resp::SimpleString(s) => String::from_utf8_lossy(s).to_uppercase(),
+        _ => return Resp::Error("ERR syntax error".to_string()),
+    };
+
+    let key = match &items[2] {
+        Resp::BulkString(Some(b)) => b,
+        Resp::SimpleString(s) => s,
+        _ => return Resp::Error("ERR invalid key".to_string()),
+    };
+
+    if let Some(entry) = db.get(key) {
+        if entry.is_expired() {
+            drop(entry);
+            db.remove(key);
+            return Resp::BulkString(None);
+        }
+
+        match subcommand.as_str() {
+            "ENCODING" => {
+                let enc = match &entry.value {
+                    Value::String(_) => "raw",
+                    Value::List(_) => "quicklist",
+                    Value::Set(_) => "hashtable",
+                    Value::ZSet(_) => "skiplist",
+                    Value::Hash(_) => "hashtable",
+                    Value::Stream(_) => "stream",
+                    Value::HyperLogLog(_) => "raw",
+                };
+                Resp::BulkString(Some(Bytes::from(enc)))
+            }
+            "IDLETIME" => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                let idle = now.saturating_sub(entry.lru);
+                Resp::Integer(idle as i64)
+            }
+            "FREQ" => {
+                Resp::Integer(entry.lfu as i64)
+            }
+            "REFCOUNT" => {
+                Resp::Integer(1)
+            }
+            "HELP" => {
+                let help = vec![
+                    "OBJECT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:",
+                    "ENCODING <key> - Return the internal encoding of the object.",
+                    "FREQ <key> - Return the LFU access frequency of the object.",
+                    "IDLETIME <key> - Return the seconds since the last access to the object.",
+                    "REFCOUNT <key> - Return the number of references of the object.",
+                    "HELP - Prints this help message.",
+                ];
+                let mut res = Vec::new();
+                for line in help {
+                    res.push(Resp::SimpleString(Bytes::from(line)));
+                }
+                Resp::Array(Some(res))
+            }
+            _ => Resp::Error(format!("ERR Unknown subcommand or wrong number of arguments for 'OBJECT {}'", subcommand)),
+        }
+    } else {
+        if subcommand == "HELP" {
+             let help = vec![
+                    "OBJECT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:",
+                    "ENCODING <key> - Return the internal encoding of the object.",
+                    "FREQ <key> - Return the LFU access frequency of the object.",
+                    "IDLETIME <key> - Return the seconds since the last access to the object.",
+                    "REFCOUNT <key> - Return the number of references of the object.",
+                    "HELP - Prints this help message.",
+                ];
+                let mut res = Vec::new();
+                for line in help {
+                    res.push(Resp::SimpleString(Bytes::from(line)));
+                }
+                return Resp::Array(Some(res));
+        }
+        Resp::BulkString(None)
+    }
 }
 
 pub fn keys(items: &[Resp], db: &Db) -> Resp {

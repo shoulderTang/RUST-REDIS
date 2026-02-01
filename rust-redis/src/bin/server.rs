@@ -1,7 +1,7 @@
 #![allow(unexpected_cfgs)]
 #![allow(unused_imports)]
 #![allow(dead_code)]
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
@@ -39,8 +39,16 @@ use rand::Rng;
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
-    let cfg_path = std::env::args().nth(1);
-    let cfg = match conf::load_config(cfg_path.as_deref()) {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 {
+        if args[1] == "-v" || args[1] == "--version" {
+            println!("v0.1.0");
+            return;
+        }
+    }
+
+    let cfg_path = args.get(1);
+    let cfg = match conf::load_config(cfg_path.map(|s| s.as_str())) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("failed to load config {:?}, using default: {}", cfg_path, e);
@@ -158,8 +166,21 @@ async fn run_server(
         slowlog_threshold_us: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(cfg.slowlog_log_slower_than)),
         mem_peak_rss: std::sync::Arc::new(AtomicU64::new(0)),
         maxmemory: std::sync::Arc::new(AtomicU64::new(cfg.maxmemory)),
+        notify_keyspace_events: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(cmd::notify::parse_notify_flags(&cfg.notify_keyspace_events))),
+        rdbcompression: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cfg.rdbcompression)),
+        rdbchecksum: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cfg.rdbchecksum)),
+        stop_writes_on_bgsave_error: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cfg.stop_writes_on_bgsave_error)),
+        maxmemory_policy: Arc::new(RwLock::new(cfg.maxmemory_policy)),
+        maxmemory_samples: Arc::new(std::sync::atomic::AtomicUsize::new(cfg.maxmemory_samples)),
+        save_params: Arc::new(RwLock::new(cfg.save_params.clone())),
+        last_bgsave_ok: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        dirty: Arc::new(AtomicU64::new(0)),
+        last_save_time: Arc::new(std::sync::atomic::AtomicI64::new(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64)),
         watched_clients: std::sync::Arc::new(dashmap::DashMap::new()),
         client_watched_dirty: std::sync::Arc::new(dashmap::DashMap::new()),
+        tracking_clients: std::sync::Arc::new(dashmap::DashMap::new()),
+        acl_log: Arc::new(RwLock::new(std::collections::VecDeque::new())),
+        latency_events: Arc::new(dashmap::DashMap::new()),
     };
     
     if let Some(ref aof) = server_ctx.aof {
@@ -170,12 +191,58 @@ async fn run_server(
 
     // Background task to clean up expired keys
     let databases_for_cleanup = server_ctx.databases.clone();
+    let server_ctx_for_cleanup = server_ctx.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
         loop {
             interval.tick().await;
-            for db_lock in databases_for_cleanup.iter() {
-                db_lock.write().unwrap().retain(|_, v| !v.is_expired());
+            for (db_idx, db_lock) in databases_for_cleanup.iter().enumerate() {
+                let mut expired_keys = Vec::new();
+                {
+                    let db = db_lock.write().unwrap();
+                    db.retain(|k, v| {
+                        if v.is_expired() {
+                            expired_keys.push(k.clone());
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                }
+                
+                for key in expired_keys {
+                    cmd::notify::notify_keyspace_event(&server_ctx_for_cleanup, cmd::notify::NOTIFY_EXPIRED, "expired", &key, db_idx).await;
+                }
+            }
+        }
+    });
+
+    // Background task for periodic RDB save
+    let server_ctx_for_save = server_ctx.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            
+            let dirty = server_ctx_for_save.dirty.load(Ordering::Relaxed);
+            let last_save = server_ctx_for_save.last_save_time.load(Ordering::Relaxed);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            let elapsed = now - last_save;
+
+            let mut trigger_save = false;
+            for (secs, changes) in &server_ctx_for_save.config.save_params {
+                if elapsed >= (*secs as i64) && dirty >= *changes {
+                    trigger_save = true;
+                    break;
+                }
+            }
+
+            if trigger_save && dirty > 0 {
+                info!("Configured save reached ({} changes, {} seconds). Starting background save.", dirty, elapsed);
+                cmd::save::bgsave(&[], &server_ctx_for_save);
             }
         }
     });
@@ -200,6 +267,8 @@ async fn run_server(
         tokio::spawn(async move {
             // Shutdown signal
             let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+            let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+            let tx_for_conn = tx.clone();
 
             {
                 let flags = String::from("N");
@@ -215,14 +284,12 @@ async fn run_server(
                     connect_time: std::time::Instant::now(),
                     last_activity: std::time::Instant::now(),
                     shutdown_tx: Some(shutdown_tx.clone()),
+                    msg_sender: Some(tx_for_conn.clone()),
                 };
                 server_ctx_cloned.clients.insert(connection_id, ci);
             }
             let (read_half, write_half) = socket.into_split();
             
-            let (tx, mut rx) = tokio::sync::mpsc::channel(32);
-            let tx_for_conn = tx.clone();
-
             // Writer task
             tokio::spawn(async move {
                 let mut writer = BufWriter::new(write_half);

@@ -1,5 +1,6 @@
 use crate::resp::Resp;
 use bytes::Bytes;
+use crate::cmd::{get_command_keys, command_name};
 
 struct CommandInfo {
     name: &'static str,
@@ -173,6 +174,14 @@ const COMMAND_TABLE: &[CommandInfo] = &[
     },
     CommandInfo {
         name: "del",
+        arity: -2,
+        flags: &["write", "fast"],
+        first_key: 1,
+        last_key: -1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "unlink",
         arity: -2,
         flags: &["write", "fast"],
         first_key: 1,
@@ -1124,6 +1133,14 @@ const COMMAND_TABLE: &[CommandInfo] = &[
         step: 0,
     },
     CommandInfo {
+        name: "memory",
+        arity: -2,
+        flags: &["random", "movablekeys"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
         name: "info",
         arity: -1,
         flags: &["random", "loading", "stale"],
@@ -1459,33 +1476,170 @@ const COMMAND_TABLE: &[CommandInfo] = &[
         last_key: 1,
         step: 1,
     },
+    CommandInfo {
+        name: "copy",
+        arity: -3,
+        flags: &["write", "denyoom"],
+        first_key: 1,
+        last_key: 2,
+        step: 1,
+    },
+    CommandInfo {
+        name: "object",
+        arity: -2,
+        flags: &["readonly", "random"],
+        first_key: 2,
+        last_key: 2,
+        step: 1,
+    },
+    CommandInfo {
+        name: "smismember",
+        arity: -3,
+        flags: &["readonly", "fast"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "zmscore",
+        arity: -3,
+        flags: &["readonly", "fast"],
+        first_key: 1,
+        last_key: 1,
+        step: 1,
+    },
+    CommandInfo {
+        name: "lastsave",
+        arity: 1,
+        flags: &["random", "fast"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
+        name: "role",
+        arity: 1,
+        flags: &["noscript", "fast", "loading", "stale"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
+        name: "time",
+        arity: 1,
+        flags: &["random", "fast"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
+    CommandInfo {
+        name: "latency",
+        arity: -2,
+        flags: &["admin", "noscript", "loading", "stale"],
+        first_key: 0,
+        last_key: 0,
+        step: 0,
+    },
 ];
 
 pub fn command(items: &[Resp]) -> Resp {
-    if items.len() != 1 {
-        return Resp::Error("ERR wrong number of arguments for 'command'".to_string());
+    if items.len() > 1 {
+        let subcommand = match &items[1] {
+            Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_uppercase(),
+            Resp::SimpleString(s) => String::from_utf8_lossy(s).to_uppercase(),
+            _ => return Resp::Error("ERR syntax error".to_string()),
+        };
+
+        match subcommand.as_str() {
+            "COUNT" => {
+                return Resp::Integer(COMMAND_TABLE.len() as i64);
+            }
+            "INFO" => {
+                let mut commands = Vec::new();
+                if items.len() == 2 {
+                    // Return all info
+                    for cmd in COMMAND_TABLE {
+                        commands.push(get_command_info(cmd));
+                    }
+                } else {
+                    for i in 2..items.len() {
+                        let name = match &items[i] {
+                            Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_lowercase(),
+                            Resp::SimpleString(s) => String::from_utf8_lossy(s).to_lowercase(),
+                            _ => continue,
+                        };
+                        if let Some(cmd) = COMMAND_TABLE.iter().find(|c| c.name == name) {
+                            commands.push(get_command_info(cmd));
+                        } else {
+                            commands.push(Resp::BulkString(None));
+                        }
+                    }
+                }
+                return Resp::Array(Some(commands));
+            }
+            "GETKEYS" => {
+                if items.len() < 3 {
+                    return Resp::Error("ERR wrong number of arguments for 'command|getkeys' command".to_string());
+                }
+                let cmd_bytes = match &items[2] {
+                    Resp::BulkString(Some(b)) => b,
+                    Resp::SimpleString(s) => s,
+                    _ => return Resp::Error("ERR invalid command name".to_string()),
+                };
+                let cmd_type = command_name(cmd_bytes);
+                if cmd_type == crate::cmd::Command::Unknown {
+                    return Resp::Error(format!("ERR Unknown command '{}'", String::from_utf8_lossy(cmd_bytes)));
+                }
+
+                let keys = get_command_keys(cmd_type, &items[2..]);
+                let mut res = Vec::new();
+                for key in keys {
+                    res.push(Resp::BulkString(Some(Bytes::from(key))));
+                }
+                return Resp::Array(Some(res));
+            }
+            "HELP" => {
+                let help = vec![
+                    "COMMAND - Return details about all Redis commands.",
+                    "COMMAND COUNT - Return the total number of commands.",
+                    "COMMAND INFO <command-name> [<command-name> ...] - Return details about specific commands.",
+                    "COMMAND GETKEYS <command> <arg> [<arg> ...] - Extract keys from a given command.",
+                    "COMMAND HELP - Prints this help message.",
+                ];
+                let mut res = Vec::new();
+                for line in help {
+                    res.push(Resp::SimpleString(Bytes::from(line)));
+                }
+                return Resp::Array(Some(res));
+            }
+            _ => return Resp::Error(format!("ERR unknown subcommand or wrong number of arguments for 'COMMAND {}'", subcommand)),
+        }
     }
 
     let mut commands = Vec::new();
     for cmd in COMMAND_TABLE {
-        let mut info = Vec::new();
-        info.push(Resp::SimpleString(Bytes::from(cmd.name)));
-        info.push(Resp::Integer(cmd.arity));
-        
-        let mut flags = Vec::new();
-        for flag in cmd.flags {
-            flags.push(Resp::SimpleString(Bytes::from(*flag)));
-        }
-        info.push(Resp::Array(Some(flags)));
-
-        info.push(Resp::Integer(cmd.first_key));
-        info.push(Resp::Integer(cmd.last_key));
-        info.push(Resp::Integer(cmd.step));
-
-        commands.push(Resp::Array(Some(info)));
+        commands.push(get_command_info(cmd));
     }
 
     Resp::Array(Some(commands))
+}
+
+fn get_command_info(cmd: &CommandInfo) -> Resp {
+    let mut info = Vec::new();
+    info.push(Resp::SimpleString(Bytes::from(cmd.name)));
+    info.push(Resp::Integer(cmd.arity));
+    
+    let mut flags = Vec::new();
+    for flag in cmd.flags {
+        flags.push(Resp::SimpleString(Bytes::from(*flag)));
+    }
+    info.push(Resp::Array(Some(flags)));
+
+    info.push(Resp::Integer(cmd.first_key));
+    info.push(Resp::Integer(cmd.last_key));
+    info.push(Resp::Integer(cmd.step));
+
+    Resp::Array(Some(info))
 }
 
 pub fn is_write_command(name: &str) -> bool {

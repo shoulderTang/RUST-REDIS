@@ -23,6 +23,7 @@ async fn test_slowlog_basic() {
         connect_time: std::time::Instant::now(),
         last_activity: std::time::Instant::now(),
         shutdown_tx: None,
+        msg_sender: None,
     };
     server_ctx.clients.insert(1, client_info);
 

@@ -18,6 +18,7 @@ async fn test_client_list_basic() {
         connect_time: std::time::Instant::now() - std::time::Duration::from_secs(2),
         last_activity: std::time::Instant::now() - std::time::Duration::from_secs(1),
         shutdown_tx: None,
+        msg_sender: None,
     };
     server_ctx.clients.insert(ci.id, ci);
 
@@ -61,6 +62,7 @@ async fn test_client_list_multiple() {
         connect_time: std::time::Instant::now(),
         last_activity: std::time::Instant::now(),
         shutdown_tx: None,
+        msg_sender: None,
     };
     let ci2 = ClientInfo {
         id: 3,
@@ -74,6 +76,7 @@ async fn test_client_list_multiple() {
         connect_time: std::time::Instant::now(),
         last_activity: std::time::Instant::now(),
         shutdown_tx: None,
+        msg_sender: None,
     };
     server_ctx.clients.insert(ci1.id, ci1);
     server_ctx.clients.insert(ci2.id, ci2);
@@ -114,6 +117,7 @@ async fn test_client_kill_id() {
         connect_time: std::time::Instant::now(),
         last_activity: std::time::Instant::now(),
         shutdown_tx: Some(tx),
+        msg_sender: None,
     };
     server_ctx.clients.insert(ci.id, ci);
     
@@ -149,6 +153,7 @@ async fn test_client_kill_addr() {
         connect_time: std::time::Instant::now(),
         last_activity: std::time::Instant::now(),
         shutdown_tx: Some(tx),
+        msg_sender: None,
     };
     server_ctx.clients.insert(ci.id, ci);
     
@@ -184,6 +189,7 @@ async fn test_client_kill_legacy() {
         connect_time: std::time::Instant::now(),
         last_activity: std::time::Instant::now(),
         shutdown_tx: Some(tx),
+        msg_sender: None,
     };
     server_ctx.clients.insert(ci.id, ci);
     
@@ -219,6 +225,7 @@ async fn test_client_setname() {
         connect_time: std::time::Instant::now(),
         last_activity: std::time::Instant::now(),
         shutdown_tx: None,
+        msg_sender: None,
     };
     server_ctx.clients.insert(ci.id, ci);
 
@@ -256,6 +263,7 @@ async fn test_client_setname_invalid() {
         connect_time: std::time::Instant::now(),
         last_activity: std::time::Instant::now(),
         shutdown_tx: None,
+        msg_sender: None,
     };
     server_ctx.clients.insert(ci.id, ci);
 

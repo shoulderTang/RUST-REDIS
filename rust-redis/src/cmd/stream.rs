@@ -18,7 +18,7 @@ fn as_bytes(resp: &Resp) -> Option<Bytes> {
 }
 
 pub fn xadd(args: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
-    if args.len() < 5 || (args.len() - 3) % 2 != 0 {
+    if args.len() < 5 {
         return (Resp::Error("ERR wrong number of arguments for 'xadd' command".to_string()), None);
     }
 
@@ -27,24 +27,51 @@ pub fn xadd(args: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
         None => return (Resp::Error("ERR invalid key".to_string()), None),
     };
 
-    let id_str = match as_bytes(&args[2]) {
+    let mut arg_idx = 2;
+    let mut nomkstream = false;
+
+    // Parse NOMKSTREAM
+    if arg_idx < args.len() {
+        if let Some(b) = as_bytes(&args[arg_idx]) {
+            if String::from_utf8_lossy(&b).to_uppercase() == "NOMKSTREAM" {
+                nomkstream = true;
+                arg_idx += 1;
+            }
+        }
+    }
+
+    // Note: MAXLEN/MINID are not requested but often appear here. 
+    // For now we only handle NOMKSTREAM and then the ID.
+
+    if arg_idx >= args.len() {
+        return (Resp::Error("ERR wrong number of arguments for 'xadd' command".to_string()), None);
+    }
+
+    let id_str = match as_bytes(&args[arg_idx]) {
         Some(b) => String::from_utf8_lossy(&b).to_string(),
         None => return (Resp::Error("ERR invalid ID".to_string()), None),
     };
+    arg_idx += 1;
 
     let mut entry_fields = Vec::new();
-    let mut i = 3;
-    while i < args.len() {
-        let field = match as_bytes(&args[i]) {
+    while arg_idx < args.len() {
+        if arg_idx + 1 >= args.len() {
+            return (Resp::Error("ERR wrong number of arguments for 'xadd' command".to_string()), None);
+        }
+        let field = match as_bytes(&args[arg_idx]) {
             Some(b) => b,
             None => return (Resp::Error("ERR invalid field".to_string()), None),
         };
-        let value = match as_bytes(&args[i + 1]) {
+        let value = match as_bytes(&args[arg_idx + 1]) {
             Some(b) => b,
             None => return (Resp::Error("ERR invalid value".to_string()), None),
         };
         entry_fields.push((field, value));
-        i += 2;
+        arg_idx += 2;
+    }
+
+    if entry_fields.is_empty() {
+        return (Resp::Error("ERR wrong number of arguments for 'xadd' command".to_string()), None);
     }
 
     let mut stream = if let Some(mut entry) = db.get_mut(&key) {
@@ -54,6 +81,9 @@ pub fn xadd(args: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
             return (Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()), None);
         }
     } else {
+        if nomkstream {
+            return (Resp::BulkString(None), None);
+        }
         Stream::new()
     };
 
@@ -610,6 +640,46 @@ pub fn xgroup(args: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
             }
         } else {
              return (Resp::Integer(0), None);
+        }
+    } else if subcommand == "CREATECONSUMER" {
+        if args.len() < 5 {
+             return (Resp::Error("ERR wrong number of arguments for 'xgroup' command".to_string()), None);
+        }
+        let key = match as_bytes(&args[2]) {
+            Some(b) => b,
+            None => return (Resp::Error("ERR invalid key".to_string()), None),
+        };
+        let group_name = match as_bytes(&args[3]) {
+            Some(b) => String::from_utf8_lossy(&b).to_string(),
+            None => return (Resp::Error("ERR invalid group name".to_string()), None),
+        };
+        let consumer_name = match as_bytes(&args[4]) {
+            Some(b) => String::from_utf8_lossy(&b).to_string(),
+            None => return (Resp::Error("ERR invalid consumer name".to_string()), None),
+        };
+
+        if let Some(mut entry) = db.get_mut(&key) {
+            if let Value::Stream(stream) = &mut entry.value {
+                if let Some(group) = stream.groups.get_mut(&group_name) {
+                    if group.consumers.contains_key(&consumer_name) {
+                        return (Resp::Integer(0), None);
+                    }
+                    group.consumers.insert(consumer_name.clone(), Consumer::new(consumer_name));
+                    
+                    // Log command
+                    let mut log_args = Vec::with_capacity(args.len());
+                    for arg in args {
+                        log_args.push(arg.clone());
+                    }
+                    return (Resp::Integer(1), Some(Resp::Array(Some(log_args))));
+                } else {
+                    return (Resp::Error("NOGROUP No such consumer group".to_string()), None);
+                }
+            } else {
+                return (Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()), None);
+            }
+        } else {
+             return (Resp::Error("ERR no such key".to_string()), None);
         }
     } else {
         (Resp::Error("ERR unknown subcommand".to_string()), None)

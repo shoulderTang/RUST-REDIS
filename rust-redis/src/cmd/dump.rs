@@ -22,7 +22,7 @@ pub fn dump(items: &[Resp], db: &Db) -> Resp {
 
     let mut buf = Vec::new();
     {
-        let mut encoder = RdbEncoder::new(&mut buf);
+        let mut encoder = RdbEncoder::new(&mut buf, false, true);
         if let Err(_) = encoder.dump_value(&entry.value) {
              return Resp::Error("ERR failed to dump value".to_string());
         }
@@ -65,19 +65,41 @@ pub fn restore(items: &[Resp], db: &Db) -> Resp {
 
     let mut replace = false;
     let mut absttl = false;
+    let mut idletime: Option<u64> = None;
+    let mut freq: Option<u32> = None;
 
     // Parse options
-    if items.len() > 4 {
-        for i in 4..items.len() {
-             if let Some(arg) = as_bytes(&items[i]) {
-                 let s = String::from_utf8_lossy(&arg).to_uppercase();
-                 match s.as_str() {
-                     "REPLACE" => replace = true,
-                     "ABSTTL" => absttl = true,
-                     _ => {}
-                 }
-             }
+    let mut i = 4;
+    while i < items.len() {
+        if let Some(arg) = as_bytes(&items[i]) {
+            let s = String::from_utf8_lossy(&arg).to_uppercase();
+            match s.as_str() {
+                "REPLACE" => replace = true,
+                "ABSTTL" => absttl = true,
+                "IDLETIME" => {
+                    if i + 1 < items.len() {
+                        if let Some(val) = as_bytes(&items[i+1]) {
+                            if let Ok(v) = String::from_utf8_lossy(val).parse::<u64>() {
+                                idletime = Some(v);
+                            }
+                        }
+                        i += 1;
+                    }
+                }
+                "FREQ" => {
+                    if i + 1 < items.len() {
+                        if let Some(val) = as_bytes(&items[i+1]) {
+                            if let Ok(v) = String::from_utf8_lossy(val).parse::<u32>() {
+                                freq = Some(v);
+                            }
+                        }
+                        i += 1;
+                    }
+                }
+                _ => {}
+            }
         }
+        i += 1;
     }
 
     if db.contains_key(key.as_slice()) && !replace {
@@ -136,7 +158,16 @@ pub fn restore(items: &[Resp], db: &Db) -> Resp {
         None
     };
 
-    db.insert(bytes::Bytes::from(key), Entry::new(value, expire_at));
+    let mut entry = Entry::new_with_expire(value, expire_at);
+    if let Some(idle) = idletime {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        entry.lru = now.saturating_sub(idle);
+    }
+    if let Some(f) = freq {
+        entry.lfu = f;
+    }
+
+    db.insert(bytes::Bytes::from(key), entry);
 
     Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
 }

@@ -47,13 +47,17 @@ impl Crc64 {
 pub struct RdbEncoder<W: Write> {
     writer: W,
     crc: Crc64,
+    compression: bool,
+    checksum: bool,
 }
 
 impl<W: Write> RdbEncoder<W> {
-    pub fn new(writer: W) -> Self {
+    pub fn new(writer: W, compression: bool, checksum: bool) -> Self {
         RdbEncoder {
             writer,
             crc: Crc64::new(),
+            compression,
+            checksum,
         }
     }
 
@@ -172,7 +176,9 @@ impl<W: Write> RdbEncoder<W> {
     }
 
     fn write_string(&mut self, s: &[u8]) -> io::Result<()> {
-        // LZF compression could go here, but skipping for now
+        if self.compression && s.len() > 20 {
+            // TODO: Implement LZF compression
+        }
         self.write_len(s.len() as u64)?;
         self.writer.write_all(s)?;
         self.crc.update(s);
@@ -381,7 +387,7 @@ impl<W: Write> RdbEncoder<W> {
         }
 
         self.write_u8(RDB_OPCODE_EOF)?;
-        let checksum = self.crc.digest();
+        let checksum = if self.checksum { self.crc.digest() } else { 0 };
         self.write_u64_le(checksum)?;
 
         self.writer.flush()?;
@@ -1088,7 +1094,7 @@ impl<R: Read> RdbLoader<R> {
 pub fn rdb_save(databases: &Arc<Vec<RwLock<Db>>>, conf: &Config) -> io::Result<()> {
     let file = File::create(&conf.dbfilename)?;
     let writer = BufWriter::new(file);
-    let mut encoder = RdbEncoder::new(writer);
+    let mut encoder = RdbEncoder::new(writer, conf.rdbcompression, conf.rdbchecksum);
     encoder.save(databases)
 }
 

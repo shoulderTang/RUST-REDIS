@@ -495,6 +495,57 @@ pub fn zscore(items: &[Resp], db: &Db) -> Resp {
     }
 }
 
+pub fn zmscore(items: &[Resp], db: &Db) -> Resp {
+    if items.len() < 3 {
+        return Resp::Error("ERR wrong number of arguments for 'ZMSCORE'".to_string());
+    }
+    let key = match &items[1] {
+        Resp::BulkString(Some(b)) => b.clone(),
+        Resp::SimpleString(s) => s.clone(),
+        _ => return Resp::Error("ERR invalid key".to_string()),
+    };
+
+    let mut results = Vec::with_capacity(items.len() - 2);
+
+    if let Some(entry) = db.get(&key) {
+        if entry.is_expired() {
+            drop(entry);
+            db.remove(&key);
+            for _ in 2..items.len() {
+                results.push(Resp::BulkString(None));
+            }
+            return Resp::Array(Some(results));
+        }
+
+        match &entry.value {
+            Value::ZSet(zset) => {
+                for i in 2..items.len() {
+                    let member = match &items[i] {
+                        Resp::BulkString(Some(b)) => b,
+                        Resp::SimpleString(s) => s,
+                        _ => {
+                            results.push(Resp::BulkString(None));
+                            continue;
+                        }
+                    };
+                    if let Some(score) = zset.members.get(member) {
+                        results.push(Resp::BulkString(Some(Bytes::from(score.to_string()))));
+                    } else {
+                        results.push(Resp::BulkString(None));
+                    }
+                }
+                Resp::Array(Some(results))
+            }
+            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+        }
+    } else {
+        for _ in 2..items.len() {
+            results.push(Resp::BulkString(None));
+        }
+        Resp::Array(Some(results))
+    }
+}
+
 pub fn zcard(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 2 {
         return Resp::Error("ERR wrong number of arguments for 'ZCARD'".to_string());
