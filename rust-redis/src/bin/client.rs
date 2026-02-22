@@ -63,6 +63,14 @@ fn print_resp(r: &Resp) {
                 print_resp(it);
             }
         }
+        Resp::Multiple(items) => {
+            for it in items {
+                print_resp(it);
+            }
+        }
+        Resp::NoReply | Resp::Control(_) => {
+            // Do nothing
+        }
     }
 }
 

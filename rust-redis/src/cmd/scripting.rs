@@ -32,12 +32,7 @@ pub fn calc_sha1(script: &str) -> String {
 
 fn resp_to_lua<'lua>(lua: &'lua Lua, resp: &Resp) -> LuaResult<LuaValue<'lua>> {
     match resp {
-        Resp::SimpleString(s) => {
-            let table = lua.create_table()?;
-            let s_str = std::str::from_utf8(s).unwrap_or("");
-            table.set("ok", s_str)?;
-            Ok(LuaValue::Table(table))
-        }
+        Resp::SimpleString(s) => Ok(LuaValue::String(lua.create_string(s)?)),
         Resp::Error(e) => {
             let table = lua.create_table()?;
             table.set("err", e.as_str())?;
@@ -54,6 +49,8 @@ fn resp_to_lua<'lua>(lua: &'lua Lua, resp: &Resp) -> LuaResult<LuaValue<'lua>> {
             Ok(LuaValue::Table(table))
         }
         Resp::Array(None) => Ok(LuaValue::Boolean(false)),
+        Resp::Multiple(_) => Err(LuaError::external("Resp::Multiple not supported in Lua")),
+        Resp::NoReply | Resp::Control(_) => Ok(LuaValue::Boolean(false)),
     }
 }
 
@@ -122,7 +119,7 @@ async  fn redis_call_handler<'lua>(
 
     let frame = Resp::Array(Some(resp_args));
     // Use a local db_index to ensure SELECT in Lua doesn't affect the client connection
-    let mut local_conn_ctx = ConnectionContext::new(conn_ctx.id, conn_ctx.msg_sender.clone(), conn_ctx.shutdown.clone());
+    let mut local_conn_ctx = ConnectionContext::new(conn_ctx.id, conn_ctx.client_fd, conn_ctx.msg_sender.clone(), conn_ctx.shutdown.clone());
     local_conn_ctx.db_index = conn_ctx.db_index;
     local_conn_ctx.authenticated = conn_ctx.authenticated;
     local_conn_ctx.current_username = conn_ctx.current_username.clone();

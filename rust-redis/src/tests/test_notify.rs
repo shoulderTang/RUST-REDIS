@@ -21,7 +21,7 @@ async fn test_keyspace_notifications() {
 
     // 2. Subscribe to keyspace events for "mykey"
     let (tx, mut rx) = mpsc::channel(32);
-    let mut sub_ctx = ConnectionContext::new(1, Some(tx), None);
+    let mut sub_ctx = ConnectionContext::new(1, None, Some(tx), None);
     sub_ctx.authenticated = true;
     
     let sub_req = Resp::Array(Some(vec![
@@ -68,7 +68,7 @@ async fn test_keyevent_notifications() {
 
     // 2. Subscribe to keyevent events for "del"
     let (tx, mut rx) = mpsc::channel(32);
-    let mut sub_ctx = ConnectionContext::new(1, Some(tx), None);
+    let mut sub_ctx = ConnectionContext::new(1, None, Some(tx), None);
     sub_ctx.authenticated = true;
     
     let sub_req = Resp::Array(Some(vec![

@@ -191,7 +191,7 @@ async fn test_xreadgroup_block() {
     // Start blocking XREADGROUP in separate task
     let server_ctx_clone = server_ctx.clone();
     let handle = tokio::spawn(async move {
-        let mut conn_ctx = ConnectionContext::new(0, None, None);
+        let mut conn_ctx = ConnectionContext::new(0, None, None, None);
         conn_ctx.authenticated = true;
         let args = vec![
             Resp::BulkString(Some(Bytes::from("XREADGROUP"))),

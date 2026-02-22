@@ -75,3 +75,8 @@ mod test_memory;
 mod test_core_missing;
 mod test_stream_command_ext;
 mod test_missing_parts_2;
+mod test_replication;
+mod test_psync2;
+mod test_replica_readonly;
+mod test_min_replicas;
+mod test_diskless_sync;

@@ -26,3 +26,6 @@ Rewrite the redis in Rust language and in Rust way.
 2026.1.31 1.实现 WATCH, UNWATCH 命令。 2.实现 GEOSEARCH, GEOSEARCHSTORE 命令。 3.实现 MOVE, SWAPDB 命令。
 
 2026.2.1 补全单机版缺少的绝大部分命令实现。
+
+2026.2.22 1.实现主从复制功能。2.增加info replication子项，用于查看主从复制相关信息。3.实现waitmaster命令，用于等待主节点同步完成。
+

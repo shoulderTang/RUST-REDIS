@@ -27,7 +27,7 @@ async fn test_slowlog_basic() {
     };
     server_ctx.clients.insert(1, client_info);
 
-    let mut conn = ConnectionContext::new(1, None, None);
+    let mut conn = ConnectionContext::new(1, None, None, None);
 
     // Execute a simple command
     let req = Resp::Array(Some(vec![
@@ -97,7 +97,7 @@ async fn test_slowlog_basic() {
 #[tokio::test]
 async fn test_slowlog_config() {
     let server_ctx = crate::tests::helper::create_server_context();
-    let mut conn = ConnectionContext::new(1, None, None);
+    let mut conn = ConnectionContext::new(1, None, None, None);
 
     // Initial check (defaults from create_server_context which uses Config::default())
     // Config::default() -> slowlog_log_slower_than = 10000, slowlog_max_len = 128

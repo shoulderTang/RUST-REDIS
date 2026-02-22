@@ -57,6 +57,14 @@ async fn config_get(items: &[Resp], ctx: &ServerContext) -> Resp {
     let rdbcompression = ctx.rdbcompression.load(Ordering::Relaxed);
     let rdbchecksum = ctx.rdbchecksum.load(Ordering::Relaxed);
     let stop_writes_on_bgsave_error = ctx.stop_writes_on_bgsave_error.load(Ordering::Relaxed);
+    let repl_backlog_size = ctx.repl_backlog_size.load(Ordering::Relaxed);
+    let repl_ping_replica_period = ctx.repl_ping_replica_period.load(Ordering::Relaxed);
+    let repl_timeout = ctx.repl_timeout.load(Ordering::Relaxed);
+    let min_replicas_to_write = ctx.min_replicas_to_write.load(Ordering::Relaxed);
+    let min_replicas_max_lag = ctx.min_replicas_max_lag.load(Ordering::Relaxed);
+    let repl_diskless_sync = ctx.repl_diskless_sync.load(Ordering::Relaxed);
+    let repl_diskless_sync_delay = ctx.repl_diskless_sync_delay.load(Ordering::Relaxed);
+    let replica_read_only = ctx.replica_read_only.load(Ordering::Relaxed);
     let save_params = ctx.save_params.read().unwrap();
     let save_str = save_params.iter().map(|(s, c)| format!("{} {}", s, c)).collect::<Vec<_>>().join(" ");
 
@@ -84,6 +92,14 @@ async fn config_get(items: &[Resp], ctx: &ServerContext) -> Resp {
         ("rdbcompression", if rdbcompression { "yes".to_string() } else { "no".to_string() }),
         ("rdbchecksum", if rdbchecksum { "yes".to_string() } else { "no".to_string() }),
         ("stop-writes-on-bgsave-error", if stop_writes_on_bgsave_error { "yes".to_string() } else { "no".to_string() }),
+        ("repl-backlog-size", repl_backlog_size.to_string()),
+        ("repl-ping-replica-period", repl_ping_replica_period.to_string()),
+        ("repl-timeout", repl_timeout.to_string()),
+        ("min-replicas-to_write", min_replicas_to_write.to_string()),
+        ("min-replicas-max-lag", min_replicas_max_lag.to_string()),
+        ("repl-diskless-sync", if repl_diskless_sync { "yes".to_string() } else { "no".to_string() }),
+        ("repl-diskless-sync-delay", repl_diskless_sync_delay.to_string()),
+        ("replica-read-only", if replica_read_only { "yes".to_string() } else { "no".to_string() }),
     ];
 
     if param_lower == "*" {
@@ -222,6 +238,68 @@ async fn config_set(items: &[Resp], ctx: &ServerContext) -> Resp {
             *params = new_params;
             Resp::SimpleString(Bytes::from("OK"))
         }
+        "repl-backlog-size" => {
+            match value.parse::<usize>() {
+                Ok(v) => {
+                    ctx.repl_backlog_size.store(v, Ordering::Relaxed);
+                    Resp::SimpleString(Bytes::from("OK"))
+                }
+                Err(_) => Resp::Error("ERR value is not an integer or out of range".to_string()),
+            }
+        }
+        "repl-ping-replica-period" => {
+            match value.parse::<u64>() {
+                Ok(v) if v > 0 => {
+                    ctx.repl_ping_replica_period.store(v, Ordering::Relaxed);
+                    Resp::SimpleString(Bytes::from("OK"))
+                }
+                _ => Resp::Error("ERR value is not an integer or out of range".to_string()),
+            }
+        }
+        "repl-timeout" => {
+            match value.parse::<u64>() {
+                Ok(v) if v > 0 => {
+                    ctx.repl_timeout.store(v, Ordering::Relaxed);
+                    Resp::SimpleString(Bytes::from("OK"))
+                }
+                _ => Resp::Error("ERR value is not an integer or out of range".to_string()),
+            }
+        }
+        "min-replicas-to-write" => {
+            match value.parse::<usize>() {
+                Ok(v) => {
+                    ctx.min_replicas_to_write.store(v, Ordering::Relaxed);
+                    Resp::SimpleString(Bytes::from("OK"))
+                }
+                _ => Resp::Error("ERR value is not an integer or out of range".to_string()),
+            }
+        }
+        "min-replicas-max-lag" => {
+            match value.parse::<u64>() {
+                Ok(v) => {
+                    ctx.min_replicas_max_lag.store(v, Ordering::Relaxed);
+                    Resp::SimpleString(Bytes::from("OK"))
+                }
+                _ => Resp::Error("ERR value is not an integer or out of range".to_string()),
+            }
+        }
+        "repl-diskless-sync" => {
+            ctx.repl_diskless_sync.store(value.eq_ignore_ascii_case("yes"), Ordering::Relaxed);
+            Resp::SimpleString(Bytes::from("OK"))
+        }
+        "repl-diskless-sync-delay" => {
+            match value.parse::<u64>() {
+                Ok(v) => {
+                    ctx.repl_diskless_sync_delay.store(v, Ordering::Relaxed);
+                    Resp::SimpleString(Bytes::from("OK"))
+                }
+                _ => Resp::Error("ERR value is not an integer or out of range".to_string()),
+            }
+        }
+        "replica-read-only" => {
+            ctx.replica_read_only.store(value.eq_ignore_ascii_case("yes"), Ordering::Relaxed);
+            Resp::SimpleString(Bytes::from("OK"))
+        }
         _ => Resp::Error("ERR Unsupported CONFIG parameter".to_string()),
     }
 }
@@ -258,6 +336,16 @@ async fn config_rewrite(_items: &[Resp], ctx: &ServerContext) -> Resp {
         append_cfg("rdbchecksum", if ctx.rdbchecksum.load(Ordering::Relaxed) { "yes" } else { "no" });
         // stop-writes-on-bgsave-error
         append_cfg("stop-writes-on-bgsave-error", if ctx.stop_writes_on_bgsave_error.load(Ordering::Relaxed) { "yes" } else { "no" });
+        // replica-read-only
+        append_cfg("replica-read-only", if ctx.replica_read_only.load(Ordering::Relaxed) { "yes" } else { "no" });
+        // min-replicas-to-write
+        append_cfg("min_replicas_to_write", &ctx.min_replicas_to_write.load(Ordering::Relaxed).to_string());
+        // min-replicas-max-lag
+        append_cfg("min_replicas_max_lag", &ctx.min_replicas_max_lag.load(Ordering::Relaxed).to_string());
+        // repl-diskless-sync
+        append_cfg("repl-diskless-sync", if ctx.repl_diskless_sync.load(Ordering::Relaxed) { "yes" } else { "no" });
+        // repl-diskless-sync-delay
+        append_cfg("repl-diskless-sync-delay", &ctx.repl_diskless_sync_delay.load(Ordering::Relaxed).to_string());
         // save
         {
             let params = ctx.save_params.read().unwrap();

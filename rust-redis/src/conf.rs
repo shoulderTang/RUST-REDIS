@@ -69,6 +69,14 @@ pub struct Config {
     pub rdbcompression: bool,
     pub rdbchecksum: bool,
     pub stop_writes_on_bgsave_error: bool,
+    pub repl_backlog_size: usize,
+    pub repl_ping_replica_period: u64,
+    pub repl_timeout: u64,
+    pub replica_read_only: bool,
+    pub min_replicas_to_write: usize,
+    pub min_replicas_max_lag: u64,
+    pub repl_diskless_sync: bool,
+    pub repl_diskless_sync_delay: u64,
 }
 
 impl Default for Config {
@@ -97,6 +105,14 @@ impl Default for Config {
             rdbcompression: true,
             rdbchecksum: true,
             stop_writes_on_bgsave_error: true,
+            repl_backlog_size: 1024,
+            repl_ping_replica_period: 10,
+            repl_timeout: 60,
+            replica_read_only: true,
+            min_replicas_to_write: 0,
+            min_replicas_max_lag: 10,
+            repl_diskless_sync: false,
+            repl_diskless_sync_delay: 5,
         }
     }
 }
@@ -219,6 +235,72 @@ pub fn load_config(path: Option<&str>) -> io::Result<Config> {
                         parts[1], cfg.maxmemory
                     );
                 }
+            }
+            "repl-backlog-size" if parts.len() >= 2 => {
+                if let Ok(bs) = parts[1].parse::<usize>() {
+                    cfg.repl_backlog_size = bs;
+                } else {
+                    warn!(
+                        "invalid repl-backlog-size value '{}', keep previous {}",
+                        parts[1], cfg.repl_backlog_size
+                    );
+                }
+            }
+            "repl-ping-replica-period" if parts.len() >= 2 => {
+                if let Ok(iv) = parts[1].parse::<u64>() {
+                    cfg.repl_ping_replica_period = iv;
+                } else {
+                    warn!(
+                        "invalid repl-ping-replica-period value '{}', keep previous {}",
+                        parts[1], cfg.repl_ping_replica_period
+                    );
+                }
+            }
+            "repl-timeout" if parts.len() >= 2 => {
+                if let Ok(iv) = parts[1].parse::<u64>() {
+                    cfg.repl_timeout = iv;
+                } else {
+                    warn!(
+                        "invalid repl-timeout value '{}', keep previous {}",
+                        parts[1], cfg.repl_timeout
+                    );
+                }
+            }
+            "min-replicas-to-write" if parts.len() >= 2 => {
+                if let Ok(iv) = parts[1].parse::<usize>() {
+                    cfg.min_replicas_to_write = iv;
+                } else {
+                    warn!(
+                        "invalid min-replicas-to-write value '{}', keep previous {}",
+                        parts[1], cfg.min_replicas_to_write
+                    );
+                }
+            }
+            "min-replicas-max-lag" if parts.len() >= 2 => {
+                if let Ok(iv) = parts[1].parse::<u64>() {
+                    cfg.min_replicas_max_lag = iv;
+                } else {
+                    warn!(
+                        "invalid min-replicas-max-lag value '{}', keep previous {}",
+                        parts[1], cfg.min_replicas_max_lag
+                    );
+                }
+            }
+            "repl-diskless-sync" if parts.len() >= 2 => {
+                cfg.repl_diskless_sync = parts[1].eq_ignore_ascii_case("yes");
+            }
+            "repl-diskless-sync-delay" if parts.len() >= 2 => {
+                if let Ok(iv) = parts[1].parse::<u64>() {
+                    cfg.repl_diskless_sync_delay = iv;
+                } else {
+                    warn!(
+                        "invalid repl-diskless-sync-delay value '{}', keep previous {}",
+                        parts[1], cfg.repl_diskless_sync_delay
+                    );
+                }
+            }
+            "replica-read-only" if parts.len() >= 2 => {
+                cfg.replica_read_only = parts[1].eq_ignore_ascii_case("yes");
             }
             "maxmemory-policy" if parts.len() >= 2 => {
                 cfg.maxmemory_policy = match parts[1].to_lowercase().as_str() {

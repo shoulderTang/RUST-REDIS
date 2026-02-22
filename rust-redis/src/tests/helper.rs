@@ -44,12 +44,22 @@ pub fn create_server_context() -> ServerContext {
         blocking_zset_waiters: Arc::new(DashMap::new()),
         pubsub_channels: Arc::new(DashMap::new()),
         pubsub_patterns: Arc::new(DashMap::new()),
-        run_id,
+        run_id: Arc::new(RwLock::new(run_id)),
+        replid2: Arc::new(RwLock::new("0000000000000000000000000000000000000000".to_string())),
+        second_repl_offset: Arc::new(std::sync::atomic::AtomicI64::new(-1)),
         start_time: std::time::Instant::now(),
         client_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         blocked_client_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         clients: Arc::new(DashMap::new()),
         monitors: Arc::new(DashMap::new()),
+        replicas: Arc::new(DashMap::new()),
+        repl_backlog: Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
+        repl_backlog_size: Arc::new(std::sync::atomic::AtomicUsize::new(1024)),
+        repl_ping_replica_period: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+        repl_timeout: Arc::new(std::sync::atomic::AtomicU64::new(60)),
+        repl_offset: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        replica_ack: Arc::new(DashMap::new()),
+        replica_ack_time: Arc::new(DashMap::new()),
         slowlog: Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new())),
         slowlog_next_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         slowlog_max_len: Arc::new(std::sync::atomic::AtomicUsize::new(128)),
@@ -60,6 +70,11 @@ pub fn create_server_context() -> ServerContext {
         rdbcompression: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         rdbchecksum: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         stop_writes_on_bgsave_error: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        replica_read_only: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        min_replicas_to_write: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        min_replicas_max_lag: Arc::new(std::sync::atomic::AtomicU64::new(10)),
+        repl_diskless_sync: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        repl_diskless_sync_delay: Arc::new(std::sync::atomic::AtomicU64::new(5)),
         maxmemory_policy: Arc::new(RwLock::new(maxmemory_policy)),
         maxmemory_samples: Arc::new(std::sync::atomic::AtomicUsize::new(maxmemory_samples)),
         save_params: Arc::new(RwLock::new(save_params)),
@@ -71,11 +86,18 @@ pub fn create_server_context() -> ServerContext {
         tracking_clients: Arc::new(DashMap::new()),
         acl_log: Arc::new(RwLock::new(std::collections::VecDeque::new())),
         latency_events: Arc::new(DashMap::new()),
+        replication_role: Arc::new(RwLock::new(crate::cmd::ReplicationRole::Master)),
+        master_host: Arc::new(RwLock::new(None)),
+        master_port: Arc::new(RwLock::new(None)),
+        repl_waiters: Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
+        rdb_child_pid: Arc::new(std::sync::atomic::AtomicI32::new(-1)),
+        rdb_sync_client_id: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        master_link_established: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     }
 }
 
 pub fn create_connection_context() -> ConnectionContext {
-    let mut ctx = ConnectionContext::new(0, None, None);
+    let mut ctx = ConnectionContext::new(0, None, None, None);
     ctx.authenticated = true;
     ctx
 }

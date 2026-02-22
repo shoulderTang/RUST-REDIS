@@ -96,3 +96,73 @@ async fn test_config_maxmemory() {
         _ => panic!("expected Array response"),
     }
 }
+
+#[tokio::test]
+async fn test_config_replication_params() {
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
+
+    // Set repl-backlog-size
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("CONFIG"))),
+        Resp::BulkString(Some(Bytes::from("SET"))),
+        Resp::BulkString(Some(Bytes::from("repl-backlog-size"))),
+        Resp::BulkString(Some(Bytes::from("2048"))),
+    ]));
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
+
+    // Verify repl-backlog-size
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("CONFIG"))),
+        Resp::BulkString(Some(Bytes::from("GET"))),
+        Resp::BulkString(Some(Bytes::from("repl-backlog-size"))),
+    ]));
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    match res {
+        Resp::Array(Some(items)) => {
+            assert_eq!(items.len(), 2);
+            match &items[0] {
+                Resp::BulkString(Some(b)) => assert_eq!(String::from_utf8_lossy(b), "repl-backlog-size"),
+                _ => panic!("expected repl-backlog-size key"),
+            }
+            match &items[1] {
+                Resp::BulkString(Some(b)) => assert_eq!(String::from_utf8_lossy(b), "2048"),
+                _ => panic!("expected repl-backlog-size value 2048"),
+            }
+        }
+        _ => panic!("expected Array response"),
+    }
+
+    // Set repl-ping-replica-period
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("CONFIG"))),
+        Resp::BulkString(Some(Bytes::from("SET"))),
+        Resp::BulkString(Some(Bytes::from("repl-ping-replica-period"))),
+        Resp::BulkString(Some(Bytes::from("2"))),
+    ]));
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
+
+    // Verify repl-ping-replica-period
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("CONFIG"))),
+        Resp::BulkString(Some(Bytes::from("GET"))),
+        Resp::BulkString(Some(Bytes::from("repl-ping-replica-period"))),
+    ]));
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    match res {
+        Resp::Array(Some(items)) => {
+            assert_eq!(items.len(), 2);
+            match &items[0] {
+                Resp::BulkString(Some(b)) => assert_eq!(String::from_utf8_lossy(b), "repl-ping-replica-period"),
+                _ => panic!("expected repl-ping-replica-period key"),
+            }
+            match &items[1] {
+                Resp::BulkString(Some(b)) => assert_eq!(String::from_utf8_lossy(b), "2"),
+                _ => panic!("expected repl-ping-replica-period value 2"),
+            }
+        }
+        _ => panic!("expected Array response"),
+    }
+}

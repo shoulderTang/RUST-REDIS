@@ -12,6 +12,12 @@ pub enum Resp {
     Integer(i64),
     BulkString(Option<Bytes>),
     Array(Option<Vec<Resp>>),
+    #[allow(dead_code)]
+    Multiple(Vec<Resp>),
+    #[allow(dead_code)]
+    NoReply,
+    #[allow(dead_code)]
+    Control(String),
 }
 
 async fn read_line<R>(reader: &mut R) -> io::Result<Option<String>>
@@ -49,10 +55,41 @@ async fn read_bulk_string<R>(reader: &mut R) -> io::Result<Option<Resp>>
 where
     R: AsyncBufReadExt + AsyncReadExt + Unpin,
 {
-    let len = match read_integer_line(reader).await? {
+    let line = match read_line(reader).await? {
         Some(l) => l,
         None => return Ok(None),
     };
+
+    if line.starts_with("EOF:") {
+        let delimiter = &line[4..];
+        if delimiter.len() != 40 {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                "invalid EOF delimiter length",
+            ));
+        }
+        let delimiter_bytes = delimiter.as_bytes().to_vec();
+        let d_len = delimiter_bytes.len();
+
+        let mut buf = Vec::new();
+
+        loop {
+            let b = reader.read_u8().await?;
+            buf.push(b);
+            if buf.len() >= d_len {
+                if &buf[buf.len() - d_len..] == delimiter_bytes.as_slice() {
+                    buf.truncate(buf.len() - d_len);
+                    break;
+                }
+            }
+        }
+        return Ok(Some(Resp::BulkString(Some(Bytes::from(buf)))));
+    }
+
+    let len = line
+        .parse::<i64>()
+        .map_err(|_| io::Error::new(ErrorKind::InvalidData, "invalid integer"))?;
+
     if len == -1 {
         return Ok(Some(Resp::BulkString(None)));
     }
@@ -192,6 +229,12 @@ pub fn write_frame<'a>(
                     write_frame(writer, item).await?;
                 }
             }
+            Resp::Multiple(items) => {
+                for item in items {
+                    write_frame(writer, item).await?;
+                }
+            }
+            Resp::NoReply | Resp::Control(_) => {}
         }
         Ok(())
     })

@@ -156,6 +156,35 @@ async fn test_info_memory_with_config() {
 }
 
 #[tokio::test]
+async fn test_info_replication_master() {
+    let server_ctx = crate::tests::helper::create_server_context();
+    let mut conn_ctx = crate::tests::helper::create_connection_context();
+
+    let req = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from("INFO"))),
+        Resp::BulkString(Some(Bytes::from("REPLICATION"))),
+    ]));
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
+    match res {
+        Resp::BulkString(Some(info_bytes)) => {
+            let info = String::from_utf8_lossy(&info_bytes);
+            assert!(info.contains("# Replication"));
+            assert!(info.contains("role:master"));
+            assert!(info.contains("connected_slaves:0"));
+            assert!(info.contains("master_replid:"));
+            assert!(info.contains("master_replid2:0000000000000000000000000000000000000000"));
+            assert!(info.contains("master_repl_offset:"));
+            assert!(info.contains("second_repl_offset:-1"));
+            assert!(info.contains("repl_backlog_active:"));
+            assert!(info.contains("repl_backlog_size:"));
+            assert!(info.contains("repl_backlog_first_byte_offset:"));
+            assert!(info.contains("repl_backlog_histlen:"));
+        }
+        _ => panic!("expected BulkString response"),
+    }
+}
+
+#[tokio::test]
 async fn test_info_clients_with_config() {
     let mut server_ctx = crate::tests::helper::create_server_context();
     let mut config = crate::conf::Config::default();

@@ -37,6 +37,10 @@ mod tests;
 
 use rand::Rng;
 
+use std::os::unix::io::AsRawFd;
+
+use crate::resp::Resp;
+
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -154,12 +158,22 @@ async fn run_server(
         blocking_zset_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
         pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
         pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
-        run_id,
+        run_id: Arc::new(std::sync::RwLock::new(run_id)),
+        replid2: Arc::new(std::sync::RwLock::new("0000000000000000000000000000000000000000".to_string())),
+        second_repl_offset: Arc::new(std::sync::atomic::AtomicI64::new(-1)),
         start_time: std::time::Instant::now(),
         client_count: Arc::new(AtomicU64::new(0)),
         blocked_client_count: Arc::new(AtomicU64::new(0)),
         clients: std::sync::Arc::new(dashmap::DashMap::new()),
         monitors: std::sync::Arc::new(dashmap::DashMap::new()),
+        replicas: std::sync::Arc::new(dashmap::DashMap::new()),
+        repl_backlog: std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
+        repl_backlog_size: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(cfg.repl_backlog_size)),
+        repl_ping_replica_period: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(cfg.repl_ping_replica_period)),
+        repl_timeout: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(cfg.repl_timeout)),
+        repl_offset: std::sync::Arc::new(AtomicU64::new(0)),
+        replica_ack: std::sync::Arc::new(dashmap::DashMap::new()),
+        replica_ack_time: std::sync::Arc::new(dashmap::DashMap::new()),
         slowlog: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new())),
         slowlog_next_id: std::sync::Arc::new(AtomicU64::new(1)),
         slowlog_max_len: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(cfg.slowlog_max_len as usize)),
@@ -170,6 +184,11 @@ async fn run_server(
         rdbcompression: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cfg.rdbcompression)),
         rdbchecksum: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cfg.rdbchecksum)),
         stop_writes_on_bgsave_error: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cfg.stop_writes_on_bgsave_error)),
+        replica_read_only: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cfg.replica_read_only)),
+        min_replicas_to_write: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(cfg.min_replicas_to_write)),
+        min_replicas_max_lag: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(cfg.min_replicas_max_lag)),
+        repl_diskless_sync: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cfg.repl_diskless_sync)),
+        repl_diskless_sync_delay: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(cfg.repl_diskless_sync_delay)),
         maxmemory_policy: Arc::new(RwLock::new(cfg.maxmemory_policy)),
         maxmemory_samples: Arc::new(std::sync::atomic::AtomicUsize::new(cfg.maxmemory_samples)),
         save_params: Arc::new(RwLock::new(cfg.save_params.clone())),
@@ -181,6 +200,13 @@ async fn run_server(
         tracking_clients: std::sync::Arc::new(dashmap::DashMap::new()),
         acl_log: Arc::new(RwLock::new(std::collections::VecDeque::new())),
         latency_events: Arc::new(dashmap::DashMap::new()),
+        replication_role: Arc::new(RwLock::new(cmd::ReplicationRole::Master)),
+        master_host: Arc::new(RwLock::new(None)),
+        master_port: Arc::new(RwLock::new(None)),
+        repl_waiters: std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
+        rdb_child_pid: Arc::new(std::sync::atomic::AtomicI32::new(-1)),
+        rdb_sync_client_id: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        master_link_established: Arc::new(std::sync::atomic::AtomicBool::new(false)),
     };
     
     if let Some(ref aof) = server_ctx.aof {
@@ -190,39 +216,56 @@ async fn run_server(
     }
 
     // Background task to clean up expired keys
-    let databases_for_cleanup = server_ctx.databases.clone();
-    let server_ctx_for_cleanup = server_ctx.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
-        loop {
-            interval.tick().await;
-            for (db_idx, db_lock) in databases_for_cleanup.iter().enumerate() {
-                let mut expired_keys = Vec::new();
-                {
-                    let db = db_lock.write().unwrap();
-                    db.retain(|k, v| {
-                        if v.is_expired() {
-                            expired_keys.push(k.clone());
-                            false
-                        } else {
-                            true
-                        }
-                    });
-                }
-                
-                for key in expired_keys {
-                    cmd::notify::notify_keyspace_event(&server_ctx_for_cleanup, cmd::notify::NOTIFY_EXPIRED, "expired", &key, db_idx).await;
-                }
-            }
-        }
-    });
+    cmd::start_expiration_task(server_ctx.clone());
 
     // Background task for periodic RDB save
     let server_ctx_for_save = server_ctx.clone();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(1));
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100)); // Check more frequently for child exit
         loop {
             interval.tick().await;
+
+            // Check for child process exit (RDB save or AOF rewrite)
+            unsafe {
+                let mut status: libc::c_int = 0;
+                let pid = libc::waitpid(-1, &mut status, libc::WNOHANG);
+                if pid > 0 {
+                    let current_pid = server_ctx_for_save.rdb_child_pid.load(Ordering::Relaxed);
+                    if pid == current_pid {
+                         if libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0 {
+                             info!("Background saving terminated with success");
+                             server_ctx_for_save.last_save_time.store(
+                                 std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
+                                 Ordering::Relaxed
+                             );
+                             server_ctx_for_save.last_bgsave_ok.store(true, Ordering::Relaxed);
+                             server_ctx_for_save.dirty.store(0, Ordering::Relaxed);
+                             
+                             // If this was a sync RDB, notify the client
+                             let sync_client = server_ctx_for_save.rdb_sync_client_id.load(Ordering::Relaxed);
+                             if sync_client > 0 {
+                                 let sender = if let Some(ci) = server_ctx_for_save.clients.get(&sync_client) {
+                                     ci.msg_sender.clone()
+                                 } else {
+                                     None
+                                 };
+                                 if let Some(sender) = sender {
+                                     let _ = sender.send(Resp::Control("RDB_FINISHED".to_string())).await;
+                                 }
+                                 server_ctx_for_save.rdb_sync_client_id.store(0, Ordering::Relaxed);
+                             }
+                         } else {
+                             error!("Background saving failed");
+                             server_ctx_for_save.last_bgsave_ok.store(false, Ordering::Relaxed);
+                             
+                             // If this was a sync RDB, we should probably close the connection or notify error
+                             // For now just clear ID
+                             server_ctx_for_save.rdb_sync_client_id.store(0, Ordering::Relaxed);
+                         }
+                         server_ctx_for_save.rdb_child_pid.store(-1, Ordering::Relaxed);
+                    }
+                }
+            }
             
             let dirty = server_ctx_for_save.dirty.load(Ordering::Relaxed);
             let last_save = server_ctx_for_save.last_save_time.load(Ordering::Relaxed);
@@ -233,14 +276,15 @@ async fn run_server(
             let elapsed = now - last_save;
 
             let mut trigger_save = false;
-            for (secs, changes) in &server_ctx_for_save.config.save_params {
+            for (secs, changes) in &*server_ctx_for_save.save_params.read().unwrap() {
                 if elapsed >= (*secs as i64) && dirty >= *changes {
                     trigger_save = true;
                     break;
                 }
             }
 
-            if trigger_save && dirty > 0 {
+            // Only trigger if no child process is running
+            if trigger_save && dirty > 0 && server_ctx_for_save.rdb_child_pid.load(Ordering::Relaxed) == -1 {
                 info!("Configured save reached ({} changes, {} seconds). Starting background save.", dirty, elapsed);
                 cmd::save::bgsave(&[], &server_ctx_for_save);
             }
@@ -251,6 +295,7 @@ async fn run_server(
 
     loop {
         let (mut socket, addr) = listener.accept().await.unwrap();
+        let client_fd = Some(socket.as_raw_fd()); // Capture FD
         info!("accepted connection from {}", addr);
 
         let current_clients = server_ctx.client_count.load(Ordering::Relaxed);
@@ -293,18 +338,48 @@ async fn run_server(
             // Writer task
             tokio::spawn(async move {
                 let mut writer = BufWriter::new(write_half);
+                let mut buffer: Vec<Resp> = Vec::new();
+                let mut buffering = false;
+
                 while let Some(resp) = rx.recv().await {
-                    if resp::write_frame(&mut writer, &resp).await.is_err() {
-                        break;
-                    }
-                    if writer.flush().await.is_err() {
-                        break;
+                    match resp {
+                        Resp::Control(ref s) if s == "START_RDB_TRANSFER" => {
+                            buffering = true;
+                        },
+                        Resp::Control(ref s) if s == "RDB_FINISHED" => {
+                            buffering = false;
+                            for item in buffer.drain(..) {
+                                if resp::write_frame(&mut writer, &item).await.is_err() {
+                                    break;
+                                }
+                            }
+                            if writer.flush().await.is_err() {
+                                break;
+                            }
+                        },
+                        _ => {
+                            if buffering {
+                                buffer.push(resp);
+                            } else {
+                                if resp::write_frame(&mut writer, &resp).await.is_err() {
+                                    break;
+                                }
+                                if writer.flush().await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
+                // Signal shutdown
+                let _ = shutdown_tx.send(true);
             });
             
             // Frame channel
             let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel(32);
+            let _conn_ctx_id = connection_id;
+            let mut conn_ctx = cmd::ConnectionContext::new(connection_id, client_fd, Some(tx_for_conn), Some(shutdown_rx.clone()));
+            server_ctx_cloned.client_watched_dirty.insert(connection_id, conn_ctx.watched_keys_dirty.clone());
 
             // Reader Task
             tokio::spawn(async move {
@@ -320,12 +395,7 @@ async fn run_server(
                         Err(_) => break, // Error
                     }
                 }
-                // Signal shutdown
-                let _ = shutdown_tx.send(true);
             });
-
-            let mut conn_ctx = cmd::ConnectionContext::new(connection_id, Some(tx_for_conn), Some(shutdown_rx.clone()));
-            server_ctx_cloned.client_watched_dirty.insert(connection_id, conn_ctx.watched_keys_dirty.clone());
 
             loop {
                 tokio::select! {
@@ -369,6 +439,19 @@ async fn run_server(
                                             Ok(Err(e)) => error!("failed to append to AOF: {}", e),
                                             Err(_) => error!("timeout appending to AOF"),
                                         }
+                                    }
+                                    let next_off = server_ctx_cloned.repl_offset.fetch_add(1, Ordering::Relaxed) + 1;
+                                    {
+                                        if let Ok(mut q) = server_ctx_cloned.repl_backlog.lock() {
+                                            q.push_back((next_off, cmd.clone()));
+                                            let max = server_ctx_cloned.repl_backlog_size.load(Ordering::Relaxed);
+                                            while q.len() > max {
+                                                q.pop_front();
+                                            }
+                                        }
+                                    }
+                                    for entry in server_ctx_cloned.replicas.iter() {
+                                        let _ = entry.value().try_send(cmd.clone());
                                     }
                                 }
                                 if let Some(mut ci) = server_ctx_cloned.clients.get_mut(&connection_id) {
@@ -419,6 +502,7 @@ async fn run_server(
             server_ctx_cloned.client_count.fetch_sub(1, Ordering::Relaxed);
             server_ctx_cloned.clients.remove(&conn_ctx.id);
             server_ctx_cloned.monitors.remove(&conn_ctx.id);
+            server_ctx_cloned.replicas.remove(&conn_ctx.id);
         });
     }
 }

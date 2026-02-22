@@ -34,6 +34,13 @@ pub fn info(items: &[Resp], ctx: &ServerContext) -> Resp {
         info.push_str(&get_memory_info(ctx));
     }
 
+    if section == "default" || section == "all" || section == "replication" {
+        if !info.is_empty() {
+            info.push_str("\r\n");
+        }
+        info.push_str(&get_replication_info(ctx));
+    }
+
     if section == "default" || section == "all" || section == "keyspace" {
         if !info.is_empty() {
             info.push_str("\r\n");
@@ -44,12 +51,28 @@ pub fn info(items: &[Resp], ctx: &ServerContext) -> Resp {
     Resp::BulkString(Some(Bytes::from(info)))
 }
 
-pub fn role(_items: &[Resp], _ctx: &ServerContext) -> Resp {
-    let mut role_info = Vec::new();
-    role_info.push(Resp::BulkString(Some(Bytes::from("master"))));
-    role_info.push(Resp::Integer(0)); // Replication offset
-    role_info.push(Resp::Array(Some(Vec::new()))); // Slaves
-    Resp::Array(Some(role_info))
+pub fn role(_items: &[Resp], ctx: &ServerContext) -> Resp {
+    let role = *ctx.replication_role.read().unwrap();
+    match role {
+        crate::cmd::ReplicationRole::Master => {
+            let mut role_info = Vec::new();
+            role_info.push(Resp::BulkString(Some(Bytes::from("master"))));
+            role_info.push(Resp::Integer(0));
+            role_info.push(Resp::Array(Some(Vec::new())));
+            Resp::Array(Some(role_info))
+        }
+        crate::cmd::ReplicationRole::Slave => {
+            let mh = ctx.master_host.read().unwrap().clone().unwrap_or_else(|| "unknown".to_string());
+            let mp = ctx.master_port.read().unwrap().unwrap_or(0) as i64;
+            let mut role_info = Vec::new();
+            role_info.push(Resp::BulkString(Some(Bytes::from("slave"))));
+            role_info.push(Resp::BulkString(Some(Bytes::from(mh))));
+            role_info.push(Resp::Integer(mp));
+            role_info.push(Resp::BulkString(Some(Bytes::from("connect"))));
+            role_info.push(Resp::Integer(0));
+            Resp::Array(Some(role_info))
+        }
+    }
 }
 
 fn get_server_info(_ctx: &ServerContext) -> String {
@@ -151,6 +174,92 @@ fn get_memory_usage() -> (u64, u64) {
     // }
 
     (current_rss, current_rss)
+}
+
+fn get_replication_info(ctx: &ServerContext) -> String {
+    let mut s = String::new();
+    s.push_str("# Replication\r\n");
+    let role = *ctx.replication_role.read().unwrap();
+    match role {
+        crate::cmd::ReplicationRole::Master => {
+            s.push_str("role:master\r\n");
+            let connected_slaves = ctx.replicas.len();
+            s.push_str(&format!("connected_slaves:{}\r\n", connected_slaves));
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as u64;
+            let mut idx = 0;
+            for entry in ctx.replicas.iter() {
+                let id = *entry.key();
+                let addr = if let Some(ci) = ctx.clients.get(&id) {
+                    ci.addr.clone()
+                } else {
+                    String::from("unknown:0")
+                };
+                let mut ip = String::from("unknown");
+                let mut port_str = String::from("0");
+                if let Some((host, port)) = addr.rsplit_once(':') {
+                    ip = host.to_string();
+                    port_str = port.to_string();
+                }
+                let port = port_str.parse::<u16>().unwrap_or(0);
+                let offset = if let Some(v) = ctx.replica_ack.get(&id) {
+                    *v.value()
+                } else {
+                    0
+                };
+                let ack_time = if let Some(t) = ctx.replica_ack_time.get(&id) {
+                    *t.value()
+                } else {
+                    now
+                };
+                let lag = now.saturating_sub(ack_time);
+                s.push_str(&format!("slave{}:ip={},port={},state=online,offset={},lag={}\r\n", idx, ip, port, offset, lag));
+                idx += 1;
+            }
+            let master_offset = ctx.repl_offset.load(Ordering::Relaxed);
+            let repl_backlog_size = ctx.repl_backlog_size.load(Ordering::Relaxed) as u64;
+            let (first_offset, histlen) = {
+                if let Ok(q) = ctx.repl_backlog.lock() {
+                    if let Some((off, _)) = q.front() {
+                        let first = *off;
+                        let hist = master_offset.saturating_sub(first).saturating_add(1);
+                        (first, hist)
+                    } else {
+                        (0, 0)
+                    }
+                } else {
+                    (0, 0)
+                }
+            };
+            s.push_str(&format!("master_replid:{}\r\n", ctx.run_id.read().unwrap()));
+            s.push_str(&format!("master_replid2:{}\r\n", ctx.replid2.read().unwrap()));
+            s.push_str(&format!("master_repl_offset:{}\r\n", ctx.repl_offset.load(std::sync::atomic::Ordering::Relaxed)));
+            s.push_str(&format!("second_repl_offset:{}\r\n", ctx.second_repl_offset.load(std::sync::atomic::Ordering::Relaxed)));
+            let backlog_active = if repl_backlog_size > 0 { 1 } else { 0 };
+            s.push_str(&format!("repl_backlog_active:{}\r\n", backlog_active));
+            s.push_str(&format!("repl_backlog_size:{}\r\n", repl_backlog_size));
+            s.push_str(&format!("repl_backlog_first_byte_offset:{}\r\n", first_offset));
+            s.push_str(&format!("repl_backlog_histlen:{}\r\n", histlen));
+        }
+        crate::cmd::ReplicationRole::Slave => {
+            s.push_str("role:slave\r\n");
+            let mh = ctx.master_host.read().unwrap().clone().unwrap_or_else(|| "unknown".to_string());
+            let mp = ctx.master_port.read().unwrap().unwrap_or(0);
+            s.push_str(&format!("master_host:{}\r\n", mh));
+            s.push_str(&format!("master_port:{}\r\n", mp));
+            let status = if ctx.master_link_established.load(Ordering::Relaxed) {
+                "up"
+            } else {
+                "down"
+            };
+            s.push_str(&format!("master_link_status:{}\r\n", status));
+            s.push_str("master_last_io_seconds_ago:0\r\n");
+            s.push_str("master_sync_in_progress:0\r\n");
+            s.push_str("slave_read_only:1\r\n");
+            let offset = ctx.repl_offset.load(Ordering::Relaxed);
+            s.push_str(&format!("slave_repl_offset:{}\r\n", offset));
+        }
+    }
+    s
 }
 
 fn bytes_to_human(bytes: u64) -> String {

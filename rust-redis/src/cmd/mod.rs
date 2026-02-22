@@ -39,6 +39,7 @@ pub mod reset;
 pub mod notify;
 pub mod memory;
 pub mod latency;
+pub mod replication;
 
 #[derive(Debug, Clone)]
 pub struct AclLogEntry {
@@ -136,9 +137,18 @@ pub fn unwatch(conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) -> 
     Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
 }
 
+use std::os::unix::io::RawFd;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplicationState {
+    Normal,
+    TransferringRdb,
+}
+
 #[derive(Debug, Clone)]
 pub struct ConnectionContext {
     pub id: u64,
+    pub client_fd: Option<RawFd>, // Added for fork-based replication
     pub db_index: usize,
     pub authenticated: bool,
     pub current_username: String,
@@ -155,12 +165,16 @@ pub struct ConnectionContext {
     pub client_caching: bool,
     pub client_redir_id: i64, // -1 means no redirection
     pub client_tracking_broken: bool,
+    pub is_master: bool,
+    pub is_replica: bool,
+    pub replication_state: Arc<std::sync::Mutex<ReplicationState>>,
 }
 
 impl ConnectionContext {
-    pub fn new(id: u64, msg_sender: Option<tokio::sync::mpsc::Sender<Resp>>, shutdown: Option<tokio::sync::watch::Receiver<bool>>) -> Self {
+    pub fn new(id: u64, client_fd: Option<RawFd>, msg_sender: Option<tokio::sync::mpsc::Sender<Resp>>, shutdown: Option<tokio::sync::watch::Receiver<bool>>) -> Self {
         Self {
             id,
+            client_fd,
             db_index: 0,
             authenticated: false,
             current_username: "default".to_string(),
@@ -177,6 +191,9 @@ impl ConnectionContext {
             client_caching: true, // Default to true as per Redis spec for BCAST or prefix-less
             client_redir_id: -1,
             client_tracking_broken: false,
+            is_master: false,
+            is_replica: false,
+            replication_state: Arc::new(std::sync::Mutex::new(ReplicationState::Normal)),
         }
     }
 }
@@ -208,12 +225,22 @@ pub struct ServerContext {
     pub blocking_zset_waiters: Arc<DashMap<(usize, Vec<u8>), VecDeque<(tokio::sync::mpsc::Sender<(Vec<u8>, Vec<u8>, f64)>, bool)>>>,
     pub pubsub_channels: Arc<DashMap<String, DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>>,
     pub pubsub_patterns: Arc<DashMap<String, DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>>,
-    pub run_id: String,
+    pub run_id: Arc<RwLock<String>>, // Primary Replication ID
+    pub replid2: Arc<RwLock<String>>, // Secondary Replication ID
+    pub second_repl_offset: Arc<std::sync::atomic::AtomicI64>,
     pub start_time: std::time::Instant,
     pub client_count: Arc<std::sync::atomic::AtomicU64>,
     pub blocked_client_count: Arc<std::sync::atomic::AtomicU64>,
     pub clients: Arc<DashMap<u64, ClientInfo>>,
     pub monitors: Arc<DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>,
+    pub replicas: Arc<DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>,
+    pub repl_backlog: Arc<std::sync::Mutex<VecDeque<(u64, Resp)>>>,
+    pub repl_backlog_size: Arc<std::sync::atomic::AtomicUsize>,
+    pub repl_ping_replica_period: Arc<std::sync::atomic::AtomicU64>,
+    pub repl_timeout: Arc<std::sync::atomic::AtomicU64>,
+    pub repl_offset: Arc<std::sync::atomic::AtomicU64>,
+    pub replica_ack: Arc<DashMap<u64, u64>>,
+    pub replica_ack_time: Arc<DashMap<u64, u64>>,
     pub slowlog: Arc<Mutex<VecDeque<SlowLogEntry>>>,
     pub slowlog_next_id: Arc<std::sync::atomic::AtomicU64>,
     pub slowlog_max_len: Arc<std::sync::atomic::AtomicUsize>,
@@ -224,6 +251,11 @@ pub struct ServerContext {
     pub rdbcompression: Arc<std::sync::atomic::AtomicBool>,
     pub rdbchecksum: Arc<std::sync::atomic::AtomicBool>,
     pub stop_writes_on_bgsave_error: Arc<std::sync::atomic::AtomicBool>,
+    pub replica_read_only: Arc<std::sync::atomic::AtomicBool>,
+    pub min_replicas_to_write: Arc<std::sync::atomic::AtomicUsize>,
+    pub min_replicas_max_lag: Arc<std::sync::atomic::AtomicU64>,
+    pub repl_diskless_sync: Arc<std::sync::atomic::AtomicBool>,
+    pub repl_diskless_sync_delay: Arc<std::sync::atomic::AtomicU64>,
     pub maxmemory_policy: Arc<RwLock<crate::conf::EvictionPolicy>>,
     pub maxmemory_samples: Arc<std::sync::atomic::AtomicUsize>,
     pub save_params: Arc<RwLock<Vec<(u64, u64)>>>,
@@ -235,6 +267,20 @@ pub struct ServerContext {
     pub tracking_clients: Arc<DashMap<(usize, Vec<u8>), HashSet<u64>>>,
     pub acl_log: Arc<RwLock<VecDeque<AclLogEntry>>>,
     pub latency_events: Arc<DashMap<String, VecDeque<LatencyEvent>>>,
+    pub replication_role: Arc<RwLock<ReplicationRole>>,
+    pub master_host: Arc<RwLock<Option<String>>>,
+    pub master_port: Arc<RwLock<Option<u16>>>,
+    pub repl_waiters: Arc<std::sync::Mutex<VecDeque<WaitContext>>>,
+    pub rdb_child_pid: Arc<std::sync::atomic::AtomicI32>, // Added for fork tracking
+    pub rdb_sync_client_id: Arc<std::sync::atomic::AtomicU64>, // Added to track which client is syncing
+    pub master_link_established: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[derive(Debug)]
+pub struct WaitContext {
+    pub target_offset: u64,
+    pub num_replicas: usize,
+    pub tx: tokio::sync::oneshot::Sender<usize>,
 }
 
 #[derive(Clone)]
@@ -386,6 +432,9 @@ pub(crate) enum Command {
     Bgsave,
     LastSave,
     Role,
+    ReplicaOf,
+    Psync,
+    ReplConf,
     Time,
     Shutdown,
     Command,
@@ -442,7 +491,14 @@ pub(crate) enum Command {
     Echo,
     Hello,
     Reset,
+    Wait,
     Unknown,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ReplicationRole {
+    Master,
+    Slave,
 }
 
 pub(crate) fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
@@ -718,6 +774,57 @@ pub async fn process_frame(
                         client_id: conn_ctx.id,
                     });
                     (e, None, Some(cmd_name))
+                } else if server_ctx.replica_read_only.load(Ordering::Relaxed)
+                    && *server_ctx.replication_role.read().unwrap() == ReplicationRole::Slave
+                    && std::str::from_utf8(cmd_raw).map_or(false, |s| command::is_write_command(s))
+                    // Exceptions: master sending commands to replica
+                    // How do we distinguish master connection? 
+                    // Usually master connection doesn't go through process_frame this way or is specially marked?
+                    // In current impl, master connection is handled in replication_worker which calls process_frame.
+                    // But master connection context might need a flag.
+                    // Actually, replication_worker calls process_frame. We should mark ConnectionContext.
+                    && !conn_ctx.is_master
+                {
+                     (
+                        Resp::Error("READONLY You can't write against a read only replica.".to_string()),
+                        None,
+                        Some(cmd_name),
+                    )
+                } else if server_ctx.replica_read_only.load(Ordering::Relaxed)
+                    && *server_ctx.replication_role.read().unwrap() == ReplicationRole::Slave
+                    && std::str::from_utf8(cmd_raw).map_or(false, |s| command::is_write_command(s))
+                    && !conn_ctx.is_master
+                {
+                     (
+                        Resp::Error("READONLY You can't write against a read only replica.".to_string()),
+                        None,
+                        Some(cmd_name),
+                    )
+                } else if server_ctx.min_replicas_to_write.load(Ordering::Relaxed) > 0
+                    && *server_ctx.replication_role.read().unwrap() == ReplicationRole::Master
+                    && std::str::from_utf8(cmd_raw).map_or(false, |s| command::is_write_command(s))
+                    && {
+                        let min_replicas = server_ctx.min_replicas_to_write.load(Ordering::Relaxed);
+                        let max_lag = server_ctx.min_replicas_max_lag.load(Ordering::Relaxed);
+                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                        
+                        let healthy_replicas = server_ctx.replica_ack_time.iter()
+                            .filter(|r| now.saturating_sub(*r.value()) <= max_lag)
+                            .count();
+                        healthy_replicas < min_replicas
+                    }
+                {
+                    let min_replicas = server_ctx.min_replicas_to_write.load(Ordering::Relaxed);
+                    let max_lag = server_ctx.min_replicas_max_lag.load(Ordering::Relaxed);
+                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                    let healthy_replicas = server_ctx.replica_ack_time.iter()
+                        .filter(|r| now.saturating_sub(*r.value()) <= max_lag)
+                        .count();
+                    (
+                        Resp::Error(format!("NOREPLICAS Not enough good replicas to write. {} < {}", healthy_replicas, min_replicas)),
+                        None,
+                        Some(cmd_name),
+                    )
                 } else if server_ctx.maxmemory.load(Ordering::Relaxed) > 0
                     && evict::is_over_maxmemory(server_ctx.maxmemory.load(Ordering::Relaxed))
                     && std::str::from_utf8(cmd_raw).map_or(false, |s| command::is_write_command(s))
@@ -1316,6 +1423,9 @@ async fn dispatch_command(
         Command::Bgsave => (save::bgsave(items, server_ctx), None),
         Command::LastSave => (save::lastsave(items, server_ctx), None),
         Command::Role => (info::role(items, server_ctx), None),
+        Command::ReplicaOf => (replication::replicaof(items, server_ctx), None),
+        Command::Psync => (replication::psync(items, conn_ctx, server_ctx).await, None),
+        Command::ReplConf => (replication::replconf(items, conn_ctx, server_ctx), None),
         Command::Time => {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
             let mut res = Vec::new();
@@ -1393,6 +1503,7 @@ async fn dispatch_command(
         Command::SortRo => (sort::sort_ro(items, &db), None),
         Command::Watch => (watch(items, conn_ctx, server_ctx), None),
         Command::Unwatch => (unwatch(conn_ctx, server_ctx), None),
+        Command::Wait => (replication::wait(items, conn_ctx, server_ctx).await, None),
         Command::BgRewriteAof => {
             if let Some(aof) = &server_ctx.aof {
                 let aof = aof.clone();
@@ -1550,6 +1661,9 @@ pub(crate) fn command_name(raw: &[u8]) -> Command {
         m.insert("BGSAVE".to_string(), Command::Bgsave);
         m.insert("LASTSAVE".to_string(), Command::LastSave);
         m.insert("ROLE".to_string(), Command::Role);
+        m.insert("REPLICAOF".to_string(), Command::ReplicaOf);
+        m.insert("PSYNC".to_string(), Command::Psync);
+        m.insert("REPLCONF".to_string(), Command::ReplConf);
         m.insert("TIME".to_string(), Command::Time);
         m.insert("SHUTDOWN".to_string(), Command::Shutdown);
         m.insert("COMMAND".to_string(), Command::Command);
@@ -1606,9 +1720,109 @@ pub(crate) fn command_name(raw: &[u8]) -> Command {
         m.insert("ECHO".to_string(), Command::Echo);
         m.insert("HELLO".to_string(), Command::Hello);
         m.insert("RESET".to_string(), Command::Reset);
+        m.insert("WAIT".to_string(), Command::Wait);
         m
     });
 
     let s = String::from_utf8_lossy(raw).to_uppercase();
     map.get(&s).copied().unwrap_or(Command::Unknown)
+}
+
+pub fn start_expiration_task(ctx: ServerContext) {
+    let ctx_clone = ctx.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
+        loop {
+            interval.tick().await;
+            
+            // Check master role
+            let is_master = {
+                if let Ok(role) = ctx_clone.replication_role.read() {
+                    *role == ReplicationRole::Master
+                } else {
+                    false
+                }
+            };
+            
+            if !is_master {
+                continue;
+            }
+
+            for (db_idx, db_lock) in ctx_clone.databases.iter().enumerate() {
+                let mut expired_keys = Vec::new();
+                {
+                    if let Ok(db) = db_lock.write() {
+                        db.retain(|k, v| {
+                            if v.is_expired() {
+                                expired_keys.push(k.clone());
+                                false
+                            } else {
+                                true
+                            }
+                        });
+                    }
+                }
+                
+                if !expired_keys.is_empty() {
+                      let select_cmd = Resp::Array(Some(vec![
+                          Resp::BulkString(Some(bytes::Bytes::from("SELECT"))),
+                          Resp::BulkString(Some(bytes::Bytes::from(db_idx.to_string()))),
+                      ]));
+                      
+                      // 1. Append SELECT to AOF
+                      if let Some(aof_mutex) = &ctx_clone.aof {
+                          let mut aof = aof_mutex.lock().await;
+                          let _ = aof.append(&select_cmd).await;
+                      }
+ 
+                      // 2. Propagate SELECT to Replicas
+                      let next_off = ctx_clone.repl_offset.fetch_add(1, Ordering::Relaxed) + 1;
+                      {
+                          if let Ok(mut q) = ctx_clone.repl_backlog.lock() {
+                              q.push_back((next_off, select_cmd.clone()));
+                              let max = ctx_clone.repl_backlog_size.load(Ordering::Relaxed);
+                              while q.len() > max {
+                                  q.pop_front();
+                              }
+                          }
+                      }
+                      for entry in ctx_clone.replicas.iter() {
+                          let _ = entry.value().try_send(select_cmd.clone());
+                      }
+                }
+
+                for key in expired_keys {
+                    notify::notify_keyspace_event(&ctx_clone, notify::NOTIFY_EXPIRED, "expired", &key, db_idx).await;
+                    
+                    // Propagate DEL command
+                    let del_cmd = Resp::Array(Some(vec![
+                        Resp::BulkString(Some(bytes::Bytes::from("DEL"))),
+                        Resp::BulkString(Some(key.clone())),
+                    ]));
+
+                    // 1. Append to AOF
+                    if let Some(aof_mutex) = &ctx_clone.aof {
+                        let mut aof = aof_mutex.lock().await;
+                        let _ = aof.append(&del_cmd).await;
+                    }
+
+                    // 2. Propagate to Replicas
+                    let next_off = ctx_clone.repl_offset.fetch_add(1, Ordering::Relaxed) + 1;
+                    {
+                        if let Ok(mut q) = ctx_clone.repl_backlog.lock() {
+                            q.push_back((next_off, del_cmd.clone()));
+                            let max = ctx_clone.repl_backlog_size.load(Ordering::Relaxed);
+                            while q.len() > max {
+                                q.pop_front();
+                            }
+                        }
+                    }
+                    
+                    for entry in ctx_clone.replicas.iter() {
+                        let _ = entry.value().try_send(del_cmd.clone());
+                    }
+                }
+            }
+        }
+    });
 }

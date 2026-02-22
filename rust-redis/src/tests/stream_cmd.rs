@@ -43,7 +43,7 @@ async fn test_xread_block_cancellation() {
     let server_ctx_clone = server_ctx.clone();
     let handle = tokio::spawn(async move {
         // Create connection context with shutdown receiver
-        let mut conn_ctx = crate::cmd::ConnectionContext::new(1, None, Some(shutdown_rx));
+        let mut conn_ctx = crate::cmd::ConnectionContext::new(1, None, None, Some(shutdown_rx));
         
         let args = vec![
             Resp::BulkString(Some(Bytes::from("XREAD"))),

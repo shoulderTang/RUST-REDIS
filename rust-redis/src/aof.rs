@@ -90,7 +90,7 @@ impl Aof {
         let file = tokio::fs::File::open(path).await?;
         let mut reader = tokio::io::BufReader::new(file);
 
-        let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None, None);
+        let mut conn_ctx = crate::cmd::ConnectionContext::new(0, None, None, None);
         conn_ctx.authenticated = true;
         loop {
             match read_frame(&mut reader).await {
@@ -349,6 +349,14 @@ where
             }
             Resp::Array(None) => {
                 writer.write_all(b"*-1\r\n").await?;
+            }
+            Resp::Multiple(items) => {
+                for item in items {
+                    write_resp(writer, item).await?;
+                }
+            }
+            Resp::NoReply | Resp::Control(_) => {
+                // Do nothing
             }
         }
         Ok(())
