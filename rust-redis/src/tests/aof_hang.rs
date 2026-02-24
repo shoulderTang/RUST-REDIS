@@ -106,6 +106,11 @@ async fn test_aof_hang_reproduction() {
         rdb_child_pid: Arc::new(std::sync::atomic::AtomicI32::new(-1)),
         rdb_sync_client_id: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         master_link_established: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        cluster: Arc::new(RwLock::new(crate::cluster::ClusterState::new(
+            crate::cluster::NodeId("test_run_id".to_string()),
+            "127.0.0.1".to_string(),
+            6380,
+        ))),
     };
 
     let mut conn_ctx = ConnectionContext::new(1, None, None, None);

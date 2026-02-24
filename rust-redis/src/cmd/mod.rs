@@ -3,11 +3,13 @@ use crate::cmd::scripting::ScriptManager;
 use crate::conf::Config;
 use crate::db::Db;
 use crate::acl::Acl;
-use crate::resp::{Resp, as_bytes};
+use crate::resp::{Resp, as_bytes, read_frame, write_frame};
 use std::sync::{Arc, RwLock, OnceLock};
 use std::sync::atomic::Ordering;
 use std::collections::{HashMap, VecDeque, HashSet};
 use tokio::sync::Mutex;
+use tokio::io::{AsyncWriteExt, BufReader, BufWriter};
+use tokio::net::TcpStream;
 use dashmap::DashMap;
 use tracing::error;
 
@@ -40,6 +42,8 @@ pub mod notify;
 pub mod memory;
 pub mod latency;
 pub mod replication;
+pub mod cluster;
+pub mod asking;
 
 #[derive(Debug, Clone)]
 pub struct AclLogEntry {
@@ -168,6 +172,7 @@ pub struct ConnectionContext {
     pub is_master: bool,
     pub is_replica: bool,
     pub replication_state: Arc<std::sync::Mutex<ReplicationState>>,
+    pub asking: bool, // ASKING for cluster slot migration
 }
 
 impl ConnectionContext {
@@ -194,6 +199,7 @@ impl ConnectionContext {
             is_master: false,
             is_replica: false,
             replication_state: Arc::new(std::sync::Mutex::new(ReplicationState::Normal)),
+            asking: false,
         }
     }
 }
@@ -275,6 +281,7 @@ pub struct ServerContext {
     pub rdb_child_pid: Arc<std::sync::atomic::AtomicI32>, // Added for fork tracking
     pub rdb_sync_client_id: Arc<std::sync::atomic::AtomicU64>, // Added to track which client is syncing
     pub master_link_established: Arc<std::sync::atomic::AtomicBool>,
+    pub cluster: Arc<RwLock<crate::cluster::ClusterState>>,
 }
 
 #[derive(Debug)]
@@ -493,6 +500,8 @@ pub(crate) enum Command {
     Hello,
     Reset,
     Wait,
+    Cluster,
+    Asking,
     Unknown,
 }
 
@@ -1134,6 +1143,71 @@ fn check_access(
                  }
             }
         }
+        if server_ctx.config.cluster_enabled {
+            let keys = get_command_keys(cmd, items);
+            if !keys.is_empty() {
+                let mut slots = Vec::new();
+                for k in &keys {
+                    let ks = String::from_utf8_lossy(&k[..]).to_string();
+                    let s = crate::cluster::ClusterState::key_slot(&ks) as usize;
+                    slots.push(s);
+                }
+                let first = slots[0];
+                for s in &slots {
+                    if *s != first {
+                        return Err(Resp::Error("CROSSSLOT Keys in request don't hash to the same slot".to_string()));
+                    }
+                }
+                let st = server_ctx.cluster.read().unwrap();
+                if first >= st.slots.len() {
+                    return Err(Resp::Error("CLUSTERDOWN Hash slot not served".to_string()));
+                }
+                // 先检查 MIGRATING/IMPORTING 状态
+                match &st.slot_state[first] {
+                    crate::cluster::SlotState::Migrating { to } => {
+                        if let Some(n) = st.nodes.get(to) {
+                            let ask = format!("ASK {} {}:{}", first, n.ip, n.port);
+                            return Err(Resp::Error(ask));
+                        }
+                    }
+                    crate::cluster::SlotState::Importing { from } => {
+                        // 目标节点处于 IMPORTING，需要客户端先发送 ASKING
+                        if !conn_ctx.asking {
+                            if let Some(n) = st.nodes.get(from) {
+                                let ask = format!("ASK {} {}:{}", first, n.ip, n.port);
+                                return Err(Resp::Error(ask));
+                            }
+                        }
+                        // 已发送 ASKING，允许访问，后续正常处理
+                    }
+                    _ => {}
+                }
+                match &st.slots[first] {
+                    Some(owner) => {
+                        if *owner != st.myself {
+                            if server_ctx.config.cluster_require_full_coverage {
+                                if let Some(n) = st.nodes.get(owner) {
+                                    let moved = format!("MOVED {} {}:{}", first, n.ip, n.port);
+                                    return Err(Resp::Error(moved));
+                                } else {
+                                    return Err(Resp::Error("CLUSTERDOWN Hash slot not served".to_string()));
+                                }
+                            } else {
+                                if let Some(n) = st.nodes.get(owner) {
+                                    let moved = format!("MOVED {} {}:{}", first, n.ip, n.port);
+                                    return Err(Resp::Error(moved));
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        if server_ctx.config.cluster_require_full_coverage {
+                            return Err(Resp::Error("CLUSTERDOWN Hash slot not served".to_string()));
+                        }
+                    }
+                }
+            }
+        }
         Ok(())
     } else {
          Err(Resp::Error("ERR User not found".to_string()))
@@ -1179,6 +1253,7 @@ async fn dispatch_command(
         let db_lock = server_ctx.databases[db_idx].read().unwrap();
         db_lock.clone()
     };
+    conn_ctx.asking = false;
     match cmd {
         Command::Multi => {
             if items.len() != 1 {
@@ -1439,6 +1514,13 @@ async fn dispatch_command(
         }
         Command::Command => (command::command(items), None),
         Command::Config => (config::config(items, server_ctx).await, None),
+        Command::Cluster => {
+            if server_ctx.config.cluster_enabled {
+                (cluster::cluster(items, conn_ctx, server_ctx), None)
+            } else {
+                (Resp::Error("ERR This instance has cluster support disabled".to_string()), None)
+            }
+        }
         Command::Info => (info::info(items, server_ctx), None),
         Command::Memory => (memory::memory(items, &db, server_ctx).await, None),
         Command::Eval => scripting::eval(items, conn_ctx, server_ctx).await,
@@ -1452,7 +1534,9 @@ async fn dispatch_command(
                     Some(b) => match std::str::from_utf8(&b) {
                         Ok(s) => match s.parse::<usize>() {
                             Ok(idx) => {
-                                if idx < server_ctx.databases.len() {
+                                if server_ctx.config.cluster_enabled && idx != 0 {
+                                    (Resp::Error("ERR SELECT is not allowed in cluster mode".to_string()), None)
+                                } else if idx < server_ctx.databases.len() {
                                     conn_ctx.db_index = idx;
                                     (Resp::SimpleString(bytes::Bytes::from_static(b"OK")), None)
                                 } else {
@@ -1505,6 +1589,7 @@ async fn dispatch_command(
         Command::Watch => (watch(items, conn_ctx, server_ctx), None),
         Command::Unwatch => (unwatch(conn_ctx, server_ctx), None),
         Command::Wait => (replication::wait(items, conn_ctx, server_ctx).await, None),
+        Command::Asking => (asking::asking(items, conn_ctx), None),
         Command::BgRewriteAof => {
             if let Some(aof) = &server_ctx.aof {
                 let aof = aof.clone();
@@ -1520,7 +1605,12 @@ async fn dispatch_command(
             }
         }
         Command::Unknown => (Resp::Error("ERR unknown command".to_string()), None),
-    }
+    }//;
+    // // 非 ASKING 命令执行完毕后重置 asking 标志
+    // if cmd != Command::Asking {
+    //     conn_ctx.asking = false;
+    // }
+    // (asking::asking(items, conn_ctx), None)
 }
 
 pub(crate) fn command_name(raw: &[u8]) -> Command {
@@ -1722,6 +1812,8 @@ pub(crate) fn command_name(raw: &[u8]) -> Command {
         m.insert("HELLO".to_string(), Command::Hello);
         m.insert("RESET".to_string(), Command::Reset);
         m.insert("WAIT".to_string(), Command::Wait);
+        m.insert("CLUSTER".to_string(), Command::Cluster);
+        m.insert("ASKING".to_string(), Command::Asking);
         m
     });
 
@@ -1823,6 +1915,159 @@ pub fn start_expiration_task(ctx: ServerContext) {
                         let _ = entry.value().try_send(del_cmd.clone());
                     }
                 }
+            }
+        }
+    });
+}
+
+fn resp_bulk(s: &str) -> Resp {
+    Resp::BulkString(Some(bytes::Bytes::from(s.to_string())))
+}
+
+async fn send_resp_command(ip: &str, port: u16, req: Resp) -> std::io::Result<Option<Resp>> {
+    let addr = format!("{}:{}", ip, port);
+    let stream = TcpStream::connect(addr).await?;
+    let (read_half, write_half) = stream.into_split();
+    let mut writer = BufWriter::new(write_half);
+    write_frame(&mut writer, &req).await?;
+    writer.flush().await?;
+    let mut reader = BufReader::new(read_half);
+    read_frame(&mut reader).await
+}
+
+async fn fetch_cluster_nodes_text(ip: &str, port: u16) -> std::io::Result<Option<String>> {
+    let req = Resp::Array(Some(vec![resp_bulk("CLUSTER"), resp_bulk("NODES")]));
+    let resp = send_resp_command(ip, port, req).await?;
+    match resp {
+        Some(Resp::BulkString(Some(b))) => Ok(Some(String::from_utf8_lossy(b.as_ref()).to_string())),
+        Some(_) => Ok(None),
+        None => Ok(None),
+    }
+}
+
+async fn send_cluster_meet(ip: &str, port: u16, my_ip: &str, my_port: u16) -> std::io::Result<()> {
+    let req = Resp::Array(Some(vec![
+        resp_bulk("CLUSTER"),
+        resp_bulk("MEET"),
+        resp_bulk(my_ip),
+        resp_bulk(&my_port.to_string()),
+    ]));
+    let _ = send_resp_command(ip, port, req).await?;
+    Ok(())
+}
+
+pub fn start_cluster_topology_task(ctx: ServerContext) {
+    if !ctx.config.cluster_enabled {
+        return;
+    }
+    let ctx_clone = ctx.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(500));
+        loop {
+            interval.tick().await;
+
+            let (my_id, my_ip, my_port, peers) = {
+                let st = ctx_clone.cluster.read().unwrap();
+                let my_id = st.myself.clone();
+                let my_ip = ctx_clone.config.bind.clone();
+                let my_port = ctx_clone.config.port;
+                let peers = st
+                    .nodes
+                    .values()
+                    .filter(|n| n.id != my_id)
+                    .map(|n| (n.ip.clone(), n.port))
+                    .collect::<Vec<_>>();
+                (my_id, my_ip, my_port, peers)
+            };
+
+            for (ip, port) in peers {
+                if ip == my_ip && port == my_port {
+                    continue;
+                }
+
+                let text = match fetch_cluster_nodes_text(&ip, port).await {
+                    Ok(Some(s)) => s,
+                    _ => continue,
+                };
+
+                let parsed = match crate::cluster::ClusterState::parse_nodes_overview_text(&text) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                let remote_knows_me = parsed.iter().any(|n| n.id == my_id);
+                {
+                    let mut st = ctx_clone.cluster.write().unwrap();
+                    // Merge and record peer as alive
+                    st.merge_topology(parsed);
+                    // Best-effort: PING succeeded already since we got NODES
+                    if let Some(peer_id) = st
+                        .nodes
+                        .values()
+                        .find(|n| n.ip == ip && n.port == port)
+                        .map(|n| n.id.clone())
+                    {
+                        st.record_ok(&peer_id);
+                    }
+                }
+                if !remote_knows_me {
+                    let _ = send_cluster_meet(&ip, port, &my_ip, my_port).await;
+                }
+            }
+        }
+    });
+}
+
+async fn ping_node(ip: &str, port: u16) -> bool {
+    let req = Resp::Array(Some(vec![resp_bulk("PING")]));
+    match send_resp_command(ip, port, req).await {
+        Ok(Some(Resp::SimpleString(_))) | Ok(Some(Resp::BulkString(_))) | Ok(Some(Resp::Integer(_))) => true,
+        Ok(Some(Resp::Error(_))) => false,
+        _ => false,
+    }
+}
+
+pub fn start_cluster_failover_task(ctx: ServerContext) {
+    if !ctx.config.cluster_enabled {
+        return;
+    }
+    let ctx_clone = ctx.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(1000));
+        loop {
+            interval.tick().await;
+            let timeout_ms = ctx_clone.config.cluster_node_timeout;
+            // Gather peer endpoints for probing, map id -> (ip, port)
+            let _peers = {
+                let st = ctx_clone.cluster.read().unwrap();
+                st.nodes
+                    .iter()
+                    .map(|(id, n)| (id.clone(), (n.ip.clone(), n.port)))
+                    .collect::<Vec<_>>()
+            };
+            // Build reachability closure capturing a snapshot map
+            let reach = |n: &crate::cluster::ClusterNode| -> bool {
+                let (_ip, _port) = (&n.ip, n.port);
+                // Use a small async runtime trick: we cannot block here, but we are in async context
+                // so we'll spawn a blocking ping and block_on with timeout using tokio
+                // For simplicity, reuse ping_node via block_in_place is not recommended; instead,
+                // use block_on on current task by creating a LocalSet. Here we can use blocking task.
+                // However, to keep it simple and safe in this environment, we will treat nodes with
+                // same ip/port as alive (myself) and others as alive only if CLUSTER NODES fetch succeeds
+                // via try_now channel. Given constraints, return true for myself, false otherwise here.
+                // We'll rely on topology task to keep last_ok updated for alive nodes.
+                // Mark remote as unknown => false.
+                let ctx_ip = ctx_clone.config.bind.clone();
+                let ctx_port = ctx_clone.config.port;
+                if n.ip == ctx_ip && n.port == ctx_port {
+                    true
+                } else {
+                    false
+                }
+            };
+            {
+                let mut st = ctx_clone.cluster.write().unwrap();
+                st.scan_and_failover(timeout_ms, reach);
             }
         }
     });

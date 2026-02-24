@@ -30,3 +30,4 @@ Rewrite the redis in Rust language and in Rust way.
 2026.2.22 1.实现主从复制功能。2.增加info replication子项，用于查看主从复制相关信息。3.实现waitmaster命令，用于等待主节点同步完成。
 
 2026.2.24 实现哨兵模式功能。
+

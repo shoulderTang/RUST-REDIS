@@ -81,6 +81,13 @@ pub struct Config {
     pub sentinel_down_after_milliseconds: Vec<(String, u64)>, // name, ms
     pub sentinel_failover_timeout: Vec<(String, u64)>, // name, ms
     pub sentinel_parallel_syncs: Vec<(String, u32)>, // name, count
+
+    // Cluster mode configuration
+    pub cluster_enabled: bool,
+    pub cluster_node_timeout: u64,
+    pub cluster_migration_barrier: u64,
+    pub cluster_require_full_coverage: bool,
+    pub cluster_config_file: String,
 }
 
 impl Default for Config {
@@ -121,6 +128,13 @@ impl Default for Config {
             sentinel_down_after_milliseconds: Vec::new(),
             sentinel_failover_timeout: Vec::new(),
             sentinel_parallel_syncs: Vec::new(),
+
+            // Cluster mode defaults
+            cluster_enabled: false,
+            cluster_node_timeout: 15000,
+            cluster_migration_barrier: 1,
+            cluster_require_full_coverage: true,
+            cluster_config_file: "node.conf".to_string(),
         }
     }
 }
@@ -438,6 +452,35 @@ pub fn load_config(path: Option<&str>) -> io::Result<Config> {
                     }
                     _ => {}
                 }
+            }
+            "cluster-enabled" if parts.len() >= 2 => {
+                cfg.cluster_enabled = parts[1].eq_ignore_ascii_case("yes");
+            }
+            "cluster-node-timeout" if parts.len() >= 2 => {
+                if let Ok(timeout) = parts[1].parse::<u64>() {
+                    cfg.cluster_node_timeout = timeout;
+                } else {
+                    warn!(
+                        "invalid cluster-node-timeout value '{}', keep previous {}",
+                        parts[1], cfg.cluster_node_timeout
+                    );
+                }
+            }
+            "cluster-migration-barrier" if parts.len() >= 2 => {
+                if let Ok(barrier) = parts[1].parse::<u64>() {
+                    cfg.cluster_migration_barrier = barrier;
+                } else {
+                    warn!(
+                        "invalid cluster-migration-barrier value '{}', keep previous {}",
+                        parts[1], cfg.cluster_migration_barrier
+                    );
+                }
+            }
+            "cluster-require-full-coverage" if parts.len() >= 2 => {
+                cfg.cluster_require_full_coverage = parts[1].eq_ignore_ascii_case("yes");
+            }
+            "cluster-config-file" if parts.len() >= 2 => {
+                cfg.cluster_config_file = parts[1].trim_matches('"').to_string();
             }
             _ => {}
         }

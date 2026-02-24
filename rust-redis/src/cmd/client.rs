@@ -1,242 +1,149 @@
-use bytes::Bytes;
-use crate::resp::Resp;
 use crate::cmd::{ConnectionContext, ServerContext};
+use crate::resp::Resp;
+use bytes::Bytes;
 
-pub fn client(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) -> (Resp, Option<Resp>) {
+fn to_bytes<S: AsRef<str>>(s: S) -> Bytes {
+    Bytes::from(s.as_ref().to_string())
+}
+
+pub fn client(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) -> (Resp, Option<Resp>) {
     if items.len() < 2 {
         return (Resp::Error("ERR wrong number of arguments for 'client' command".to_string()), None);
     }
-    let subcmd = match &items[1] {
-        Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_uppercase(),
-        Resp::SimpleString(s) => String::from_utf8_lossy(s).to_uppercase(),
-        _ => String::new(),
+    let sub = match &items[1] {
+        Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_lowercase(),
+        _ => return (Resp::Error("ERR unknown subcommand".to_string()), None),
     };
-    match subcmd.as_str() {
-        "LIST" => {
-            let now = std::time::Instant::now();
+    match sub.as_str() {
+        "list" => {
             let mut lines = Vec::new();
-            for kv in server_ctx.clients.iter() {
-                let ci = kv.value();
-                let age = now.duration_since(ci.connect_time).as_secs();
-                let idle = now.duration_since(ci.last_activity).as_secs();
-                let line = format!(
-                    "id={} addr={} name={} age={} idle={} flags={} db={} sub={} psub={} cmd={}",
-                    ci.id,
-                    ci.addr,
-                    ci.name,
-                    age,
-                    idle,
-                    ci.flags,
-                    ci.db,
-                    ci.sub,
-                    ci.psub,
-                    ci.cmd
-                );
-                lines.push(line);
+            for entry in server_ctx.clients.iter() {
+                let c = entry.value();
+                let age = c.connect_time.elapsed().as_secs();
+                let idle = c.last_activity.elapsed().as_secs();
+                let mut fields = Vec::new();
+                fields.push(format!("id={}", c.id));
+                fields.push(format!("addr={}", c.addr));
+                fields.push(format!("name={}", c.name));
+                fields.push(format!("age={}", age));
+                fields.push(format!("idle={}", idle));
+                fields.push(format!("flags={}", c.flags));
+                fields.push(format!("db={}", c.db));
+                fields.push(format!("sub={}", c.sub));
+                fields.push(format!("psub={}", c.psub));
+                fields.push(format!("cmd={}", c.cmd));
+                lines.push(fields.join(" "));
             }
-            let out = if lines.is_empty() {
-                String::new()
-            } else {
-                let mut s = lines.join("\n");
-                s.push_str("\r\n");
-                s
-            };
-            (Resp::BulkString(Some(Bytes::from(out))), None)
+            let text = lines.join("\n");
+            (Resp::BulkString(Some(to_bytes(text))), None)
         }
-        "KILL" => {
+        "setname" => {
             if items.len() < 3 {
-                 return (Resp::Error("ERR wrong number of arguments for 'client kill' command".to_string()), None);
+                return (Resp::Error("ERR wrong number of arguments for 'client setname'".to_string()), None);
             }
-            
-            let arg2 = match &items[2] {
+            let new_name = match &items[2] {
                 Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_string(),
-                Resp::SimpleString(s) => String::from_utf8_lossy(s).to_string(),
-                 _ => return (Resp::Error("ERR syntax error".to_string()), None),
+                _ => return (Resp::Error("ERR invalid client name".to_string()), None),
             };
-            
-            let mut kill_id: Option<u64> = None;
-            let mut kill_addr: Option<String> = None;
-            let mut is_filter = false;
-            let mut skip_me = true; // Default for filter mode is yes, but we are keeping it simple
-
-            // Check if it's the filter syntax: CLIENT KILL [ID id] [ADDR addr] ...
-            // Or legacy: CLIENT KILL ip:port
-            
-            if arg2.eq_ignore_ascii_case("ID") {
-                if items.len() != 4 {
-                    return (Resp::Error("ERR syntax error".to_string()), None);
-                }
-                let id_str = match &items[3] {
-                    Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_string(),
-                    Resp::SimpleString(s) => String::from_utf8_lossy(s).to_string(),
-                    _ => return (Resp::Error("ERR syntax error".to_string()), None),
-                };
-                if let Ok(id) = id_str.parse::<u64>() {
-                    kill_id = Some(id);
-                    is_filter = true;
-                } else {
-                     return (Resp::Error("ERR value is not an integer or out of range".to_string()), None);
-                }
-            } else if arg2.eq_ignore_ascii_case("ADDR") {
-                 if items.len() != 4 {
-                    return (Resp::Error("ERR syntax error".to_string()), None);
-                }
-                let addr_str = match &items[3] {
-                    Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_string(),
-                    Resp::SimpleString(s) => String::from_utf8_lossy(s).to_string(),
-                    _ => return (Resp::Error("ERR syntax error".to_string()), None),
-                };
-                kill_addr = Some(addr_str);
-                is_filter = true;
-            } else {
-                // Legacy: CLIENT KILL ip:port
-                 if items.len() != 3 {
-                    return (Resp::Error("ERR syntax error".to_string()), None);
-                }
-                kill_addr = Some(arg2);
-                // is_filter remains false
-                skip_me = false; // Legacy kills even self if address matches
+            if new_name.contains(' ') {
+                return (Resp::Error("ERR Client names cannot contain spaces".to_string()), None);
             }
-            
-            let mut killed_count = 0;
-            
-            if let Some(id) = kill_id {
-                if let Some(ci) = server_ctx.clients.get(&id) {
-                     // With ID, SKIPME is not relevant unless explicitly set (which we don't support yet)
-                     // But usually ID is specific enough.
-                     if let Some(tx) = &ci.shutdown_tx {
-                         let _ = tx.send(true);
-                         killed_count += 1;
-                     }
-                }
-            } else if let Some(addr) = kill_addr {
-                for kv in server_ctx.clients.iter() {
-                    let ci = kv.value();
-                    if ci.addr == addr {
-                        // Check skip_me for current connection
-                        if is_filter && skip_me && ci.id == _conn_ctx.id {
-                            continue;
-                        }
-                        
-                        if let Some(tx) = &ci.shutdown_tx {
-                             let _ = tx.send(true);
-                             killed_count += 1;
-                        }
-                    }
-                }
-            }
-            
-            if is_filter {
-                (Resp::Integer(killed_count), None)
-            } else {
-                if killed_count > 0 {
-                    (Resp::SimpleString(Bytes::from("OK")), None)
-                } else {
-                    (Resp::Error("ERR No such client".to_string()), None)
-                }
-            }
-        }
-        "SETNAME" => {
-            if items.len() != 3 {
-                return (Resp::Error("ERR wrong number of arguments for 'client setname' command".to_string()), None);
-            }
-            let name = match &items[2] {
-                Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_string(),
-                Resp::SimpleString(s) => String::from_utf8_lossy(s).to_string(),
-                _ => return (Resp::Error("ERR syntax error".to_string()), None),
-            };
-
-            // Validate name (no spaces)
-            if name.chars().any(char::is_whitespace) {
-                 return (Resp::Error("ERR Client names cannot contain spaces, newlines or special characters.".to_string()), None);
-            }
-
-            if let Some(mut ci) = server_ctx.clients.get_mut(&_conn_ctx.id) {
-                ci.name = name;
-            } else {
-                 return (Resp::Error("ERR client not found".to_string()), None);
+            if let Some(mut ci) = server_ctx.clients.get_mut(&conn_ctx.id) {
+                ci.name = new_name;
             }
             (Resp::SimpleString(Bytes::from("OK")), None)
         }
-        "TRACKING" => {
-            if items.len() < 3 {
-                return (Resp::Error("ERR wrong number of arguments for 'client tracking' command".to_string()), None);
+        "getname" => {
+            let name = server_ctx
+                .clients
+                .get(&conn_ctx.id)
+                .map(|c| c.name.clone())
+                .unwrap_or_default();
+            if name.is_empty() {
+                (Resp::BulkString(None), None)
+            } else {
+                (Resp::BulkString(Some(to_bytes(name))), None)
             }
-            let mode = match &items[2] {
-                Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_uppercase(),
-                Resp::SimpleString(s) => String::from_utf8_lossy(s).to_uppercase(),
-                _ => return (Resp::Error("ERR syntax error".to_string()), None),
-            };
-
-            match mode.as_str() {
-                "ON" => {
-                    _conn_ctx.client_tracking = true;
-                    // Handle options like REDIRECT, BCAST, PREFIX etc.
-                    let mut i = 3;
-                    while i < items.len() {
-                        let opt = match &items[i] {
-                            Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_uppercase(),
-                            Resp::SimpleString(s) => String::from_utf8_lossy(s).to_uppercase(),
-                            _ => return (Resp::Error("ERR syntax error".to_string()), None),
-                        };
-                        match opt.as_str() {
-                            "REDIRECT" => {
-                                if i + 1 >= items.len() {
-                                    return (Resp::Error("ERR syntax error".to_string()), None);
-                                }
-                                let id_str = match &items[i+1] {
-                                    Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_string(),
-                                    Resp::SimpleString(s) => String::from_utf8_lossy(s).to_string(),
-                                    _ => return (Resp::Error("ERR syntax error".to_string()), None),
-                                };
-                                if let Ok(id) = id_str.parse::<i64>() {
-                                    _conn_ctx.client_redir_id = id;
-                                } else {
-                                    return (Resp::Error("ERR value is not an integer or out of range".to_string()), None);
-                                }
-                                i += 2;
+        }
+        "kill" => {
+            if items.len() >= 3 {
+                // CLIENT KILL ID <id> or CLIENT KILL ADDR <addr>
+                if let Resp::BulkString(Some(flag)) = &items[2] {
+                    let flag_s = String::from_utf8_lossy(flag).to_uppercase();
+                    if flag_s == "ID" && items.len() >= 4 {
+                        if let Resp::BulkString(Some(idb)) = &items[3] {
+                            if let Ok(id) = String::from_utf8_lossy(idb).parse::<u64>() {
+                                let killed = kill_client_by_id(server_ctx, id);
+                                return (Resp::Integer(if killed { 1 } else { 0 }), None);
                             }
-                            "BCAST" | "PREFIX" | "OPTIN" | "OPTOUT" | "NOLOOP" => {
-                                // For now, we only support basic tracking (default mode)
-                                // We can implement these more complex modes later if needed.
-                                i += 1;
-                            }
-                            _ => return (Resp::Error(format!("ERR unknown option for 'CLIENT TRACKING ON': {}", opt)), None),
                         }
+                        return (Resp::Integer(0), None);
+                    } else if flag_s == "ADDR" && items.len() >= 4 {
+                        if let Resp::BulkString(Some(addrb)) = &items[3] {
+                            let addr = String::from_utf8_lossy(addrb).to_string();
+                            let killed = kill_client_by_addr(server_ctx, &addr);
+                            return (Resp::Integer(if killed { 1 } else { 0 }), None);
+                        }
+                        return (Resp::Integer(0), None);
                     }
-                    (Resp::SimpleString(Bytes::from("OK")), None)
                 }
-                "OFF" => {
-                    _conn_ctx.client_tracking = false;
-                    _conn_ctx.client_redir_id = -1;
-                    // Cleanup tracked keys for this client
-                    for mut entry in server_ctx.tracking_clients.iter_mut() {
-                        entry.value_mut().remove(&_conn_ctx.id);
+                // Legacy form CLIENT KILL <ip:port>
+                if let Resp::BulkString(Some(addrb)) = &items[2] {
+                    let addr = String::from_utf8_lossy(addrb).to_string();
+                    let killed = kill_client_by_addr(server_ctx, &addr);
+                    if killed {
+                        return (Resp::SimpleString(Bytes::from("OK")), None);
+                    } else {
+                        return (Resp::Error("ERR no such client".to_string()), None);
                     }
-                    (Resp::SimpleString(Bytes::from("OK")), None)
                 }
-                _ => (Resp::Error("ERR syntax error".to_string()), None),
             }
+            (Resp::Error("ERR wrong number of arguments for 'client kill'".to_string()), None)
         }
-        "CACHING" => {
-            if items.len() != 3 {
-                return (Resp::Error("ERR wrong number of arguments for 'client caching' command".to_string()), None);
+        "pause" => (Resp::SimpleString(Bytes::from("OK")), None),
+        "unpause" => (Resp::SimpleString(Bytes::from("OK")), None),
+        "tracking" => {
+            // CLIENT TRACKING ON|OFF
+            if items.len() >= 3 {
+                if let Resp::BulkString(Some(argb)) = &items[2] {
+                    let arg = String::from_utf8_lossy(argb).to_uppercase();
+                    if arg == "ON" {
+                        conn_ctx.client_tracking = true;
+                        conn_ctx.client_caching = true;
+                        return (Resp::SimpleString(Bytes::from("OK")), None);
+                    } else if arg == "OFF" {
+                        conn_ctx.client_tracking = false;
+                        conn_ctx.client_caching = false;
+                        return (Resp::SimpleString(Bytes::from("OK")), None);
+                    }
+                }
             }
-            let val = match &items[2] {
-                Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_uppercase(),
-                Resp::SimpleString(s) => String::from_utf8_lossy(s).to_uppercase(),
-                _ => return (Resp::Error("ERR syntax error".to_string()), None),
-            };
-            match val.as_str() {
-                "YES" => _conn_ctx.client_caching = true,
-                "NO" => _conn_ctx.client_caching = false,
-                _ => return (Resp::Error("ERR syntax error".to_string()), None),
-            }
-            (Resp::SimpleString(Bytes::from("OK")), None)
+            (Resp::Error("ERR wrong number of arguments for 'client tracking'".to_string()), None)
         }
-        "GETREDIR" => {
-            (Resp::Integer(_conn_ctx.client_redir_id), None)
+        _ => (Resp::Error(format!("ERR unknown subcommand '{}'. Try CLIENT HELP.", sub)), None),
+    }
+}
+
+fn kill_client_by_id(server_ctx: &ServerContext, id: u64) -> bool {
+    if let Some((_k, ci)) = server_ctx.clients.remove(&id) {
+        if let Some(tx) = ci.shutdown_tx {
+            let _ = tx.send(true);
         }
-        _ => (Resp::Error("ERR Unsupported CLIENT subcommand".to_string()), None),
+        true
+    } else {
+        false
+    }
+}
+
+fn kill_client_by_addr(server_ctx: &ServerContext, addr: &str) -> bool {
+    let victim_id = server_ctx
+        .clients
+        .iter()
+        .find(|c| c.value().addr == addr)
+        .map(|c| c.value().id);
+    if let Some(id) = victim_id {
+        kill_client_by_id(server_ctx, id)
+    } else {
+        false
     }
 }

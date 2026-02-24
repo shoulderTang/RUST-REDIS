@@ -71,6 +71,11 @@ async fn test_move() {
         rdb_child_pid: std::sync::Arc::new(std::sync::atomic::AtomicI32::new(-1)),
         rdb_sync_client_id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         master_link_established: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        cluster: std::sync::Arc::new(std::sync::RwLock::new(crate::cluster::ClusterState::new(
+            crate::cluster::NodeId("test".to_string()),
+            "127.0.0.1".to_string(),
+            6380,
+        ))),
     };
 
     let mut conn = crate::tests::helper::create_connection_context();
@@ -160,6 +165,11 @@ async fn test_swapdb() {
         rdb_child_pid: std::sync::Arc::new(std::sync::atomic::AtomicI32::new(-1)),
         rdb_sync_client_id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         master_link_established: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        cluster: std::sync::Arc::new(std::sync::RwLock::new(crate::cluster::ClusterState::new(
+            crate::cluster::NodeId("test".to_string()),
+            "127.0.0.1".to_string(),
+            6380,
+        ))),
     };
 
     let mut conn = crate::tests::helper::create_connection_context();

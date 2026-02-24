@@ -36,6 +36,9 @@ mod geo;
 #[path = "../acl.rs"]
 pub mod acl;
 
+#[path = "../cluster.rs"]
+pub mod cluster;
+
 #[path = "../sentinel.rs"]
 mod sentinel;
 

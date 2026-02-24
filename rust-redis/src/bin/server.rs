@@ -41,6 +41,9 @@ use std::os::unix::io::AsRawFd;
 
 use crate::resp::Resp;
 
+#[path = "../cluster.rs"]
+pub mod cluster;
+
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -148,6 +151,12 @@ async fn run_server(
     } else {
         None
     };
+    // Initialize Cluster State
+    let my_run_id = run_id.clone();
+    let cluster_state = {
+        let node_id = cluster::NodeId(my_run_id.clone());
+        Arc::new(RwLock::new(cluster::ClusterState::new(node_id, cfg.bind.clone(), cfg.port)))
+    };
     let server_ctx = cmd::ServerContext {
         databases: databases,
         acl: acl,
@@ -208,7 +217,19 @@ async fn run_server(
         rdb_child_pid: Arc::new(std::sync::atomic::AtomicI32::new(-1)),
         rdb_sync_client_id: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         master_link_established: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        cluster: cluster_state.clone(),
     };
+    
+    if cfg.cluster_enabled {
+        let p = std::path::Path::new(&cfg.dir).join(&cfg.cluster_config_file);
+        if p.exists() {
+            if let Ok(text) = std::fs::read_to_string(&p) {
+                if let Ok(mut st) = server_ctx.cluster.write() {
+                    let _ = st.load_config_text(&text, &cfg.bind, cfg.port);
+                }
+            }
+        }
+    }
     
     if let Some(ref aof) = server_ctx.aof {
             //let aof_guard = aof.lock().await;
@@ -218,6 +239,8 @@ async fn run_server(
 
     // Background task to clean up expired keys
     cmd::start_expiration_task(server_ctx.clone());
+    cmd::start_cluster_topology_task(server_ctx.clone());
+    cmd::start_cluster_failover_task(server_ctx.clone());
 
     // Background task for periodic RDB save
     let server_ctx_for_save = server_ctx.clone();

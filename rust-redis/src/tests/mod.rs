@@ -87,3 +87,4 @@ mod test_sentinel_integration;
 mod test_leader_election;
 mod test_replconf_listening_port;
 mod test_sentinel_hello;
+mod test_cluster_cmd;
