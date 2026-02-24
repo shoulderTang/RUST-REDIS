@@ -119,6 +119,7 @@ pub fn create_server_context_with_cluster() -> ServerContext {
     
     let mut rng = rand::rng();
     let run_id: String = (0..40).map(|_| rng.sample(rand::distr::Alphanumeric) as char).collect();
+    cfg.cluster_config_file = format!("node-{}.conf", run_id);
     let node_id = crate::cluster::NodeId(run_id.clone());
     let cluster_state = Arc::new(RwLock::new(crate::cluster::ClusterState::new(node_id, cfg.bind.clone(), cfg.port)));
     
