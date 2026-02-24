@@ -195,12 +195,14 @@ fn get_replication_info(ctx: &ServerContext) -> String {
                     String::from("unknown:0")
                 };
                 let mut ip = String::from("unknown");
-                let mut port_str = String::from("0");
-                if let Some((host, port)) = addr.rsplit_once(':') {
+                let mut port: u16 = 0;
+                if let Some((host, port_s)) = addr.rsplit_once(':') {
                     ip = host.to_string();
-                    port_str = port.to_string();
+                    port = port_s.parse::<u16>().unwrap_or(0);
                 }
-                let port = port_str.parse::<u16>().unwrap_or(0);
+                if let Some(p) = ctx.replica_listening_port.get(&id) {
+                    port = *p.value();
+                }
                 let offset = if let Some(v) = ctx.replica_ack.get(&id) {
                     *v.value()
                 } else {

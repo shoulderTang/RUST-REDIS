@@ -77,6 +77,10 @@ pub struct Config {
     pub min_replicas_max_lag: u64,
     pub repl_diskless_sync: bool,
     pub repl_diskless_sync_delay: u64,
+    pub sentinel_monitors: Vec<(String, String, u16, u32)>, // name, ip, port, quorum
+    pub sentinel_down_after_milliseconds: Vec<(String, u64)>, // name, ms
+    pub sentinel_failover_timeout: Vec<(String, u64)>, // name, ms
+    pub sentinel_parallel_syncs: Vec<(String, u32)>, // name, count
 }
 
 impl Default for Config {
@@ -113,6 +117,10 @@ impl Default for Config {
             min_replicas_max_lag: 10,
             repl_diskless_sync: false,
             repl_diskless_sync_delay: 5,
+            sentinel_monitors: Vec::new(),
+            sentinel_down_after_milliseconds: Vec::new(),
+            sentinel_failover_timeout: Vec::new(),
+            sentinel_parallel_syncs: Vec::new(),
         }
     }
 }
@@ -393,6 +401,42 @@ pub fn load_config(path: Option<&str>) -> io::Result<Config> {
                     {
                         cfg.save_params.push((sec, changes));
                     }
+                }
+            }
+            "sentinel" if parts.len() >= 2 => {
+                match parts[1].to_lowercase().as_str() {
+                    "monitor" if parts.len() >= 6 => {
+                        // sentinel monitor <name> <ip> <port> <quorum>
+                        let name = parts[2].to_string();
+                        let ip = parts[3].to_string();
+                        if let (Ok(port), Ok(quorum)) = (parts[4].parse::<u16>(), parts[5].parse::<u32>()) {
+                            cfg.sentinel_monitors.push((name, ip, port, quorum));
+                        } else {
+                            warn!("invalid sentinel monitor configuration: {:?}", parts);
+                        }
+                    }
+                    "down-after-milliseconds" if parts.len() >= 4 => {
+                        // sentinel down-after-milliseconds <name> <ms>
+                        let name = parts[2].to_string();
+                        if let Ok(ms) = parts[3].parse::<u64>() {
+                            cfg.sentinel_down_after_milliseconds.push((name, ms));
+                        }
+                    }
+                    "failover-timeout" if parts.len() >= 4 => {
+                        // sentinel failover-timeout <name> <ms>
+                        let name = parts[2].to_string();
+                        if let Ok(ms) = parts[3].parse::<u64>() {
+                            cfg.sentinel_failover_timeout.push((name, ms));
+                        }
+                    }
+                    "parallel-syncs" if parts.len() >= 4 => {
+                        // sentinel parallel-syncs <name> <num>
+                        let name = parts[2].to_string();
+                        if let Ok(num) = parts[3].parse::<u32>() {
+                            cfg.sentinel_parallel_syncs.push((name, num));
+                        }
+                    }
+                    _ => {}
                 }
             }
             _ => {}

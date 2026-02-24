@@ -60,6 +60,7 @@ pub fn create_server_context() -> ServerContext {
         repl_offset: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         replica_ack: Arc::new(DashMap::new()),
         replica_ack_time: Arc::new(DashMap::new()),
+        replica_listening_port: Arc::new(DashMap::new()),
         slowlog: Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new())),
         slowlog_next_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         slowlog_max_len: Arc::new(std::sync::atomic::AtomicUsize::new(128)),

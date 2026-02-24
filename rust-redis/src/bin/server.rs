@@ -174,6 +174,7 @@ async fn run_server(
         repl_offset: std::sync::Arc::new(AtomicU64::new(0)),
         replica_ack: std::sync::Arc::new(dashmap::DashMap::new()),
         replica_ack_time: std::sync::Arc::new(dashmap::DashMap::new()),
+        replica_listening_port: std::sync::Arc::new(dashmap::DashMap::new()),
         slowlog: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new())),
         slowlog_next_id: std::sync::Arc::new(AtomicU64::new(1)),
         slowlog_max_len: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(cfg.slowlog_max_len as usize)),

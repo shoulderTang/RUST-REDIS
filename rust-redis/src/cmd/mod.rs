@@ -241,6 +241,7 @@ pub struct ServerContext {
     pub repl_offset: Arc<std::sync::atomic::AtomicU64>,
     pub replica_ack: Arc<DashMap<u64, u64>>,
     pub replica_ack_time: Arc<DashMap<u64, u64>>,
+    pub replica_listening_port: Arc<DashMap<u64, u16>>,
     pub slowlog: Arc<Mutex<VecDeque<SlowLogEntry>>>,
     pub slowlog_next_id: Arc<std::sync::atomic::AtomicU64>,
     pub slowlog_max_len: Arc<std::sync::atomic::AtomicUsize>,

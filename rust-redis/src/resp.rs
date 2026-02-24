@@ -240,6 +240,39 @@ pub fn write_frame<'a>(
     })
 }
 
+impl Resp {
+    pub fn as_bytes(&self) -> Vec<u8> {
+        match self {
+            Resp::SimpleString(s) => format!("+{}\r\n", String::from_utf8_lossy(s)).into_bytes(),
+            Resp::Error(s) => format!("-{}\r\n", s).into_bytes(),
+            Resp::Integer(i) => format!(":{}\r\n", i).into_bytes(),
+            Resp::BulkString(None) => b"$-1\r\n".to_vec(),
+            Resp::BulkString(Some(data)) => {
+                let mut result = format!("${}\r\n", data.len()).into_bytes();
+                result.extend_from_slice(data);
+                result.extend_from_slice(b"\r\n");
+                result
+            }
+            Resp::Array(None) => b"*-1\r\n".to_vec(),
+            Resp::Array(Some(items)) => {
+                let mut result = format!("*{}\r\n", items.len()).into_bytes();
+                for item in items {
+                    result.extend_from_slice(&item.as_bytes());
+                }
+                result
+            }
+            Resp::Multiple(items) => {
+                let mut result = Vec::new();
+                for item in items {
+                    result.extend_from_slice(&item.as_bytes());
+                }
+                result
+            }
+            Resp::NoReply | Resp::Control(_) => Vec::new(),
+        }
+    }
+}
+
 #[allow(dead_code)]
 pub fn as_bytes(r: &Resp) -> Option<&[u8]> {
     match r {

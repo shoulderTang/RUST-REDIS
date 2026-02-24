@@ -152,6 +152,15 @@ async fn replication_worker(ctx: &ServerContext, host: &str, port: u16) -> Resul
         Duration::from_secs(hb_interval_secs)
     };
     let mut hb_writer = writer;
+
+    let listening_port = ctx.config.port;
+    let lp_cmd = Resp::Array(Some(vec![
+        Resp::BulkString(Some(Bytes::from_static(b"REPLCONF"))),
+        Resp::BulkString(Some(Bytes::from_static(b"listening-port"))),
+        Resp::BulkString(Some(Bytes::from(listening_port.to_string()))),
+    ]));
+    write_frame(&mut hb_writer, &lp_cmd).await?;
+    hb_writer.flush().await?;
     
     // Create a channel to manually send frames from the main loop
     let (tx_writer, mut rx_writer) = tokio::sync::mpsc::channel::<Resp>(100);
@@ -294,6 +303,39 @@ pub fn replconf(items: &[Resp], conn_ctx: &mut ConnectionContext, ctx: &ServerCo
         Resp::SimpleString(s) => String::from_utf8_lossy(s).to_string(),
         _ => String::new(),
     };
+    if sub.eq_ignore_ascii_case("listening-port") {
+        if items.len() < 3 {
+            return Resp::Error("ERR wrong number of arguments for 'replconf listening-port'".to_string());
+        }
+        let (port, is_explicit_zero) = match &items[2] {
+            Resp::BulkString(Some(b)) => {
+                let port_str = String::from_utf8_lossy(b);
+                let is_zero = port_str == "0";
+                (port_str.parse::<u16>().unwrap_or(0), is_zero)
+            },
+            Resp::SimpleString(s) => {
+                let port_str = String::from_utf8_lossy(s);
+                let is_zero = port_str == "0";
+                (port_str.parse::<u16>().unwrap_or(0), is_zero)
+            },
+            Resp::Integer(i) => {
+                let port_int = *i as i64;
+                let is_zero = port_int == 0;
+                if port_int > 0 && port_int <= u16::MAX as i64 {
+                    (port_int as u16, is_zero)
+                } else {
+                    (0, is_zero)
+                }
+            },
+            _ => (0, false),
+        };
+        if port > 0 || (port == 0 && !is_explicit_zero) {
+            ctx.replica_listening_port.insert(conn_ctx.id, port);
+        } else {
+            ctx.replica_listening_port.remove(&conn_ctx.id);
+        }
+        return Resp::SimpleString(Bytes::from_static(b"OK"));
+    }
     if sub.eq_ignore_ascii_case("ACK") {
         if items.len() < 3 {
             return Resp::Error("ERR wrong number of arguments for 'replconf ack'".to_string());
