@@ -97,6 +97,7 @@ pub fn create_server_context() -> ServerContext {
         rdb_sync_client_id: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         master_link_established: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         cluster: cluster_state,
+        node_conns: Arc::new(DashMap::new()),
     }
 }
 
@@ -119,7 +120,11 @@ pub fn create_server_context_with_cluster() -> ServerContext {
     
     let mut rng = rand::rng();
     let run_id: String = (0..40).map(|_| rng.sample(rand::distr::Alphanumeric) as char).collect();
-    cfg.cluster_config_file = format!("node-{}.conf", run_id);
+    // Put cluster config into a per-test temp directory to avoid clutter
+    let tmp_dir = std::env::temp_dir().join(format!("rust-redis-tests-{}", run_id));
+    let _ = std::fs::create_dir_all(&tmp_dir);
+    cfg.dir = tmp_dir.to_string_lossy().into_owned();
+    cfg.cluster_config_file = "node.conf".to_string();
     let node_id = crate::cluster::NodeId(run_id.clone());
     let cluster_state = Arc::new(RwLock::new(crate::cluster::ClusterState::new(node_id, cfg.bind.clone(), cfg.port)));
     
@@ -187,5 +192,6 @@ pub fn create_server_context_with_cluster() -> ServerContext {
         rdb_sync_client_id: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         master_link_established: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         cluster: cluster_state,
+        node_conns: Arc::new(DashMap::new()),
     }
 }

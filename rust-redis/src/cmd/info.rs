@@ -48,6 +48,13 @@ pub fn info(items: &[Resp], ctx: &ServerContext) -> Resp {
         info.push_str(&get_keyspace_info(ctx));
     }
 
+    if section == "default" || section == "all" || section == "cluster" {
+        if !info.is_empty() {
+            info.push_str("\r\n");
+        }
+        info.push_str(&get_cluster_info(ctx));
+    }
+
     Resp::BulkString(Some(Bytes::from(info)))
 }
 
@@ -301,6 +308,38 @@ fn get_keyspace_info(ctx: &ServerContext) -> String {
             }
             let avg_ttl = if expires > 0 { total_ttl / expires } else { 0 };
             s.push_str(&format!("db{}:keys={},expires={},avg_ttl={}\r\n", i, keys, expires, avg_ttl));
+        }
+    }
+    s
+}
+
+fn get_cluster_info(ctx: &ServerContext) -> String {
+    let mut s = String::new();
+    s.push_str("# Cluster\r\n");
+    s.push_str(&format!("cluster_enabled:{}\r\n", if ctx.config.cluster_enabled { "1" } else { "0" }));
+    if ctx.config.cluster_enabled {
+        if let Ok(cluster) = ctx.cluster.read() {
+            let (assigned, full) = cluster.coverage_ok();
+            let cluster_state = if full { "ok" } else { "fail" };
+            s.push_str(&format!("cluster_state:{}\r\n", cluster_state));
+            s.push_str(&format!("cluster_current_epoch:{}\r\n", cluster.current_epoch));
+            s.push_str(&format!("cluster_slots_assigned:{}\r\n", assigned));
+            s.push_str(&format!("cluster_slots_ok:{}\r\n", assigned));
+            s.push_str("cluster_slots_pfail:0\r\n");
+            s.push_str("cluster_slots_fail:0\r\n");
+            let known_nodes = cluster.nodes.len();
+            s.push_str(&format!("cluster_known_nodes:{}\r\n", known_nodes));
+            let mut masters = 0usize;
+            for n in cluster.nodes.values() {
+                if n.role == crate::cluster::NodeRole::Master {
+                    masters += 1;
+                }
+            }
+            s.push_str(&format!("cluster_size:{}\r\n", masters));
+            let my_epoch = cluster.nodes.get(&cluster.myself).map(|n| n.epoch).unwrap_or(0);
+            s.push_str(&format!("cluster_my_epoch:{}\r\n", my_epoch));
+        } else {
+            s.push_str("cluster_state:fail\r\n");
         }
     }
     s

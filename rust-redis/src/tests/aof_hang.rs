@@ -111,6 +111,7 @@ async fn test_aof_hang_reproduction() {
             "127.0.0.1".to_string(),
             6380,
         ))),
+        node_conns: Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn_ctx = ConnectionContext::new(1, None, None, None);

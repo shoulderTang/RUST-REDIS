@@ -76,6 +76,7 @@ async fn test_move() {
             "127.0.0.1".to_string(),
             6380,
         ))),
+        node_conns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn = crate::tests::helper::create_connection_context();
@@ -170,6 +171,7 @@ async fn test_swapdb() {
             "127.0.0.1".to_string(),
             6380,
         ))),
+        node_conns: std::sync::Arc::new(dashmap::DashMap::new()),
     };
 
     let mut conn = crate::tests::helper::create_connection_context();

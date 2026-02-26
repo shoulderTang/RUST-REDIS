@@ -450,6 +450,7 @@ mod tests {
         tmp.load_config_text(&text, &server_ctx.config.bind, server_ctx.config.port).unwrap();
         assert_eq!(tmp.current_epoch, 3);
         let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(std::path::Path::new(&server_ctx.config.dir));
     }
 
     #[tokio::test]

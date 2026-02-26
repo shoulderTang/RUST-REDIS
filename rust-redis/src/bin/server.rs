@@ -218,6 +218,7 @@ async fn run_server(
         rdb_sync_client_id: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         master_link_established: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         cluster: cluster_state.clone(),
+        node_conns: Arc::new(dashmap::DashMap::new()),
     };
     
     if cfg.cluster_enabled {

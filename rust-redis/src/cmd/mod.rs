@@ -220,6 +220,11 @@ pub struct ClientInfo {
     pub msg_sender: Option<tokio::sync::mpsc::Sender<Resp>>,
 }
 
+pub struct NodeConn {
+    pub reader: tokio::sync::Mutex<tokio::io::BufReader<tokio::net::tcp::OwnedReadHalf>>,
+    pub writer: tokio::sync::Mutex<tokio::io::BufWriter<tokio::net::tcp::OwnedWriteHalf>>,
+}
+
 #[derive(Clone)]
 pub struct ServerContext {
     pub databases: Arc<Vec<RwLock<Db>>>,
@@ -282,6 +287,7 @@ pub struct ServerContext {
     pub rdb_sync_client_id: Arc<std::sync::atomic::AtomicU64>, // Added to track which client is syncing
     pub master_link_established: Arc<std::sync::atomic::AtomicBool>,
     pub cluster: Arc<RwLock<crate::cluster::ClusterState>>,
+    pub node_conns: Arc<dashmap::DashMap<(String, u16), Arc<NodeConn>>>,
 }
 
 #[derive(Debug)]
@@ -1924,7 +1930,9 @@ fn resp_bulk(s: &str) -> Resp {
     Resp::BulkString(Some(bytes::Bytes::from(s.to_string())))
 }
 
-async fn send_resp_command(ip: &str, port: u16, req: Resp) -> std::io::Result<Option<Resp>> {
+pub(crate) async fn send_resp_command(ip: &str, port: u16, req: Resp) -> std::io::Result<Option<Resp>> {
+    // This function is now a wrapper; the real implementation needs ServerContext.
+    // Callers should use send_resp_command_ctx instead.
     let addr = format!("{}:{}", ip, port);
     let stream = TcpStream::connect(addr).await?;
     let (read_half, write_half) = stream.into_split();
@@ -1935,24 +1943,71 @@ async fn send_resp_command(ip: &str, port: u16, req: Resp) -> std::io::Result<Op
     read_frame(&mut reader).await
 }
 
-async fn fetch_cluster_nodes_text(ip: &str, port: u16) -> std::io::Result<Option<String>> {
+pub(crate) async fn send_resp_command_ctx(
+    ctx: &ServerContext,
+    ip: &str,
+    port: u16,
+    req: Resp,
+) -> std::io::Result<Option<Resp>> {
+    use std::sync::Arc;
+    use tokio::io::{BufReader, BufWriter};
+    let key = (ip.to_string(), port);
+    // Try to get existing connection, or create new one lazily
+    let conn = if let Some(entry) = ctx.node_conns.get(&key) {
+        entry.clone()
+    } else {
+        let stream = TcpStream::connect(format!("{}:{}", ip, port)).await?;
+        let (read_half, write_half) = stream.into_split();
+        let new_conn = Arc::new(NodeConn {
+            reader: tokio::sync::Mutex::new(BufReader::new(read_half)),
+            writer: tokio::sync::Mutex::new(BufWriter::new(write_half)),
+        });
+        ctx.node_conns.insert(key, new_conn.clone());
+        new_conn
+    };
+    
+    // Use the stored writer
+    {
+        let mut writer = conn.writer.lock().await;
+        write_frame(&mut *writer, &req).await?;
+        writer.flush().await?;
+    } // Drop writer lock
+
+    // Use the stored reader
+    {
+        let mut reader = conn.reader.lock().await;
+        read_frame(&mut *reader).await
+    } // Drop reader lock
+}
+
+pub(crate) async fn fetch_cluster_nodes_text(ctx: &ServerContext, ip: &str, port: u16) -> std::io::Result<Option<String>> {
     let req = Resp::Array(Some(vec![resp_bulk("CLUSTER"), resp_bulk("NODES")]));
-    let resp = send_resp_command(ip, port, req).await?;
+    let resp = send_resp_command_ctx(ctx, ip, port, req).await?;
     match resp {
         Some(Resp::BulkString(Some(b))) => Ok(Some(String::from_utf8_lossy(b.as_ref()).to_string())),
-        Some(_) => Ok(None),
-        None => Ok(None),
+        Some(Resp::SimpleString(b)) => Ok(Some(String::from_utf8_lossy(b.as_ref()).to_string())),
+        _ => Ok(None),
     }
 }
 
-async fn send_cluster_meet(ip: &str, port: u16, my_ip: &str, my_port: u16) -> std::io::Result<()> {
+pub(crate) async fn fetch_cluster_myid(ctx: &ServerContext, ip: &str, port: u16) -> std::io::Result<Option<String>> {
+    let req = Resp::Array(Some(vec![resp_bulk("CLUSTER"), resp_bulk("MYID")]));
+    let resp = send_resp_command_ctx(ctx, ip, port, req).await?;
+    match resp {
+        Some(Resp::BulkString(Some(b))) => Ok(Some(String::from_utf8_lossy(b.as_ref()).to_string())),
+        Some(Resp::SimpleString(b)) => Ok(Some(String::from_utf8_lossy(b.as_ref()).to_string())),
+        _ => Ok(None),
+    }
+}
+
+pub(crate) async fn send_cluster_meet(ctx: &ServerContext, ip: &str, port: u16, my_ip: &str, my_port: u16) -> std::io::Result<()> {
     let req = Resp::Array(Some(vec![
         resp_bulk("CLUSTER"),
         resp_bulk("MEET"),
         resp_bulk(my_ip),
         resp_bulk(&my_port.to_string()),
     ]));
-    let _ = send_resp_command(ip, port, req).await?;
+    let _ = send_resp_command_ctx(ctx, ip, port, req).await?;
     Ok(())
 }
 
@@ -1985,7 +2040,22 @@ pub fn start_cluster_topology_task(ctx: ServerContext) {
                     continue;
                 }
 
-                let text = match fetch_cluster_nodes_text(&ip, port).await {
+                if let Ok(Some(myid)) = fetch_cluster_myid(&ctx_clone, &ip, port).await {
+                    if let Ok(mut st) = ctx_clone.cluster.write() {
+                        let node = crate::cluster::ClusterNode {
+                            id: crate::cluster::NodeId(myid),
+                            ip: ip.clone(),
+                            port,
+                            role: crate::cluster::NodeRole::Master,
+                            slots: vec![],
+                            epoch: 0,
+                            master_id: None,
+                        };
+                        st.merge_topology(vec![node]);
+                    }
+                }
+
+                let text = match fetch_cluster_nodes_text(&ctx_clone, &ip, port).await {
                     Ok(Some(s)) => s,
                     _ => continue,
                 };
@@ -2011,7 +2081,7 @@ pub fn start_cluster_topology_task(ctx: ServerContext) {
                     }
                 }
                 if !remote_knows_me {
-                    let _ = send_cluster_meet(&ip, port, &my_ip, my_port).await;
+                    let _ = send_cluster_meet(&ctx_clone, &ip, port, &my_ip, my_port).await;
                 }
             }
         }

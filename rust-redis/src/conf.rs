@@ -455,6 +455,7 @@ pub fn load_config(path: Option<&str>) -> io::Result<Config> {
             }
             "cluster-enabled" if parts.len() >= 2 => {
                 cfg.cluster_enabled = parts[1].eq_ignore_ascii_case("yes");
+                println!("cluster-enabled: {}", cfg.cluster_enabled);
             }
             "cluster-node-timeout" if parts.len() >= 2 => {
                 if let Ok(timeout) = parts[1].parse::<u64>() {

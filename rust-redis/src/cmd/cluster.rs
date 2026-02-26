@@ -3,6 +3,13 @@ use crate::cmd::{ServerContext, ConnectionContext};
 use crate::cluster::{NodeId, NodeRole, SlotState};
 use bytes::Bytes;
 
+fn parse_addr(s: &str) -> Option<(String, u16)> {
+    let mut it = s.splitn(2, ':');
+    let ip = it.next()?.to_string();
+    let port = it.next()?.parse::<u16>().ok()?;
+    Some((ip, port))
+}
+
 pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) -> Resp {
     if items.len() < 2 {
         return Resp::Error("ERR wrong number of arguments for 'cluster' command".to_string());
@@ -15,7 +22,7 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
         "NODES" => {
             let lines = {
                 let st = server_ctx.cluster.read().unwrap();
-                st.nodes_overview()
+                st.nodes_overview_redis()
             };
             let mut s = lines.join("\n");
             s.push('\n');
@@ -118,10 +125,42 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
             };
             {
                 let mut st = server_ctx.cluster.write().unwrap();
-                // Use ip:port as a temporary deterministic node id
-                let id = NodeId(format!("{}:{}", ip, port));
-                let _ = st.add_node(id, ip, port, NodeRole::Master, None);
+                // Only add placeholder if no node with same address exists
+                let exists = st.nodes.values().any(|n| n.ip == ip && n.port == port);
+                if !exists {
+                    let id = NodeId(format!("{}:{}", ip, port));
+                    let _ = st.add_node(id, ip.clone(), port, NodeRole::Master, None);
+                }
             }
+            let ctx_clone = server_ctx.clone();
+            let ip_clone = ip.clone();
+            tokio::spawn(async move {
+                // Try to quickly replace placeholder with real run_id via MYID
+                if let Ok(Some(myid)) = crate::cmd::fetch_cluster_myid(&ctx_clone, &ip_clone, port).await {
+                    if let Ok(mut st) = ctx_clone.cluster.write() {
+                        let node = crate::cluster::ClusterNode {
+                            id: NodeId(myid),
+                            ip: ip_clone.clone(),
+                            port,
+                            role: crate::cluster::NodeRole::Master,
+                            slots: vec![],
+                            epoch: 0,
+                            master_id: None,
+                        };
+                        st.merge_topology(vec![node]);
+                    }
+                }
+                if let Ok(Some(text)) = crate::cmd::fetch_cluster_nodes_text(&ctx_clone, &ip_clone, port).await {
+                    if let Ok(parsed) = crate::cluster::ClusterState::parse_nodes_overview_text(&text) {
+                        if let Ok(mut st) = ctx_clone.cluster.write() {
+                            st.merge_topology(parsed);
+                        }
+                    }
+                }
+                let my_ip = ctx_clone.config.bind.clone();
+                let my_port = ctx_clone.config.port;
+                let _ = crate::cmd::send_cluster_meet(&ctx_clone, &ip_clone, port, &my_ip, my_port).await;
+            });
             Resp::SimpleString(Bytes::from_static(b"OK"))
         }
         "ADDSLOTS" => {
@@ -149,6 +188,41 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
             }
             Resp::SimpleString(Bytes::from_static(b"OK"))
         }
+        "ADDSLOTSRANGE" => {
+            if items.len() < 4 || (items.len() - 2) % 2 != 0 {
+                return Resp::Error("ERR wrong number of arguments for 'cluster addslotsrange'".to_string());
+            }
+            let mut slots = Vec::new();
+            let mut it = items.iter().skip(2);
+            while let Some(start_b) = it.next().and_then(as_bytes) {
+                let end_b = match it.next().and_then(as_bytes) {
+                    Some(b) => b,
+                    None => return Resp::Error("ERR invalid slot range".to_string()),
+                };
+                let start = match std::str::from_utf8(&start_b).ok().and_then(|s| s.parse::<u16>().ok()) {
+                    Some(v) => v,
+                    None => return Resp::Error("ERR invalid slot".to_string()),
+                };
+                let end = match std::str::from_utf8(&end_b).ok().and_then(|s| s.parse::<u16>().ok()) {
+                    Some(v) => v,
+                    None => return Resp::Error("ERR invalid slot".to_string()),
+                };
+                if start > end {
+                    return Resp::Error("ERR invalid slot range".to_string());
+                }
+                for x in start..=end {
+                    slots.push(x);
+                }
+            }
+            {
+                let mut st = server_ctx.cluster.write().unwrap();
+                let me = st.myself.clone();
+                if let Err(e) = st.add_slots(&me, &slots) {
+                    return Resp::Error(format!("ERR {}", e));
+                }
+            }
+            Resp::SimpleString(Bytes::from_static(b"OK"))
+        }
         "DELSLOTS" => {
             if items.len() < 3 {
                 return Resp::Error("ERR wrong number of arguments for 'cluster delslots'".to_string());
@@ -164,6 +238,41 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
                     }
                 }
                 return Resp::Error("ERR invalid slot".to_string());
+            }
+            {
+                let mut st = server_ctx.cluster.write().unwrap();
+                let me = st.myself.clone();
+                if let Err(e) = st.del_slots(&me, &slots) {
+                    return Resp::Error(format!("ERR {}", e));
+                }
+            }
+            Resp::SimpleString(Bytes::from_static(b"OK"))
+        }
+        "DELSLOTSRANGE" => {
+            if items.len() < 4 || (items.len() - 2) % 2 != 0 {
+                return Resp::Error("ERR wrong number of arguments for 'cluster delslotsrange'".to_string());
+            }
+            let mut slots = Vec::new();
+            let mut it = items.iter().skip(2);
+            while let Some(start_b) = it.next().and_then(as_bytes) {
+                let end_b = match it.next().and_then(as_bytes) {
+                    Some(b) => b,
+                    None => return Resp::Error("ERR invalid slot range".to_string()),
+                };
+                let start = match std::str::from_utf8(&start_b).ok().and_then(|s| s.parse::<u16>().ok()) {
+                    Some(v) => v,
+                    None => return Resp::Error("ERR invalid slot".to_string()),
+                };
+                let end = match std::str::from_utf8(&end_b).ok().and_then(|s| s.parse::<u16>().ok()) {
+                    Some(v) => v,
+                    None => return Resp::Error("ERR invalid slot".to_string()),
+                };
+                if start > end {
+                    return Resp::Error("ERR invalid slot range".to_string());
+                }
+                for x in start..=end {
+                    slots.push(x);
+                }
             }
             {
                 let mut st = server_ctx.cluster.write().unwrap();
@@ -296,15 +405,40 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
             if items.len() != 3 {
                 return Resp::Error("ERR wrong number of arguments for 'cluster replicate'".to_string());
             }
-            let master_id = match as_bytes(&items[2]) {
+            let req_master_id = match as_bytes(&items[2]) {
                 Some(b) => NodeId(String::from_utf8_lossy(&b).to_string()),
                 None => return Resp::Error("ERR invalid node id".to_string()),
             };
             let mut st = server_ctx.cluster.write().unwrap();
+            // Resolve master id:
+            // 1) If exact id exists, use it.
+            // 2) Otherwise, if the provided id looks like ip:port, try to find node by address.
+            // 3) If still not found, return Unknown master.
+            let mut master_id = req_master_id.clone();
+            if !st.nodes.contains_key(&master_id) {
+                if let Some((ip, port)) = parse_addr(&req_master_id.0) {
+                    if let Some((nid, _)) = st
+                        .nodes
+                        .iter()
+                        .find(|(_, n)| n.ip == ip && n.port == port)
+                    {
+                        master_id = nid.clone();
+                    }
+                }
+            }
             if !st.nodes.contains_key(&master_id) {
                 return Resp::Error("ERR Unknown master".to_string());
             }
             let my = st.myself.clone();
+            // Collect slots to remove without holding a mutable borrow
+            let slots_to_remove: Vec<u16> = if let Some(me) = st.nodes.get(&my) {
+                me.slots.iter().flat_map(|r| r.start..=r.end).collect()
+            } else {
+                Vec::new()
+            };
+            if !slots_to_remove.is_empty() {
+                let _ = st.del_slots(&my, &slots_to_remove);
+            }
             if let Some(me) = st.nodes.get_mut(&my) {
                 me.role = NodeRole::Replica;
                 me.master_id = Some(master_id);
@@ -392,22 +526,8 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
             Resp::Array(Some(arr))
         }
         "INFO" => {
-            let (assigned, ok) = {
-                let st = server_ctx.cluster.read().unwrap();
-                let mut assigned = 0usize;
-                let mut ok = 0usize;
-                for i in 0..st.slots.len() {
-                    if st.slots[i].is_some() {
-                        assigned += 1;
-                        ok += 1;
-                    }
-                }
-                (assigned, ok)
-            };
-            let info = format!(
-                "cluster_state:ok\ncluster_slots_assigned:{}\ncluster_slots_ok:{}\n",
-                assigned, ok
-            );
+            let st = server_ctx.cluster.read().unwrap();
+            let info = st.info_string();
             Resp::BulkString(Some(Bytes::from(info)))
         }
         "FLUSHSLOTS" => {
@@ -436,6 +556,9 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
                 let p = std::path::Path::new(&server_ctx.config.dir).join(&server_ctx.config.cluster_config_file);
                 (content, p)
             };
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
             match std::fs::write(&path, text.as_bytes()) {
                 Ok(_) => Resp::SimpleString(Bytes::from_static(b"OK")),
                 Err(e) => Resp::Error(format!("ERR {}", e)),

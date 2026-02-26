@@ -131,6 +131,7 @@ impl ClusterState {
         }
         Ok(())
     }
+    
     pub fn new(myself: NodeId, ip: String, port: u16) -> Self {
         let mut nodes = HashMap::new();
         let epoch = 0u64;
@@ -158,6 +159,48 @@ impl ClusterState {
             myself,
             last_ok_ms,
         }
+    }
+
+    pub fn info_string(&self) -> String {
+        let mut info = Vec::new();
+        info.push("cluster_state:ok".to_string());
+
+        let (assigned, ok) = {
+            let mut assigned = 0usize;
+            let mut ok = 0usize;
+            for i in 0..self.slots.len() {
+                if self.slots[i].is_some() {
+                    assigned += 1;
+                    ok += 1;
+                }
+            }
+            (assigned, ok)
+        };
+        info.push(format!("cluster_slots_assigned:{}", assigned));
+        info.push(format!("cluster_slots_ok:{}", ok));
+        info.push(format!("cluster_slots_pfail:0"));
+        info.push(format!("cluster_slots_fail:0"));
+
+        let (masters, all_nodes) = {
+            let mut masters = 0;
+            for n in self.nodes.values() {
+                if n.role == NodeRole::Master {
+                    masters += 1;
+                }
+            }
+            (masters, self.nodes.len())
+        };
+        info.push(format!("cluster_known_nodes:{}", all_nodes));
+        info.push(format!("cluster_size:{}", masters));
+        info.push(format!("cluster_current_epoch:{}", self.current_epoch));
+
+        let my_epoch = self.nodes.get(&self.myself).map(|n| n.epoch).unwrap_or(0);
+        info.push(format!("cluster_my_epoch:{}", my_epoch));
+
+        info.push("cluster_stats_messages_sent:0".to_string());
+        info.push("cluster_stats_messages_received:0".to_string());
+
+        info.join("\r\n")
     }
 
     pub fn add_node(&mut self, id: NodeId, ip: String, port: u16, role: NodeRole, master_id: Option<NodeId>) -> Result<(), String> {
@@ -252,7 +295,10 @@ impl ClusterState {
     pub fn nodes_overview(&self) -> Vec<String> {
         let mut lines = Vec::new();
         for n in self.nodes.values() {
-            let role = match n.role { NodeRole::Master => "master", NodeRole::Replica => "slave" };
+            let role = match n.role {
+                NodeRole::Master => "master",
+                NodeRole::Replica => "slave",
+            };
             let mut parts = vec![
                 n.id.0.clone(),
                 format!("{}:{}", n.ip, n.port),
@@ -271,6 +317,59 @@ impl ClusterState {
                 }
             }
             parts.push(ranges.join(","));
+            lines.push(parts.join(" "));
+        }
+        lines
+    }
+
+    pub fn nodes_overview_redis(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        let my_addr = self
+            .nodes
+            .get(&self.myself)
+            .map(|m| (m.ip.clone(), m.port));
+        for n in self.nodes.values() {
+            let mut flags = Vec::new();
+            let is_myself = n.id == self.myself
+                || my_addr
+                    .as_ref()
+                    .map(|(ip, port)| *ip == n.ip && *port == n.port)
+                    .unwrap_or(false);
+            if is_myself {
+                flags.push("myself");
+            }
+            match n.role {
+                NodeRole::Master => flags.push("master"),
+                NodeRole::Replica => flags.push("slave"),
+            }
+            let master_id_str = n.master_id.as_ref().map_or("-", |id| &id.0);
+            let now = Self::now_ms();
+            let ping_sent = 0u64;
+            let pong_recv = self.last_ok_ms.get(&n.id).copied().unwrap_or(now);
+            let link_state = "connected";
+            let id_str = if is_myself && n.id.0.contains(':') {
+                // If our own entry is still a placeholder, render real run_id for display
+                self.myself.0.clone()
+            } else {
+                n.id.0.clone()
+            };
+            let mut parts = vec![
+                id_str,
+                format!("{}:{}@0", n.ip, n.port),
+                flags.join(","),
+                master_id_str.to_string(),
+                ping_sent.to_string(),
+                pong_recv.to_string(),
+                n.epoch.to_string(),
+                link_state.to_string(),
+            ];
+            for r in &n.slots {
+                if r.start == r.end {
+                    parts.push(format!("{}", r.start));
+                } else {
+                    parts.push(format!("{}-{}", r.start, r.end));
+                }
+            }
             lines.push(parts.join(" "));
         }
         lines
@@ -300,16 +399,40 @@ impl ClusterState {
             if node.id == self.myself {
                 continue;
             }
-            if let Some(alias_id) = self
+            // Decide canonical id to use for this (ip,port)
+            let is_placeholder = node.id.0.contains(':');
+            let addr_ip = node.ip.clone();
+            let addr_port = node.port;
+            let existing_same_addr = self
                 .nodes
                 .values()
-                .find(|n| n.ip == node.ip && n.port == node.port && n.id != node.id)
-                .map(|n| n.id.clone())
-            {
-                self.replace_node_id(&alias_id, &node.id);
-            }
+                .find(|n| n.ip == node.ip && n.port == node.port)
+                .cloned();
+            let canonical_id = if let Some(existing) = &existing_same_addr {
+                let existing_is_placeholder = existing.id.0.contains(':');
+                match (is_placeholder, existing_is_placeholder) {
+                    // Incoming is real, existing is placeholder => replace placeholder with real
+                    (false, true) => {
+                        self.replace_node_id(&existing.id, &node.id);
+                        node.id.clone()
+                    }
+                    // Incoming is placeholder, existing is real => keep existing real id
+                    (true, false) => existing.id.clone(),
+                    // Both real but different (e.g., restarted peer): prefer incoming
+                    (false, false) => {
+                        if existing.id != node.id {
+                            self.replace_node_id(&existing.id, &node.id);
+                        }
+                        node.id.clone()
+                    }
+                    // Both placeholders: keep existing to avoid churn
+                    (true, true) => existing.id.clone(),
+                }
+            } else {
+                node.id.clone()
+            };
 
-            if let Some(existing) = self.nodes.get_mut(&node.id) {
+            if let Some(existing) = self.nodes.get_mut(&canonical_id) {
                 existing.ip = node.ip.clone();
                 existing.port = node.port;
                 existing.role = node.role.clone();
@@ -317,13 +440,33 @@ impl ClusterState {
                 existing.epoch = node.epoch;
                 existing.slots = node.slots.clone();
             } else {
-                self.nodes.insert(node.id.clone(), node.clone());
+                let mut n = node.clone();
+                n.id = canonical_id.clone();
+                self.nodes.insert(canonical_id.clone(), n);
             }
-            self.last_ok_ms.insert(node.id.clone(), Self::now_ms());
+            self.last_ok_ms.insert(canonical_id.clone(), Self::now_ms());
 
             if node.role == NodeRole::Master && !node.slots.is_empty() {
-                masters.push(node);
+                let mut m = node.clone();
+                m.id = canonical_id.clone();
+                masters.push(m);
             }
+            // Cleanup: remove any leftover placeholder entries for same address
+            let canonical_id_clone = canonical_id.clone();
+            self.nodes.retain(|id, n| {
+                if n.ip == addr_ip && n.port == addr_port && *id != canonical_id_clone && id.0.contains(':') {
+                    false
+                } else {
+                    true
+                }
+            });
+            self.last_ok_ms.retain(|id, _| {
+                if let Some(n) = self.nodes.get(id) {
+                    !(n.ip == addr_ip && n.port == addr_port && *id != canonical_id_clone && id.0.contains(':'))
+                } else {
+                    id == &canonical_id_clone
+                }
+            });
         }
 
         for m in masters {
@@ -431,6 +574,53 @@ impl ClusterState {
         let tokens: Vec<&str> = line.split_whitespace().collect();
         if tokens.len() < 4 {
             return Err("invalid nodes line".to_string());
+        }
+        // Try to parse Redis-style external format:
+        // <id> <ip:port@cport> <flags> <master> <ping-sent> <pong-recv> <config-epoch> <link-state> [slots...]
+        if tokens.len() >= 8 && tokens[1].contains('@') {
+            let id = NodeId(tokens[0].to_string());
+            let addr = tokens[1].split('@').next().unwrap_or(tokens[1]);
+            let (ip, port) = Self::parse_ip_port(addr)?;
+            let flags = tokens[2].to_lowercase();
+            let role = if flags.contains("master") {
+                NodeRole::Master
+            } else if flags.contains("slave") || flags.contains("replica") {
+                NodeRole::Replica
+            } else {
+                return Err("invalid role".to_string());
+            };
+            let master_id = if tokens[3] == "-" {
+                None
+            } else {
+                Some(NodeId(tokens[3].to_string()))
+            };
+            let epoch = tokens[6].parse::<u64>().map_err(|_| "invalid epoch".to_string())?;
+            // Parse slots starting from index 8, each token is a range or single slot
+            let mut slots: Vec<SlotRange> = Vec::new();
+            for p in tokens.iter().skip(8) {
+                let p = p.trim();
+                if p.is_empty() {
+                    continue;
+                }
+                if let Some((a, b)) = p.split_once('-') {
+                    let start = a.parse::<u16>().map_err(|_| "invalid slot range".to_string())?;
+                    let end = b.parse::<u16>().map_err(|_| "invalid slot range".to_string())?;
+                    slots.push(SlotRange { start, end });
+                } else {
+                    let x = p.parse::<u16>().map_err(|_| "invalid slot".to_string())?;
+                    slots.push(SlotRange { start: x, end: x });
+                }
+            }
+            slots.sort_by_key(|r| (r.start, r.end));
+            return Ok(ClusterNode {
+                id,
+                ip,
+                port,
+                role,
+                slots,
+                epoch,
+                master_id,
+            });
         }
         let id = NodeId(tokens[0].to_string());
         let (ip, port) = Self::parse_ip_port(tokens[1])?;
@@ -543,6 +733,16 @@ impl ClusterState {
                 _ => {}
             }
         }
+    }
+
+    pub fn coverage_ok(&self) -> (usize, bool) {
+        let mut covered = 0usize;
+        for slot in &self.slots {
+            if slot.is_some() {
+                covered += 1;
+            }
+        }
+        (covered, covered == 16384)
     }
 
     fn hash_tag(key: &str) -> String {
