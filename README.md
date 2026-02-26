@@ -31,3 +31,5 @@ Rewrite the redis in Rust language and in Rust way.
 
 2026.2.24 实现哨兵模式功能。
 
+2026.2.26 实现集群模式功能。1.实现cluster节点发现功能。2.实现cluster节点通信功能。3.实现cluster节点故障检测功能。4.实现cluster节点故障转移功能。
+
