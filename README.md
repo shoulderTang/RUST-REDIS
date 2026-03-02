@@ -21,6 +21,38 @@
     *   **Stream**: 完整的流数据类型支持 (XADD, XREAD, XGROUP 等)。
 *   **高性能**: 基于 Rust 异步运行时 (Tokio) 构建，采用多线程模型，充分利用多核 CPU 优势。
 
+## 架构设计 (Architecture)
+
+- **运行时与并发模型**
+  - 基于 Tokio 多线程运行时，网络 IO、后台任务并行执行
+  - 核心二进制：服务器 [server.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/bin/server.rs)、客户端 [client.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/bin/client.rs)、哨兵 [sentinel.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/bin/sentinel.rs)
+- **协议层 (RESP)**
+  - 解析与编码在 [resp.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/resp.rs) 实现，支持 SimpleString/Error/Integer/BulkString/Array
+  - 读写采用异步 BufReader/BufWriter，避免阻塞
+- **命令路由与执行**
+  - 命令分发在 [cmd/mod.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/cmd/mod.rs) 聚合
+  - 各数据类型命令分别位于 [string.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/cmd/string.rs)、[list.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/cmd/list.rs)、[hash.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/cmd/hash.rs)、[set.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/cmd/set.rs)、[zset.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/cmd/zset.rs)、[stream.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/cmd/stream.rs)
+- **数据存储层**
+  - 数据库上下文与键空间在 [db.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/db.rs) 管理
+  - 辅助结构：基数树 [rax.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/rax.rs)、HyperLogLog [hll.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/hll.rs)、Geo [geo.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/geo.rs)、Stream [stream.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/stream.rs)
+- **持久化**
+  - AOF 追加日志在 [aof.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/aof.rs) 实现，支持非阻塞写入与重写
+  - RDB 快照在 [rdb.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/rdb.rs) 实现，提供快速备份与恢复
+- **复制与高可用**
+  - 主从复制逻辑在 [replication.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/cmd/replication.rs)，支持 PSYNC2、只读副本等
+  - 哨兵监控与故障转移在 [sentinel.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/sentinel.rs) 与二进制 [bin/sentinel.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/bin/sentinel.rs)
+  - 集群分片、节点通信与故障处理在 [cluster.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/cluster.rs) 与 [cmd/cluster.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/cmd/cluster.rs)
+- **安全与访问控制**
+  - 认证与 ACL 在 [acl.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/acl.rs) 与 [cmd/acl.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/cmd/acl.rs)
+- **配置与日志**
+  - 配置解析在 [conf.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/conf.rs)，支持文件与命令动态改写
+  - 日志采用 tracing 生态，支持文件滚动与环境过滤
+- **脚本与扩展**
+  - Lua 脚本在 [cmd/scripting.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/cmd/scripting.rs) 集成 mlua，支持原子执行与返回类型转换
+- **阻塞与通知**
+  - 阻塞队列与消息在 [cmd/list.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/cmd/list.rs)、[cmd/stream.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/cmd/stream.rs)
+  - 发布订阅在 [cmd/pubsub.rs](https://github.com/shoulderTang/RUST-REDIS/rust-redis/src/cmd/pubsub.rs)
+
 ## 快速开始 (Getting Started)
 
 ### 1. 环境准备
