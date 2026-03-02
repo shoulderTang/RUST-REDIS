@@ -97,16 +97,16 @@ cluster-node-timeout 5000
 
 本项目提供了全面的单元测试，覆盖了所有核心功能和命令。测试代码位于 `rust-redis/src/tests/` 目录下，按照功能模块进行分类。
 
-测试结果:
-
-test result: ok. 255 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.07s
-
 ### 运行所有测试
 
 ```bash
 cd rust-redis
 cargo test
 ```
+
+测试结果:
+
+test result: ok. 255 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.07s
 
 ### 运行指定测试
 
