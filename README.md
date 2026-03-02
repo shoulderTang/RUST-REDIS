@@ -68,7 +68,22 @@ redis-cli -p 6379
 ```bash
 cd rust-redis
 # 启动集群节点
-./start-cluster-nodes.sh
+./start-cluster-nodes.sh start
+```
+
+```bash
+# 创建集群
+./create-cluster.sh 
+```
+
+```bash
+# 停止集群节点
+./start-cluster-nodes.sh stop
+```
+
+```bash
+# 重启集群节点
+./start-cluster-nodes.sh restart
 ```
 
 在配置文件中开启集群支持：
