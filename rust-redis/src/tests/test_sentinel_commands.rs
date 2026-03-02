@@ -34,7 +34,7 @@ async fn test_sentinel_ckquorum_logic() {
             leader_runid: None,
         });
     }
-    let (_total, reachable, majority, quorum, ok) = sentinel::check_quorum_for_master(&state, "mymaster").unwrap();
+    let (_total, reachable, _majority, _quorum, ok) = sentinel::check_quorum_for_master(&state, "mymaster").unwrap();
     assert_eq!(reachable, 2);
     assert!(ok);
     {
