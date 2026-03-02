@@ -2,8 +2,6 @@
 
 本项目是一个使用 Rust 语言重新实现的 Redis(6.2.5)服务器。它旨在通过 Rust 的安全性和并发特性，提供一个高性能、稳定且易于维护的 Redis 替代方案。项目不仅实现了 Redis的核心数据结构和命令，还支持集群、哨兵、主从复制等高级功能。
 
-本项目功能与Redis 6.2.5及以上版本兼容。
-
 ## 功能特性 (Features)
 
 *   **核心数据结构**: 完整支持 String, List, Hash, Set, ZSet, Stream, Geo, Bitmap, HyperLogLog 等 Redis 数据类型。
