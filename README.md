@@ -93,6 +93,41 @@ cluster-config-file nodes.conf
 cluster-node-timeout 5000
 ```
 
+## 单元测试 (Unit Tests)
+
+本项目提供了全面的单元测试，覆盖了所有核心功能和命令。测试代码位于 `rust-redis/src/tests/` 目录下，按照功能模块进行分类。
+
+### 运行所有测试
+
+```bash
+cd rust-redis
+cargo test
+```
+
+### 运行指定测试
+
+```bash
+# 运行特定模块的测试
+cargo test --test test_cluster_cmd     # 集群相关测试
+cargo test --test test_replication     # 主从复制测试
+cargo test --test test_sentinel_logic  # 哨兵模式测试
+
+# 运行特定数据类型的测试
+cargo test --test string              # 字符串命令测试
+cargo test --test hash                # 哈希命令测试
+cargo test --test list                # 列表命令测试
+cargo test --test set                 # 集合命令测试
+cargo test --test zset                # 有序集合测试
+```
+
+### 测试覆盖范围
+
+- **核心命令**: 所有 Redis 数据类型的基本操作命令
+- **持久化**: AOF 和 RDB 的保存、加载、恢复功能
+- **高可用性**: 主从复制、哨兵模式、集群模式的功能验证
+- **高级功能**: Lua 脚本、事务、发布订阅、流数据等
+- **性能测试**: 关键命令的性能基准测试
+
 ## 更新日志 (Changelog)
 
 2026.1.15 实现了resp模块的解析和序列化，以及db模块的简单实现。
