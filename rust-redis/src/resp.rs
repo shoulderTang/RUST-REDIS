@@ -241,6 +241,7 @@ pub fn write_frame<'a>(
 }
 
 impl Resp {
+    #[allow(dead_code)]
     pub fn as_bytes(&self) -> Vec<u8> {
         match self {
             Resp::SimpleString(s) => format!("+{}\r\n", String::from_utf8_lossy(s)).into_bytes(),
