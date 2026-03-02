@@ -1,5 +1,84 @@
 # RUST-REDIS
-Rewrite the redis in Rust language and in Rust way.
+
+本项目是一个使用 Rust 语言重新实现的 Redis 服务器。它旨在通过 Rust 的安全性和并发特性，提供一个高性能、稳定且易于维护的 Redis 替代方案。项目不仅实现了 Redis 的核心数据结构和命令，还支持集群、哨兵、主从复制等高级功能。
+
+## 功能特性 (Features)
+
+*   **核心数据结构**: 完整支持 String, List, Hash, Set, ZSet, Stream, Geo, Bitmap, HyperLogLog 等 Redis 数据类型。
+*   **持久化 (Persistence)**:
+    *   **AOF**: 支持 Append Only File 持久化，保证数据不丢失。
+    *   **RDB**: 支持内存快照，快速备份和恢复。
+*   **高可用性 (High Availability)**:
+    *   **主从复制 (Replication)**: 支持一主多从架构，实现读写分离和数据冗余。
+    *   **哨兵模式 (Sentinel)**: 提供监控、通知和自动故障转移功能。
+    *   **集群模式 (Cluster)**: 完整的分布式集群解决方案，支持自动分片、节点发现和故障转移。
+*   **高级功能**:
+    *   **Lua 脚本**: 内置 Lua 解释器，支持原子性脚本执行。
+    *   **ACL 权限控制**: 支持细粒度的用户认证和权限管理 (Auth, ACL)。
+    *   **发布/订阅 (Pub/Sub)**: 支持标准的 Pub/Sub 消息模式。
+    *   **事务 (Transactions)**: 支持 MULTI/EXEC/WATCH/DISCARD 事务操作。
+    *   **阻塞命令**: 支持 BLPOP, BRPOP, XREAD 等阻塞式读取。
+    *   **Stream**: 完整的流数据类型支持 (XADD, XREAD, XGROUP 等)。
+*   **高性能**: 基于 Rust 异步运行时 (Tokio) 构建，采用多线程模型，充分利用多核 CPU 优势。
+
+## 快速开始 (Getting Started)
+
+### 1. 环境准备
+确保您的系统已安装 Rust 编程语言和 Cargo 包管理器。
+
+### 2. 编译项目
+```bash
+cd rust-redis
+cargo build --release
+```
+编译完成后，可执行文件将生成在 `target/release/` 目录下。
+
+### 3. 运行服务器
+
+**默认启动:**
+```bash
+./target/release/server
+```
+
+**指定配置文件启动:**
+```bash
+./target/release/server redis.conf
+```
+
+**命令行参数启动:**
+```bash
+./target/release/server --port 6379 --requirepass "mypassword"
+```
+
+### 4. 客户端连接
+您可以使用本项目自带的客户端，也可以使用官方的 `redis-cli` 工具。
+
+```bash
+# 使用官方 redis-cli
+redis-cli -p 6379
+
+# 使用本项目客户端
+./target/release/client -h 127.0.0.1 -p 6379
+```
+
+## 集群与高级配置
+
+### 启动集群
+本项目提供了辅助脚本用于快速启动集群测试环境：
+```bash
+cd rust-redis
+# 启动集群节点
+./start-cluster-nodes.sh
+```
+
+在配置文件中开启集群支持：
+```conf
+cluster-enabled yes
+cluster-config-file nodes.conf
+cluster-node-timeout 5000
+```
+
+## 更新日志 (Changelog)
 
 2026.1.15 实现了resp模块的解析和序列化，以及db模块的简单实现。
 
@@ -32,4 +111,3 @@ Rewrite the redis in Rust language and in Rust way.
 2026.2.24 实现哨兵模式功能。
 
 2026.2.26 实现集群模式功能。1.实现cluster节点发现功能。2.实现cluster节点通信功能。3.实现cluster节点故障检测功能。4.实现cluster节点故障转移功能。
-
