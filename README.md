@@ -23,6 +23,45 @@
 
 ## 架构设计 (Architecture)
 
+```mermaid
+graph TD
+    subgraph Client
+        A[Client Application]
+    end
+
+    subgraph Network
+        B(TCP/IP Connection)
+    end
+
+    subgraph RUST-REDIS Server
+        C[Tokio Runtime]
+        D[RESP Protocol Parser]
+        E{Command Router}
+        F[Command Execution]
+        G[In-Memory Storage]
+        H[Persistence Layer]
+        I[Replication/Cluster]
+    end
+
+    A -- RESP Request --> B
+    B -- Raw Data --> C
+    C -- Bytes --> D
+    D -- Parsed Command --> E
+    E -- Route to --> F
+    F -- Read/Write --> G
+    F -- Write --> H
+    F -- Sync with --> I
+    G -- Data --> F
+    F -- RESP Response --> D
+    D -- Serialized Response --> C
+    C -- Raw Data --> B
+    B -- RESP Response --> A
+
+    style Client fill:#cde4ff
+    style Network fill:#f5f5f5
+    style A fontWeight:bold
+```
+
 - **运行时与并发模型**
   - 基于 Tokio 多线程运行时，网络 IO、后台任务并行执行
   - 核心二进制：服务器 [server.rs](https://github.com/shoulderTang/RUST-REDIS/tree/main/rust-redis/src/bin/server.rs)、客户端 [client.rs](https://github.com/shoulderTang/RUST-REDIS/tree/main/rust-redis/src/bin/client.rs)、哨兵 [sentinel.rs](https://github.com/shoulderTang/RUST-REDIS/tree/main/rust-redis/src/bin/sentinel.rs)
