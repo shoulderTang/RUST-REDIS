@@ -1,5 +1,4 @@
 use dashmap::DashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 // RehashMap struct and implementation are removed for simplicity
 // and replaced by DashMap as the default implementation.
@@ -63,50 +62,33 @@ pub struct Entry {
 
 impl Entry {
     pub fn new(value: Value, ttl_ms: Option<u64>) -> Self {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards");
-        let now_ms = now.as_millis() as u64;
-        
+        let now_ms = crate::clock::now_ms();
         let expires_at = ttl_ms.map(|ms| now_ms + ms);
-        
-        Self { 
-            value, 
+        Self {
+            value,
             expires_at,
-            lru: now.as_secs(),
+            lru: crate::clock::now_secs(),
             lfu: 1,
         }
     }
 
     pub fn new_with_expire(value: Value, expires_at: Option<u64>) -> Self {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards");
-        
-        Self { 
-            value, 
+        Self {
+            value,
             expires_at,
-            lru: now.as_secs(),
+            lru: crate::clock::now_secs(),
             lfu: 1,
         }
     }
 
     pub fn touch(&mut self) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("Time went backwards")
-            .as_secs();
-        self.lru = now;
+        self.lru = crate::clock::now_secs();
         self.lfu = self.lfu.saturating_add(1);
     }
 
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("Time went backwards")
-                .as_millis() as u64;
-            now >= expires_at
+            crate::clock::now_ms() >= expires_at
         } else {
             false
         }

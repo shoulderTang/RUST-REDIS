@@ -13,6 +13,8 @@ use tokio::io::AsyncWriteExt as _;
 use crate::resp::Resp;
 use crate::sentinel::{SentinelState, start_manual_failover, reset_failover_state};
 
+#[path = "../clock.rs"]
+pub mod clock;
 #[path = "../aof.rs"]
 mod aof;
 #[path = "../cmd/mod.rs"]
@@ -52,6 +54,7 @@ async fn main() {
         }
     }
 
+    clock::start_clock_task();
     let cfg_path = args.get(1);
     let cfg = match conf::load_config(cfg_path.map(|s| s.as_str())) {
         Ok(c) => c,

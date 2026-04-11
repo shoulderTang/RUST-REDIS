@@ -3,11 +3,11 @@
 #![allow(dead_code)]
 use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpListener;
-use tokio::sync::Mutex;
 use tracing::{error, info, warn};
+#[path = "../clock.rs"]
+pub mod clock;
 #[path = "../aof.rs"]
 mod aof;
 #[path = "../cmd/mod.rs"]
@@ -88,6 +88,7 @@ async fn run_server(
     cfg: conf::Config,
     _guard: Option<tracing_appender::non_blocking::WorkerGuard>,
 ) {
+    clock::start_clock_task();
     let addr = cfg.address();
     info!("starting server, listen on {}", addr);
     if let Some(path) = &cfg.logfile {
@@ -141,13 +142,13 @@ async fn run_server(
     let acl = Arc::new(std::sync::RwLock::new(acl_store));
     let mut rng = rand::rng();
     let run_id: String = (0..40).map(|_| rng.sample(rand::distr::Alphanumeric) as char).collect();
-    let aof = if cfg.appendonly {
+    // Hold the raw Aof before the task starts so we can load it first.
+    let raw_aof = if cfg.appendonly {
         info!("AOF enabled, file: {}", cfg.appendfilename);
         let aof = aof::Aof::new(&cfg.appendfilename, cfg.appendfsync)
             .await
-            .expect("failed to open AOF file"); 
-        //aof.load(&cfg.appendfilename, &databases, &cfg, &script_manager)
-        Some(Arc::new(Mutex::new(aof)))
+            .expect("failed to open AOF file");
+        Some(aof)
     } else {
         None
     };
@@ -157,10 +158,10 @@ async fn run_server(
         let node_id = cluster::NodeId(my_run_id.clone());
         Arc::new(RwLock::new(cluster::ClusterState::new(node_id, cfg.bind.clone(), cfg.port)))
     };
-    let server_ctx = cmd::ServerContext {
+    let mut server_ctx = cmd::ServerContext {
         databases: databases,
         acl: acl,
-        aof: aof,
+        aof: None, // filled in after AOF load below
         config: Arc::new(cfg.clone()),
         script_manager: script_manager.clone(),
         blocking_waiters: std::sync::Arc::new(dashmap::DashMap::new()),
@@ -232,10 +233,11 @@ async fn run_server(
         }
     }
     
-    if let Some(ref aof) = server_ctx.aof {
-            //let aof_guard = aof.lock().await;
-            let aof_guard = aof.lock().await;
-            aof_guard.load(&server_ctx).await.expect("failed to load AOF");
+    // Load AOF while we still have exclusive ownership of the Aof struct,
+    // then hand it off to the background task.
+    if let Some(aof) = raw_aof {
+        aof.load(&server_ctx).await.expect("failed to load AOF");
+        server_ctx.aof = Some(aof::start_aof_task(aof));
     }
 
     // Background task to clean up expired keys
@@ -453,17 +455,7 @@ async fn run_server(
                 
                                 if let Some(cmd) = cmd_to_log {
                                     if let Some(aof) = &server_ctx_cloned.aof {
-                                        // Use a timeout to prevent hanging if AOF lock is held for too long
-                                        let aof_op = async {
-                                            let mut guard = aof.lock().await;
-                                            guard.append(&cmd).await
-                                        };
-
-                                        match tokio::time::timeout(Duration::from_millis(500), aof_op).await {
-                                            Ok(Ok(_)) => {},
-                                            Ok(Err(e)) => error!("failed to append to AOF: {}", e),
-                                            Err(_) => error!("timeout appending to AOF"),
-                                        }
+                                        aof.append(&cmd).await;
                                     }
                                     let next_off = server_ctx_cloned.repl_offset.fetch_add(1, Ordering::Relaxed) + 1;
                                     {

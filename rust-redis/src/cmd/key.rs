@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 pub fn del(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 2 {
-        return Resp::Error("ERR wrong number of arguments for 'DEL'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'DEL'");
     }
 
     let mut deleted = 0;
@@ -33,7 +33,7 @@ pub fn del(items: &[Resp], db: &Db) -> Resp {
 
 pub fn unlink(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 2 {
-        return Resp::Error("ERR wrong number of arguments for 'UNLINK'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'UNLINK'");
     }
 
     let mut deleted = 0;
@@ -68,25 +68,25 @@ pub fn unlink(items: &[Resp], db: &Db) -> Resp {
 
 pub fn expire(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 3 {
-        return Resp::Error("ERR wrong number of arguments for 'EXPIRE'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'EXPIRE'");
     }
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
     let seconds_bytes = match &items[2] {
         Resp::BulkString(Some(b)) => b,
         Resp::SimpleString(s) => s,
-        _ => return Resp::Error("ERR invalid seconds".to_string()),
+        _ => return Resp::StaticError("ERR invalid seconds"),
     };
     let seconds_str = match std::str::from_utf8(seconds_bytes) {
         Ok(s) => s,
-        Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
     };
     let seconds: u64 = match seconds_str.parse() {
         Ok(s) => s,
-        Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
     };
 
     if let Some(mut entry) = db.get_mut(&key) {
@@ -106,25 +106,25 @@ pub fn expire(items: &[Resp], db: &Db) -> Resp {
 
 pub fn pexpire(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 3 {
-        return Resp::Error("ERR wrong number of arguments for 'PEXPIRE'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'PEXPIRE'");
     }
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
     let ms_bytes = match &items[2] {
         Resp::BulkString(Some(b)) => b,
         Resp::SimpleString(s) => s,
-        _ => return Resp::Error("ERR invalid milliseconds".to_string()),
+        _ => return Resp::StaticError("ERR invalid milliseconds"),
     };
     let ms_str = match std::str::from_utf8(ms_bytes) {
         Ok(s) => s,
-        Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
     };
     let ms: u64 = match ms_str.parse() {
         Ok(s) => s,
-        Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
     };
 
     if let Some(mut entry) = db.get_mut(&key) {
@@ -144,25 +144,25 @@ pub fn pexpire(items: &[Resp], db: &Db) -> Resp {
 
 pub fn expireat(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 3 {
-        return Resp::Error("ERR wrong number of arguments for 'EXPIREAT'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'EXPIREAT'");
     }
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
     let timestamp_bytes = match &items[2] {
         Resp::BulkString(Some(b)) => b,
         Resp::SimpleString(s) => s,
-        _ => return Resp::Error("ERR invalid timestamp".to_string()),
+        _ => return Resp::StaticError("ERR invalid timestamp"),
     };
     let timestamp_str = match std::str::from_utf8(timestamp_bytes) {
         Ok(s) => s,
-        Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
     };
     let timestamp: u64 = match timestamp_str.parse() {
         Ok(s) => s,
-        Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
     };
 
     if let Some(mut entry) = db.get_mut(&key) {
@@ -181,25 +181,25 @@ pub fn expireat(items: &[Resp], db: &Db) -> Resp {
 
 pub fn pexpireat(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 3 {
-        return Resp::Error("ERR wrong number of arguments for 'PEXPIREAT'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'PEXPIREAT'");
     }
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
     let timestamp_bytes = match &items[2] {
         Resp::BulkString(Some(b)) => b,
         Resp::SimpleString(s) => s,
-        _ => return Resp::Error("ERR invalid timestamp".to_string()),
+        _ => return Resp::StaticError("ERR invalid timestamp"),
     };
     let timestamp_str = match std::str::from_utf8(timestamp_bytes) {
         Ok(s) => s,
-        Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
     };
     let timestamp: u64 = match timestamp_str.parse() {
         Ok(s) => s,
-        Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
     };
 
     if let Some(mut entry) = db.get_mut(&key) {
@@ -218,12 +218,12 @@ pub fn pexpireat(items: &[Resp], db: &Db) -> Resp {
 
 pub fn ttl(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 2 {
-        return Resp::Error("ERR wrong number of arguments for 'TTL'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'TTL'");
     }
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
 
     if let Some(entry) = db.get(&key) {
@@ -258,12 +258,12 @@ pub fn ttl(items: &[Resp], db: &Db) -> Resp {
 
 pub fn pttl(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 2 {
-        return Resp::Error("ERR wrong number of arguments for 'PTTL'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'PTTL'");
     }
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
 
     if let Some(entry) = db.get(&key) {
@@ -298,7 +298,7 @@ pub fn pttl(items: &[Resp], db: &Db) -> Resp {
 
 pub fn exists(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 2 {
-        return Resp::Error("ERR wrong number of arguments for 'EXISTS'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'EXISTS'");
     }
 
     let mut count = 0;
@@ -323,7 +323,7 @@ pub fn exists(items: &[Resp], db: &Db) -> Resp {
 
 pub fn touch(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 2 {
-        return Resp::Error("ERR wrong number of arguments for 'TOUCH'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'TOUCH'");
     }
 
     let mut count = 0;
@@ -349,12 +349,12 @@ pub fn touch(items: &[Resp], db: &Db) -> Resp {
 
 pub fn type_(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 2 {
-        return Resp::Error("ERR wrong number of arguments for 'TYPE'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'TYPE'");
     }
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b,
         Resp::SimpleString(s) => s,
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
     
     if let Some(entry) = db.get(key) {
@@ -403,25 +403,25 @@ pub fn flushall(items: &[Resp], databases: &Arc<Vec<RwLock<Db>>>) -> Resp {
 
 pub fn dbsize(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 1 {
-         return Resp::Error("ERR wrong number of arguments for 'DBSIZE'".to_string());
+         return Resp::StaticError("ERR wrong number of arguments for 'DBSIZE'");
     }
     Resp::Integer(db.len() as i64)
 }
 
 pub fn copy(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) -> Resp {
     if items.len() < 3 {
-        return Resp::Error("ERR wrong number of arguments for 'COPY' command".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'COPY' command");
     }
 
     let source = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid source key".to_string()),
+        _ => return Resp::StaticError("ERR invalid source key"),
     };
     let destination = match &items[2] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid destination key".to_string()),
+        _ => return Resp::StaticError("ERR invalid destination key"),
     };
 
     let mut db_idx = conn_ctx.db_index;
@@ -432,22 +432,22 @@ pub fn copy(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &Serve
         let arg = match &items[i] {
             Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_uppercase(),
             Resp::SimpleString(s) => String::from_utf8_lossy(s).to_uppercase(),
-            _ => return Resp::Error("ERR syntax error".to_string()),
+            _ => return Resp::StaticError("ERR syntax error"),
         };
 
         match arg.as_str() {
             "DB" => {
                 if i + 1 >= items.len() {
-                    return Resp::Error("ERR syntax error".to_string());
+                    return Resp::StaticError("ERR syntax error");
                 }
                 let idx_str = match &items[i + 1] {
                     Resp::BulkString(Some(b)) => String::from_utf8_lossy(b),
                     Resp::SimpleString(s) => String::from_utf8_lossy(s),
-                    _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+                    _ => return Resp::StaticError("ERR value is not an integer or out of range"),
                 };
                 db_idx = match idx_str.parse() {
                     Ok(idx) if idx < server_ctx.databases.len() => idx,
-                    _ => return Resp::Error("ERR DB index is out of range".to_string()),
+                    _ => return Resp::StaticError("ERR DB index is out of range"),
                 };
                 i += 2;
             }
@@ -455,7 +455,7 @@ pub fn copy(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &Serve
                 replace = true;
                 i += 1;
             }
-            _ => return Resp::Error("ERR syntax error".to_string()),
+            _ => return Resp::StaticError("ERR syntax error"),
         }
     }
 
@@ -488,19 +488,19 @@ pub fn copy(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &Serve
 
 pub fn object(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 3 {
-        return Resp::Error("ERR wrong number of arguments for 'OBJECT' command".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'OBJECT' command");
     }
 
     let subcommand = match &items[1] {
         Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_uppercase(),
         Resp::SimpleString(s) => String::from_utf8_lossy(s).to_uppercase(),
-        _ => return Resp::Error("ERR syntax error".to_string()),
+        _ => return Resp::StaticError("ERR syntax error"),
     };
 
     let key = match &items[2] {
         Resp::BulkString(Some(b)) => b,
         Resp::SimpleString(s) => s,
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
 
     if let Some(entry) = db.get(key) {
@@ -524,11 +524,7 @@ pub fn object(items: &[Resp], db: &Db) -> Resp {
                 Resp::BulkString(Some(Bytes::from(enc)))
             }
             "IDLETIME" => {
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
-                let idle = now.saturating_sub(entry.lru);
+                let idle = crate::clock::now_secs().saturating_sub(entry.lru);
                 Resp::Integer(idle as i64)
             }
             "FREQ" => {
@@ -576,13 +572,13 @@ pub fn object(items: &[Resp], db: &Db) -> Resp {
 
 pub fn keys(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 2 {
-        return Resp::Error("ERR wrong number of arguments for 'KEYS'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'KEYS'");
     }
     
     let pattern = match &items[1] {
         Resp::BulkString(Some(b)) => b,
         Resp::SimpleString(s) => s,
-        _ => return Resp::Error("ERR invalid pattern".to_string()),
+        _ => return Resp::StaticError("ERR invalid pattern"),
     };
     
     let mut matched_keys = Vec::new();
@@ -614,17 +610,17 @@ pub fn match_pattern(pattern: &[u8], key: &[u8]) -> bool {
 
 pub fn rename(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 3 {
-        return Resp::Error("ERR wrong number of arguments for 'RENAME'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'RENAME'");
     }
     let old_key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
     let new_key = match &items[2] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
 
     if old_key == new_key {
@@ -632,38 +628,38 @@ pub fn rename(items: &[Resp], db: &Db) -> Resp {
             if entry.is_expired() {
                 drop(entry);
                 db.remove(&old_key);
-                return Resp::Error("ERR no such key".to_string());
+                return Resp::StaticError("ERR no such key");
             }
         } else {
-            return Resp::Error("ERR no such key".to_string());
+            return Resp::StaticError("ERR no such key");
         }
         return Resp::SimpleString(Bytes::from("OK"));
     }
 
     if let Some((_, entry)) = db.remove(&old_key) {
         if entry.is_expired() {
-             return Resp::Error("ERR no such key".to_string());
+             return Resp::StaticError("ERR no such key");
         }
         db.insert(new_key, entry);
         Resp::SimpleString(Bytes::from("OK"))
     } else {
-        Resp::Error("ERR no such key".to_string())
+        Resp::StaticError("ERR no such key")
     }
 }
 
 pub fn renamenx(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 3 {
-        return Resp::Error("ERR wrong number of arguments for 'RENAMENX'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'RENAMENX'");
     }
     let old_key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
     let new_key = match &items[2] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
 
     if old_key == new_key {
@@ -671,10 +667,10 @@ pub fn renamenx(items: &[Resp], db: &Db) -> Resp {
             if entry.is_expired() {
                 drop(entry);
                 db.remove(&old_key);
-                return Resp::Error("ERR no such key".to_string());
+                return Resp::StaticError("ERR no such key");
             }
         } else {
-            return Resp::Error("ERR no such key".to_string());
+            return Resp::StaticError("ERR no such key");
         }
         return Resp::Integer(0);
     }
@@ -689,23 +685,23 @@ pub fn renamenx(items: &[Resp], db: &Db) -> Resp {
 
     if let Some((_, entry)) = db.remove(&old_key) {
          if entry.is_expired() {
-             return Resp::Error("ERR no such key".to_string());
+             return Resp::StaticError("ERR no such key");
          }
          db.insert(new_key, entry);
          Resp::Integer(1)
     } else {
-        Resp::Error("ERR no such key".to_string())
+        Resp::StaticError("ERR no such key")
     }
 }
 
 pub fn persist(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 2 {
-        return Resp::Error("ERR wrong number of arguments for 'PERSIST'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'PERSIST'");
     }
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
 
     if let Some(mut entry) = db.get_mut(&key) {
@@ -727,37 +723,37 @@ use crate::cmd::{as_bytes, ConnectionContext, ServerContext};
 
 pub fn move_(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) -> Resp {
     if items.len() != 3 {
-        return Resp::Error("ERR wrong number of arguments for 'move' command".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'move' command");
     }
 
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
 
     let db_idx_bytes = match &items[2] {
         Resp::BulkString(Some(b)) => b,
         Resp::SimpleString(s) => s,
-        _ => return Resp::Error("ERR invalid database index".to_string()),
+        _ => return Resp::StaticError("ERR invalid database index"),
     };
 
     let db_idx_str = match std::str::from_utf8(db_idx_bytes) {
         Ok(s) => s,
-        Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
     };
 
     let dst_idx: usize = match db_idx_str.parse() {
         Ok(idx) => idx,
-        Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
     };
 
     if dst_idx == conn_ctx.db_index {
-        return Resp::Error("ERR source and destination objects are the same".to_string());
+        return Resp::StaticError("ERR source and destination objects are the same");
     }
 
     if dst_idx >= server_ctx.databases.len() {
-        return Resp::Error("ERR DB index is out of range".to_string());
+        return Resp::StaticError("ERR DB index is out of range");
     }
 
     let src_db = server_ctx.databases[conn_ctx.db_index].read().unwrap().clone();
@@ -792,33 +788,33 @@ pub fn move_(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &Serv
 
 pub fn swapdb(items: &[Resp], server_ctx: &ServerContext) -> Resp {
     if items.len() != 3 {
-        return Resp::Error("ERR wrong number of arguments for 'swapdb' command".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'swapdb' command");
     }
 
     let idx1: usize = match as_bytes(&items[1]) {
         Some(b) => match std::str::from_utf8(&b) {
             Ok(s) => match s.parse() {
                 Ok(idx) => idx,
-                Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+                Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
             },
-            Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+            Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
         },
-        None => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        None => return Resp::StaticError("ERR value is not an integer or out of range"),
     };
 
     let idx2: usize = match as_bytes(&items[2]) {
         Some(b) => match std::str::from_utf8(&b) {
             Ok(s) => match s.parse() {
                 Ok(idx) => idx,
-                Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+                Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
             },
-            Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+            Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
         },
-        None => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        None => return Resp::StaticError("ERR value is not an integer or out of range"),
     };
 
     if idx1 >= server_ctx.databases.len() || idx2 >= server_ctx.databases.len() {
-        return Resp::Error("ERR DB index is out of range".to_string());
+        return Resp::StaticError("ERR DB index is out of range");
     }
 
     if idx1 == idx2 {
@@ -836,21 +832,21 @@ pub fn swapdb(items: &[Resp], server_ctx: &ServerContext) -> Resp {
 
 pub fn scan(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 2 {
-        return Resp::Error("ERR wrong number of arguments for 'SCAN'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'SCAN'");
     }
 
     let cursor_bytes = match &items[1] {
         Resp::BulkString(Some(b)) => b,
         Resp::SimpleString(s) => s,
-        _ => return Resp::Error("ERR invalid cursor".to_string()),
+        _ => return Resp::StaticError("ERR invalid cursor"),
     };
     let cursor_str = match std::str::from_utf8(cursor_bytes) {
         Ok(s) => s,
-        Err(_) => return Resp::Error("ERR invalid cursor".to_string()),
+        Err(_) => return Resp::StaticError("ERR invalid cursor"),
     };
     let cursor: usize = match cursor_str.parse() {
         Ok(i) => i,
-        Err(_) => return Resp::Error("ERR invalid cursor".to_string()),
+        Err(_) => return Resp::StaticError("ERR invalid cursor"),
     };
 
     let mut match_pattern_str: Option<&[u8]> = None;
@@ -862,60 +858,60 @@ pub fn scan(items: &[Resp], db: &Db) -> Resp {
         let arg = match &items[idx] {
             Resp::BulkString(Some(b)) => b,
             Resp::SimpleString(s) => s,
-            _ => return Resp::Error("ERR syntax error".to_string()),
+            _ => return Resp::StaticError("ERR syntax error"),
         };
         let arg_str = match std::str::from_utf8(arg) {
             Ok(s) => s.to_uppercase(),
-            Err(_) => return Resp::Error("ERR syntax error".to_string()),
+            Err(_) => return Resp::StaticError("ERR syntax error"),
         };
 
         match arg_str.as_str() {
             "MATCH" => {
                 if idx + 1 >= items.len() {
-                    return Resp::Error("ERR syntax error".to_string());
+                    return Resp::StaticError("ERR syntax error");
                 }
                 match_pattern_str = match &items[idx+1] {
                     Resp::BulkString(Some(b)) => Some(b.as_ref()),
                     Resp::SimpleString(s) => Some(s.as_ref()),
-                    _ => return Resp::Error("ERR syntax error".to_string()),
+                    _ => return Resp::StaticError("ERR syntax error"),
                 };
                 idx += 2;
             },
             "COUNT" => {
                 if idx + 1 >= items.len() {
-                    return Resp::Error("ERR syntax error".to_string());
+                    return Resp::StaticError("ERR syntax error");
                 }
                 let count_bytes = match &items[idx+1] {
                     Resp::BulkString(Some(b)) => b,
                     Resp::SimpleString(s) => s,
-                    _ => return Resp::Error("ERR syntax error".to_string()),
+                    _ => return Resp::StaticError("ERR syntax error"),
                 };
                 let count_str = match std::str::from_utf8(count_bytes) {
                     Ok(s) => s,
-                    Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+                    Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
                 };
                 count = match count_str.parse() {
                     Ok(i) => i,
-                    Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+                    Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
                 };
                 idx += 2;
             },
             "TYPE" => {
                 if idx + 1 >= items.len() {
-                    return Resp::Error("ERR syntax error".to_string());
+                    return Resp::StaticError("ERR syntax error");
                 }
                 let type_bytes = match &items[idx+1] {
                     Resp::BulkString(Some(b)) => b,
                     Resp::SimpleString(s) => s,
-                    _ => return Resp::Error("ERR syntax error".to_string()),
+                    _ => return Resp::StaticError("ERR syntax error"),
                 };
                 type_filter = match std::str::from_utf8(type_bytes) {
                     Ok(s) => Some(s),
-                    Err(_) => return Resp::Error("ERR syntax error".to_string()),
+                    Err(_) => return Resp::StaticError("ERR syntax error"),
                 };
                 idx += 2;
             },
-            _ => return Resp::Error("ERR syntax error".to_string()),
+            _ => return Resp::StaticError("ERR syntax error"),
         }
     }
 

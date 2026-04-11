@@ -1,16 +1,16 @@
 use crate::db::{Db, Entry, Value};
 use crate::resp::{Resp, as_bytes};
 use bytes::Bytes;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 pub fn set(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 3 {
-        return Resp::Error("ERR wrong number of arguments for 'SET'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'SET'");
     }
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
     let val = match &items[2] {
         Resp::BulkString(Some(b)) => b.clone(),
@@ -36,58 +36,56 @@ pub fn set(items: &[Resp], db: &Db) -> Resp {
                 get = true;
             } else if arg.eq_ignore_ascii_case(b"KEEPTTL") {
                 if expire_flag {
-                    return Resp::Error("ERR syntax error".to_string());
+                    return Resp::StaticError("ERR syntax error");
                 }
                 keepttl = true;
                 expire_flag = true;
             } else if arg.eq_ignore_ascii_case(b"EX") {
                 if expire_flag {
-                    return Resp::Error("ERR syntax error".to_string());
+                    return Resp::StaticError("ERR syntax error");
                 }
                 if i + 1 >= items.len() {
-                    return Resp::Error("ERR syntax error".to_string());
+                    return Resp::StaticError("ERR syntax error");
                 }
                 if let Some(s) = as_bytes(&items[i + 1]) {
                     if let Ok(s) = std::str::from_utf8(s) {
                         if let Ok(v) = s.parse::<u64>() {
-                            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
-                            expire_at = Some(now + v * 1000);
+                            expire_at = Some(crate::clock::now_ms() + v * 1000);
                             expire_flag = true;
                         } else {
-                            return Resp::Error("ERR value is not an integer or out of range".to_string());
+                            return Resp::StaticError("ERR value is not an integer or out of range");
                         }
                     } else {
-                        return Resp::Error("ERR value is not an integer or out of range".to_string());
+                        return Resp::StaticError("ERR value is not an integer or out of range");
                     }
                 }
                 i += 1;
             } else if arg.eq_ignore_ascii_case(b"PX") {
                 if expire_flag {
-                    return Resp::Error("ERR syntax error".to_string());
+                    return Resp::StaticError("ERR syntax error");
                 }
                 if i + 1 >= items.len() {
-                    return Resp::Error("ERR syntax error".to_string());
+                    return Resp::StaticError("ERR syntax error");
                 }
                 if let Some(s) = as_bytes(&items[i + 1]) {
                     if let Ok(s) = std::str::from_utf8(s) {
                         if let Ok(v) = s.parse::<u64>() {
-                            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
-                            expire_at = Some(now + v);
+                            expire_at = Some(crate::clock::now_ms() + v);
                             expire_flag = true;
                         } else {
-                            return Resp::Error("ERR value is not an integer or out of range".to_string());
+                            return Resp::StaticError("ERR value is not an integer or out of range");
                         }
                     } else {
-                        return Resp::Error("ERR value is not an integer or out of range".to_string());
+                        return Resp::StaticError("ERR value is not an integer or out of range");
                     }
                 }
                 i += 1;
             } else if arg.eq_ignore_ascii_case(b"EXAT") {
                  if expire_flag {
-                    return Resp::Error("ERR syntax error".to_string());
+                    return Resp::StaticError("ERR syntax error");
                 }
                 if i + 1 >= items.len() {
-                    return Resp::Error("ERR syntax error".to_string());
+                    return Resp::StaticError("ERR syntax error");
                 }
                 if let Some(s) = as_bytes(&items[i + 1]) {
                     if let Ok(s) = std::str::from_utf8(s) {
@@ -95,19 +93,19 @@ pub fn set(items: &[Resp], db: &Db) -> Resp {
                             expire_at = Some(v * 1000);
                             expire_flag = true;
                         } else {
-                            return Resp::Error("ERR value is not an integer or out of range".to_string());
+                            return Resp::StaticError("ERR value is not an integer or out of range");
                         }
                     } else {
-                        return Resp::Error("ERR value is not an integer or out of range".to_string());
+                        return Resp::StaticError("ERR value is not an integer or out of range");
                     }
                 }
                 i += 1;
             } else if arg.eq_ignore_ascii_case(b"PXAT") {
                 if expire_flag {
-                    return Resp::Error("ERR syntax error".to_string());
+                    return Resp::StaticError("ERR syntax error");
                 }
                 if i + 1 >= items.len() {
-                    return Resp::Error("ERR syntax error".to_string());
+                    return Resp::StaticError("ERR syntax error");
                 }
                 if let Some(s) = as_bytes(&items[i + 1]) {
                     if let Ok(s) = std::str::from_utf8(s) {
@@ -115,21 +113,21 @@ pub fn set(items: &[Resp], db: &Db) -> Resp {
                             expire_at = Some(v);
                             expire_flag = true;
                         } else {
-                            return Resp::Error("ERR value is not an integer or out of range".to_string());
+                            return Resp::StaticError("ERR value is not an integer or out of range");
                         }
                     } else {
-                        return Resp::Error("ERR value is not an integer or out of range".to_string());
+                        return Resp::StaticError("ERR value is not an integer or out of range");
                     }
                 }
                 i += 1;
             } else if arg.eq_ignore_ascii_case(b"PERSIST") {
                 if expire_flag {
-                    return Resp::Error("ERR syntax error".to_string());
+                    return Resp::StaticError("ERR syntax error");
                 }
                 expire_flag = true;
                 expire_at = None;
             } else {
-                return Resp::Error("ERR syntax error".to_string());
+                return Resp::StaticError("ERR syntax error");
             }
         }
         i += 1;
@@ -144,7 +142,7 @@ pub fn set(items: &[Resp], db: &Db) -> Resp {
              } else {
                 match &entry.value {
                     Value::String(s) => old_val = Some(s.clone()),
-                    _ => return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                    _ => return Resp::StaticError("WRONGTYPE Operation against a key holding the wrong kind of value"),
                 }
              }
         }
@@ -199,7 +197,7 @@ fn incr_decr_helper(items: &[Resp], db: &Db, inc: i64) -> Resp {
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
     
     let mut val: i64 = 0;
@@ -214,20 +212,20 @@ fn incr_decr_helper(items: &[Resp], db: &Db, inc: i64) -> Resp {
                              val = v;
                              expire_at = entry.expires_at;
                          } else {
-                             return Resp::Error("ERR value is not an integer or out of range".to_string());
+                             return Resp::StaticError("ERR value is not an integer or out of range");
                          }
                      } else {
-                          return Resp::Error("ERR value is not an integer or out of range".to_string());
+                          return Resp::StaticError("ERR value is not an integer or out of range");
                      }
                  },
-                 _ => return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                 _ => return Resp::StaticError("WRONGTYPE Operation against a key holding the wrong kind of value"),
              }
         }
     }
     
     let (new_val, overflow) = val.overflowing_add(inc);
     if overflow {
-        return Resp::Error("ERR increment or decrement would overflow".to_string());
+        return Resp::StaticError("ERR increment or decrement would overflow");
     }
     
     db.insert(key, Entry::new_with_expire(Value::String(Bytes::from(new_val.to_string())), expire_at));
@@ -236,21 +234,21 @@ fn incr_decr_helper(items: &[Resp], db: &Db, inc: i64) -> Resp {
 
 pub fn incr(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 2 {
-        return Resp::Error("ERR wrong number of arguments for 'INCR'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'INCR'");
     }
     incr_decr_helper(items, db, 1)
 }
 
 pub fn decr(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 2 {
-        return Resp::Error("ERR wrong number of arguments for 'DECR'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'DECR'");
     }
     incr_decr_helper(items, db, -1)
 }
 
 pub fn incrby(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 3 {
-        return Resp::Error("ERR wrong number of arguments for 'INCRBY'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'INCRBY'");
     }
     let inc = match &items[2] {
         Resp::BulkString(Some(b)) => {
@@ -258,10 +256,10 @@ pub fn incrby(items: &[Resp], db: &Db) -> Resp {
                 if let Ok(v) = s.parse::<i64>() {
                     v
                 } else {
-                     return Resp::Error("ERR value is not an integer or out of range".to_string());
+                     return Resp::StaticError("ERR value is not an integer or out of range");
                 }
             } else {
-                 return Resp::Error("ERR value is not an integer or out of range".to_string());
+                 return Resp::StaticError("ERR value is not an integer or out of range");
             }
         },
         Resp::SimpleString(s) => {
@@ -269,20 +267,20 @@ pub fn incrby(items: &[Resp], db: &Db) -> Resp {
                 if let Ok(v) = s.parse::<i64>() {
                     v
                 } else {
-                     return Resp::Error("ERR value is not an integer or out of range".to_string());
+                     return Resp::StaticError("ERR value is not an integer or out of range");
                 }
             } else {
-                 return Resp::Error("ERR value is not an integer or out of range".to_string());
+                 return Resp::StaticError("ERR value is not an integer or out of range");
             }
         },
-        _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        _ => return Resp::StaticError("ERR value is not an integer or out of range"),
     };
     incr_decr_helper(items, db, inc)
 }
 
 pub fn decrby(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 3 {
-        return Resp::Error("ERR wrong number of arguments for 'DECRBY'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'DECRBY'");
     }
     let inc = match &items[2] {
         Resp::BulkString(Some(b)) => {
@@ -290,10 +288,10 @@ pub fn decrby(items: &[Resp], db: &Db) -> Resp {
                 if let Ok(v) = s.parse::<i64>() {
                     v
                 } else {
-                     return Resp::Error("ERR value is not an integer or out of range".to_string());
+                     return Resp::StaticError("ERR value is not an integer or out of range");
                 }
             } else {
-                 return Resp::Error("ERR value is not an integer or out of range".to_string());
+                 return Resp::StaticError("ERR value is not an integer or out of range");
             }
         },
         Resp::SimpleString(s) => {
@@ -301,17 +299,17 @@ pub fn decrby(items: &[Resp], db: &Db) -> Resp {
                 if let Ok(v) = s.parse::<i64>() {
                     v
                 } else {
-                     return Resp::Error("ERR value is not an integer or out of range".to_string());
+                     return Resp::StaticError("ERR value is not an integer or out of range");
                 }
             } else {
-                 return Resp::Error("ERR value is not an integer or out of range".to_string());
+                 return Resp::StaticError("ERR value is not an integer or out of range");
             }
         },
-        _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        _ => return Resp::StaticError("ERR value is not an integer or out of range"),
     };
     
     if inc == i64::MIN {
-        return Resp::Error("ERR decrement would overflow".to_string());
+        return Resp::StaticError("ERR decrement would overflow");
     }
     
     incr_decr_helper(items, db, -inc)
@@ -319,17 +317,17 @@ pub fn decrby(items: &[Resp], db: &Db) -> Resp {
 
 pub fn append(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 3 {
-        return Resp::Error("ERR wrong number of arguments for 'APPEND'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'APPEND'");
     }
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
     let val = match &items[2] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid value".to_string()),
+        _ => return Resp::StaticError("ERR invalid value"),
     };
     
     if let Some(mut entry) = db.get_mut(&key) {
@@ -348,7 +346,7 @@ pub fn append(items: &[Resp], db: &Db) -> Resp {
                 *s = Bytes::from(vec);
                 Resp::Integer(len as i64)
             },
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::StaticError("WRONGTYPE Operation against a key holding the wrong kind of value"),
         }
     } else {
         let len = val.len();
@@ -359,12 +357,12 @@ pub fn append(items: &[Resp], db: &Db) -> Resp {
 
 pub fn strlen(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 2 {
-        return Resp::Error("ERR wrong number of arguments for 'STRLEN'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'STRLEN'");
     }
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
     
     if let Some(entry) = db.get(&key) {
@@ -373,7 +371,7 @@ pub fn strlen(items: &[Resp], db: &Db) -> Resp {
         }
         match &entry.value {
             Value::String(s) => Resp::Integer(s.len() as i64),
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::StaticError("WRONGTYPE Operation against a key holding the wrong kind of value"),
         }
     } else {
         Resp::Integer(0)
@@ -382,7 +380,7 @@ pub fn strlen(items: &[Resp], db: &Db) -> Resp {
 
 pub fn mget(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 2 {
-        return Resp::Error("ERR wrong number of arguments for 'MGET'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'MGET'");
     }
     
     let mut values = Vec::with_capacity(items.len() - 1);
@@ -391,7 +389,7 @@ pub fn mget(items: &[Resp], db: &Db) -> Resp {
         let key = match &items[i] {
             Resp::BulkString(Some(b)) => b.clone(),
             Resp::SimpleString(s) => s.clone(),
-            _ => return Resp::Error("ERR invalid key".to_string()),
+            _ => return Resp::StaticError("ERR invalid key"),
         };
         
         if let Some(entry) = db.get(&key) {
@@ -415,7 +413,7 @@ pub fn mget(items: &[Resp], db: &Db) -> Resp {
 
 pub fn setnx(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 3 {
-        return Resp::Error("ERR wrong number of arguments for 'SETNX'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'SETNX'");
     }
     // Convert to SET key val NX
     let mut new_items = Vec::with_capacity(4);
@@ -434,7 +432,7 @@ pub fn setnx(items: &[Resp], db: &Db) -> Resp {
 
 pub fn setex(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 4 {
-        return Resp::Error("ERR wrong number of arguments for 'SETEX'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'SETEX'");
     }
     // SET key val EX seconds
     // args: SETEX key seconds val -> SET key val EX seconds
@@ -450,7 +448,7 @@ pub fn setex(items: &[Resp], db: &Db) -> Resp {
 
 pub fn psetex(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 4 {
-        return Resp::Error("ERR wrong number of arguments for 'PSETEX'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'PSETEX'");
     }
     // SET key val PX milliseconds
     // args: PSETEX key milliseconds val -> SET key val PX milliseconds
@@ -466,12 +464,12 @@ pub fn psetex(items: &[Resp], db: &Db) -> Resp {
 
 pub fn get(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 2 {
-        return Resp::Error("ERR wrong number of arguments for 'GET'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'GET'");
     }
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
 
     if let Some(entry) = db.get(&key) {
@@ -482,7 +480,7 @@ pub fn get(items: &[Resp], db: &Db) -> Resp {
         }
         match &entry.value {
             Value::String(s) => Resp::BulkString(Some(s.clone())),
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::StaticError("WRONGTYPE Operation against a key holding the wrong kind of value"),
         }
     } else {
         Resp::BulkString(None)
@@ -491,7 +489,7 @@ pub fn get(items: &[Resp], db: &Db) -> Resp {
 
 pub fn getset(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 3 {
-        return Resp::Error("ERR wrong number of arguments for 'GETSET'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'GETSET'");
     }
     // Convert to SET key val GET
     let mut new_items = Vec::with_capacity(4);
@@ -505,12 +503,12 @@ pub fn getset(items: &[Resp], db: &Db) -> Resp {
 
 pub fn getdel(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 2 {
-        return Resp::Error("ERR wrong number of arguments for 'GETDEL'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'GETDEL'");
     }
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
 
     if let Some(entry) = db.get(&key) {
@@ -526,7 +524,7 @@ pub fn getdel(items: &[Resp], db: &Db) -> Resp {
                  db.remove(&key);
                  res
              }
-             _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+             _ => Resp::StaticError("WRONGTYPE Operation against a key holding the wrong kind of value"),
         }
     } else {
         Resp::BulkString(None)
@@ -535,12 +533,12 @@ pub fn getdel(items: &[Resp], db: &Db) -> Resp {
 
 pub fn getex(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 2 {
-        return Resp::Error("ERR wrong number of arguments for 'GETEX'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'GETEX'");
     }
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
     
     // Parse options
@@ -552,61 +550,59 @@ pub fn getex(items: &[Resp], db: &Db) -> Resp {
     while i < items.len() {
         if let Some(arg) = as_bytes(&items[i]) {
             if arg.eq_ignore_ascii_case(b"EX") {
-                if expire_set { return Resp::Error("ERR syntax error".to_string()); }
-                if i + 1 >= items.len() { return Resp::Error("ERR syntax error".to_string()); }
+                if expire_set { return Resp::StaticError("ERR syntax error"); }
+                if i + 1 >= items.len() { return Resp::StaticError("ERR syntax error"); }
                 if let Some(s) = as_bytes(&items[i + 1]) {
                     if let Ok(s) = std::str::from_utf8(s) {
                         if let Ok(v) = s.parse::<u64>() {
-                            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
-                            expire_at = Some(now + v * 1000);
+                            expire_at = Some(crate::clock::now_ms() + v * 1000);
                             expire_set = true;
-                        } else { return Resp::Error("ERR value is not an integer or out of range".to_string()); }
-                    } else { return Resp::Error("ERR value is not an integer or out of range".to_string()); }
+                        } else { return Resp::StaticError("ERR value is not an integer or out of range"); }
+                    } else { return Resp::StaticError("ERR value is not an integer or out of range"); }
                 }
                 i += 1;
             } else if arg.eq_ignore_ascii_case(b"PX") {
-                if expire_set { return Resp::Error("ERR syntax error".to_string()); }
-                if i + 1 >= items.len() { return Resp::Error("ERR syntax error".to_string()); }
+                if expire_set { return Resp::StaticError("ERR syntax error"); }
+                if i + 1 >= items.len() { return Resp::StaticError("ERR syntax error"); }
                 if let Some(s) = as_bytes(&items[i + 1]) {
                     if let Ok(s) = std::str::from_utf8(s) {
                         if let Ok(v) = s.parse::<u64>() {
-                            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
-                            expire_at = Some(now + v);
+                            expire_at = Some(crate::clock::now_ms() + v);
                             expire_set = true;
-                        } else { return Resp::Error("ERR value is not an integer or out of range".to_string()); }
-                    } else { return Resp::Error("ERR value is not an integer or out of range".to_string()); }
+                        } else { return Resp::StaticError("ERR value is not an integer or out of range"); }
+                    } else { return Resp::StaticError("ERR value is not an integer or out of range"); }
                 }
                 i += 1;
             } else if arg.eq_ignore_ascii_case(b"EXAT") {
-                if expire_set { return Resp::Error("ERR syntax error".to_string()); }
-                if i + 1 >= items.len() { return Resp::Error("ERR syntax error".to_string()); }
+                if expire_set { return Resp::StaticError("ERR syntax error"); }
+                if i + 1 >= items.len() { return Resp::StaticError("ERR syntax error"); }
                 if let Some(s) = as_bytes(&items[i + 1]) {
                     if let Ok(s) = std::str::from_utf8(s) {
                         if let Ok(v) = s.parse::<u64>() {
                             expire_at = Some(v * 1000);
                             expire_set = true;
-                        } else { return Resp::Error("ERR value is not an integer or out of range".to_string()); }
-                    } else { return Resp::Error("ERR value is not an integer or out of range".to_string()); }
+                        } else { return Resp::StaticError("ERR value is not an integer or out of range"); }
+                    } else { return Resp::StaticError("ERR value is not an integer or out of range"); }
                 }
                 i += 1;
             } else if arg.eq_ignore_ascii_case(b"PXAT") {
-                if expire_set { return Resp::Error("ERR syntax error".to_string()); }
-                if i + 1 >= items.len() { return Resp::Error("ERR syntax error".to_string()); }
+                if expire_set { return Resp::StaticError("ERR syntax error"); }
+                if i + 1 >= items.len() { return Resp::StaticError("ERR syntax error"); }
                 if let Some(s) = as_bytes(&items[i + 1]) {
                     if let Ok(s) = std::str::from_utf8(s) {
                         if let Ok(v) = s.parse::<u64>() {
                             expire_at = Some(v);
                             expire_set = true;
-                        } else { return Resp::Error("ERR value is not an integer or out of range".to_string()); }
-                    } else { return Resp::Error("ERR value is not an integer or out of range".to_string()); }
+                        } else { return Resp::StaticError("ERR value is not an integer or out of range"); }
+                    } else { return Resp::StaticError("ERR value is not an integer or out of range"); }
                 }
                 i += 1;
             } else if arg.eq_ignore_ascii_case(b"PERSIST") {
-                if expire_set { return Resp::Error("ERR syntax error".to_string()); }
+                if expire_set { return Resp::StaticError("ERR syntax error"); }
                 persist = true;
                 expire_set = true;
             } else {
-                return Resp::Error("ERR syntax error".to_string());
+                return Resp::StaticError("ERR syntax error");
             }
         }
         i += 1;
@@ -630,7 +626,7 @@ pub fn getex(items: &[Resp], db: &Db) -> Resp {
                  }
                  Resp::BulkString(Some(val))
              }
-             _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+             _ => Resp::StaticError("WRONGTYPE Operation against a key holding the wrong kind of value"),
         }
     } else {
         Resp::BulkString(None)
@@ -639,19 +635,19 @@ pub fn getex(items: &[Resp], db: &Db) -> Resp {
 
 pub fn mset(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 3 || items.len() % 2 == 0 {
-        return Resp::Error("ERR wrong number of arguments for 'MSET'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'MSET'");
     }
     
     for i in (1..items.len()).step_by(2) {
         let key = match &items[i] {
             Resp::BulkString(Some(b)) => b.clone(),
             Resp::SimpleString(s) => s.clone(),
-            _ => return Resp::Error("ERR invalid key".to_string()),
+            _ => return Resp::StaticError("ERR invalid key"),
         };
         let val = match &items[i+1] {
             Resp::BulkString(Some(b)) => b.clone(),
             Resp::SimpleString(s) => s.clone(),
-            _ => return Resp::Error("ERR invalid value".to_string()),
+            _ => return Resp::StaticError("ERR invalid value"),
         };
         db.insert(key, Entry::new(Value::String(val), None));
     }
@@ -661,7 +657,7 @@ pub fn mset(items: &[Resp], db: &Db) -> Resp {
 
 pub fn msetnx(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 3 || items.len() % 2 == 0 {
-        return Resp::Error("ERR wrong number of arguments for 'MSETNX'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'MSETNX'");
     }
     
     // Check if any key exists
@@ -669,7 +665,7 @@ pub fn msetnx(items: &[Resp], db: &Db) -> Resp {
         let key = match &items[i] {
             Resp::BulkString(Some(b)) => b.clone(),
             Resp::SimpleString(s) => s.clone(),
-            _ => return Resp::Error("ERR invalid key".to_string()),
+            _ => return Resp::StaticError("ERR invalid key"),
         };
         
         if let Some(entry) = db.get(&key) {
@@ -684,12 +680,12 @@ pub fn msetnx(items: &[Resp], db: &Db) -> Resp {
         let key = match &items[i] {
             Resp::BulkString(Some(b)) => b.clone(),
             Resp::SimpleString(s) => s.clone(),
-            _ => return Resp::Error("ERR invalid key".to_string()),
+            _ => return Resp::StaticError("ERR invalid key"),
         };
         let val = match &items[i+1] {
             Resp::BulkString(Some(b)) => b.clone(),
             Resp::SimpleString(s) => s.clone(),
-            _ => return Resp::Error("ERR invalid value".to_string()),
+            _ => return Resp::StaticError("ERR invalid value"),
         };
         db.insert(key, Entry::new(Value::String(val), None));
     }
@@ -699,12 +695,12 @@ pub fn msetnx(items: &[Resp], db: &Db) -> Resp {
 
 pub fn incrbyfloat(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 3 {
-        return Resp::Error("ERR wrong number of arguments for 'INCRBYFLOAT'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'INCRBYFLOAT'");
     }
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
     
     let increment = match &items[2] {
@@ -713,10 +709,10 @@ pub fn incrbyfloat(items: &[Resp], db: &Db) -> Resp {
                 if let Ok(v) = s.parse::<f64>() {
                     v
                 } else {
-                    return Resp::Error("ERR value is not a valid float".to_string());
+                    return Resp::StaticError("ERR value is not a valid float");
                 }
             } else {
-                return Resp::Error("ERR value is not a valid float".to_string());
+                return Resp::StaticError("ERR value is not a valid float");
             }
         },
         Resp::SimpleString(s) => {
@@ -724,13 +720,13 @@ pub fn incrbyfloat(items: &[Resp], db: &Db) -> Resp {
                 if let Ok(v) = s.parse::<f64>() {
                     v
                 } else {
-                     return Resp::Error("ERR value is not a valid float".to_string());
+                     return Resp::StaticError("ERR value is not a valid float");
                 }
             } else {
-                return Resp::Error("ERR value is not a valid float".to_string());
+                return Resp::StaticError("ERR value is not a valid float");
             }
         },
-        _ => return Resp::Error("ERR value is not a valid float".to_string()),
+        _ => return Resp::StaticError("ERR value is not a valid float"),
     };
 
     let mut new_val = increment;
@@ -745,19 +741,19 @@ pub fn incrbyfloat(items: &[Resp], db: &Db) -> Resp {
                              new_val = v + increment;
                              expire_at = entry.expires_at;
                          } else {
-                             return Resp::Error("ERR value is not a valid float".to_string());
+                             return Resp::StaticError("ERR value is not a valid float");
                          }
                      } else {
-                          return Resp::Error("ERR value is not a valid float".to_string());
+                          return Resp::StaticError("ERR value is not a valid float");
                      }
                  },
-                 _ => return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                 _ => return Resp::StaticError("WRONGTYPE Operation against a key holding the wrong kind of value"),
              }
         }
     }
     
     if !new_val.is_finite() {
-        return Resp::Error("ERR increment would produce NaN or Infinity".to_string());
+        return Resp::StaticError("ERR increment would produce NaN or Infinity");
     }
     
     let new_val_str = new_val.to_string();
@@ -767,12 +763,12 @@ pub fn incrbyfloat(items: &[Resp], db: &Db) -> Resp {
 
 pub fn getrange(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 4 {
-        return Resp::Error("ERR wrong number of arguments for 'GETRANGE'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'GETRANGE'");
     }
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
     
     let start = match &items[2] {
@@ -781,10 +777,10 @@ pub fn getrange(items: &[Resp], db: &Db) -> Resp {
                 if let Ok(v) = s.parse::<i64>() {
                     v
                 } else {
-                    return Resp::Error("ERR value is not an integer or out of range".to_string());
+                    return Resp::StaticError("ERR value is not an integer or out of range");
                 }
             } else {
-                return Resp::Error("ERR value is not an integer or out of range".to_string());
+                return Resp::StaticError("ERR value is not an integer or out of range");
             }
         },
         Resp::SimpleString(s) => {
@@ -792,13 +788,13 @@ pub fn getrange(items: &[Resp], db: &Db) -> Resp {
                 if let Ok(v) = s.parse::<i64>() {
                     v
                 } else {
-                    return Resp::Error("ERR value is not an integer or out of range".to_string());
+                    return Resp::StaticError("ERR value is not an integer or out of range");
                 }
             } else {
-                return Resp::Error("ERR value is not an integer or out of range".to_string());
+                return Resp::StaticError("ERR value is not an integer or out of range");
             }
         },
-        _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        _ => return Resp::StaticError("ERR value is not an integer or out of range"),
     };
     
     let end = match &items[3] {
@@ -807,10 +803,10 @@ pub fn getrange(items: &[Resp], db: &Db) -> Resp {
                 if let Ok(v) = s.parse::<i64>() {
                     v
                 } else {
-                    return Resp::Error("ERR value is not an integer or out of range".to_string());
+                    return Resp::StaticError("ERR value is not an integer or out of range");
                 }
             } else {
-                return Resp::Error("ERR value is not an integer or out of range".to_string());
+                return Resp::StaticError("ERR value is not an integer or out of range");
             }
         },
         Resp::SimpleString(s) => {
@@ -818,13 +814,13 @@ pub fn getrange(items: &[Resp], db: &Db) -> Resp {
                 if let Ok(v) = s.parse::<i64>() {
                     v
                 } else {
-                    return Resp::Error("ERR value is not an integer or out of range".to_string());
+                    return Resp::StaticError("ERR value is not an integer or out of range");
                 }
             } else {
-                return Resp::Error("ERR value is not an integer or out of range".to_string());
+                return Resp::StaticError("ERR value is not an integer or out of range");
             }
         },
-        _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        _ => return Resp::StaticError("ERR value is not an integer or out of range"),
     };
     
     if let Some(entry) = db.get(&key) {
@@ -861,7 +857,7 @@ pub fn getrange(items: &[Resp], db: &Db) -> Resp {
                 let sub = s.slice(start_idx as usize..=(end_idx as usize));
                 Resp::BulkString(Some(sub))
             },
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::StaticError("WRONGTYPE Operation against a key holding the wrong kind of value"),
         }
     } else {
         Resp::BulkString(Some(Bytes::new()))
@@ -870,12 +866,12 @@ pub fn getrange(items: &[Resp], db: &Db) -> Resp {
 
 pub fn setrange(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 4 {
-        return Resp::Error("ERR wrong number of arguments for 'SETRANGE'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'SETRANGE'");
     }
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
-        _ => return Resp::Error("ERR invalid key".to_string()),
+        _ => return Resp::StaticError("ERR invalid key"),
     };
     
     let offset = match &items[2] {
@@ -884,10 +880,10 @@ pub fn setrange(items: &[Resp], db: &Db) -> Resp {
                 if let Ok(v) = s.parse::<u64>() { // Redis offset is positive integer (>=0)
                     v
                 } else {
-                     return Resp::Error("ERR value is not an integer or out of range".to_string());
+                     return Resp::StaticError("ERR value is not an integer or out of range");
                 }
             } else {
-                 return Resp::Error("ERR value is not an integer or out of range".to_string());
+                 return Resp::StaticError("ERR value is not an integer or out of range");
             }
         },
         Resp::SimpleString(s) => {
@@ -895,13 +891,13 @@ pub fn setrange(items: &[Resp], db: &Db) -> Resp {
                 if let Ok(v) = s.parse::<u64>() {
                     v
                 } else {
-                     return Resp::Error("ERR value is not an integer or out of range".to_string());
+                     return Resp::StaticError("ERR value is not an integer or out of range");
                 }
             } else {
-                 return Resp::Error("ERR value is not an integer or out of range".to_string());
+                 return Resp::StaticError("ERR value is not an integer or out of range");
             }
         },
-        _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+        _ => return Resp::StaticError("ERR value is not an integer or out of range"),
     };
     
     let value = match &items[3] {
@@ -913,7 +909,7 @@ pub fn setrange(items: &[Resp], db: &Db) -> Resp {
     // Check for max size (proto-max-bulk-len is 512MB by default, but let's just check overflow)
     // 536870911 is 512*1024*1024 - 1. Redis allows 512MB.
     if offset + (value.len() as u64) > 536870912 {
-         return Resp::Error("ERR string exceeds maximum allowed size (512MB)".to_string());
+         return Resp::StaticError("ERR string exceeds maximum allowed size (512MB)");
     }
 
     let offset = offset as usize;
@@ -955,7 +951,7 @@ pub fn setrange(items: &[Resp], db: &Db) -> Resp {
                  *s = Bytes::from(vec);
                  Resp::Integer(len as i64)
              },
-             _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+             _ => Resp::StaticError("WRONGTYPE Operation against a key holding the wrong kind of value"),
         }
     } else {
         // Create new
@@ -973,13 +969,13 @@ pub fn setrange(items: &[Resp], db: &Db) -> Resp {
 
 pub fn stralgo(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 2 {
-        return Resp::Error("ERR wrong number of arguments for 'STRALGO'".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'STRALGO'");
     }
     
     // Arg 1 must be LCS
     match as_bytes(&items[1]) {
         Some(b) if b.eq_ignore_ascii_case(b"LCS") => {},
-        _ => return Resp::Error("ERR syntax error".to_string()),
+        _ => return Resp::StaticError("ERR syntax error"),
     }
 
     let mut get_len = false;
@@ -995,21 +991,21 @@ pub fn stralgo(items: &[Resp], db: &Db) -> Resp {
         if let Some(arg) = as_bytes(&items[i]) {
              if arg.eq_ignore_ascii_case(b"KEYS") {
                  if i + 2 >= items.len() {
-                      return Resp::Error("ERR syntax error".to_string());
+                      return Resp::StaticError("ERR syntax error");
                  }
                  if str_a.is_some() {
-                      return Resp::Error("ERR Either use STRINGS or KEYS".to_string());
+                      return Resp::StaticError("ERR Either use STRINGS or KEYS");
                  }
                  // Fetch keys
                  let key1 = match &items[i+1] {
                      Resp::BulkString(Some(b)) => b.clone(),
                      Resp::SimpleString(s) => s.clone(),
-                     _ => return Resp::Error("ERR invalid key".to_string()),
+                     _ => return Resp::StaticError("ERR invalid key"),
                  };
                  let key2 = match &items[i+2] {
                      Resp::BulkString(Some(b)) => b.clone(),
                      Resp::SimpleString(s) => s.clone(),
-                     _ => return Resp::Error("ERR invalid key".to_string()),
+                     _ => return Resp::StaticError("ERR invalid key"),
                  };
                  
                  let v1 = db.get(&key1).map(|e| e.value.clone());
@@ -1018,32 +1014,32 @@ pub fn stralgo(items: &[Resp], db: &Db) -> Resp {
                  str_a = match v1 {
                      Some(Value::String(b)) => Some(b),
                      None => Some(Bytes::new()),
-                     _ => return Resp::Error("ERR value is not a string".to_string()),
+                     _ => return Resp::StaticError("ERR value is not a string"),
                  };
                  
                  str_b = match v2 {
                      Some(Value::String(b)) => Some(b),
                      None => Some(Bytes::new()),
-                     _ => return Resp::Error("ERR value is not a string".to_string()),
+                     _ => return Resp::StaticError("ERR value is not a string"),
                  };
                  
                  i += 3;
              } else if arg.eq_ignore_ascii_case(b"STRINGS") {
                  if i + 2 >= items.len() {
-                      return Resp::Error("ERR syntax error".to_string());
+                      return Resp::StaticError("ERR syntax error");
                  }
                  if str_a.is_some() {
-                      return Resp::Error("ERR Either use STRINGS or KEYS".to_string());
+                      return Resp::StaticError("ERR Either use STRINGS or KEYS");
                  }
                  str_a = match &items[i+1] {
                      Resp::BulkString(Some(b)) => Some(b.clone()),
                      Resp::SimpleString(s) => Some(s.clone()),
-                     _ => return Resp::Error("ERR invalid string".to_string()),
+                     _ => return Resp::StaticError("ERR invalid string"),
                  };
                  str_b = match &items[i+2] {
                      Resp::BulkString(Some(b)) => Some(b.clone()),
                      Resp::SimpleString(s) => Some(s.clone()),
-                     _ => return Resp::Error("ERR invalid string".to_string()),
+                     _ => return Resp::StaticError("ERR invalid string"),
                  };
                  i += 3;
              } else if arg.eq_ignore_ascii_case(b"LEN") {
@@ -1057,7 +1053,7 @@ pub fn stralgo(items: &[Resp], db: &Db) -> Resp {
                  i += 1;
              } else if arg.eq_ignore_ascii_case(b"MINMATCHLEN") || arg.eq_ignore_ascii_case(b"MINLEN") {
                  if i + 1 >= items.len() {
-                      return Resp::Error("ERR syntax error".to_string());
+                      return Resp::StaticError("ERR syntax error");
                  }
                  // Parse len
                  if let Some(s) = as_bytes(&items[i+1]) {
@@ -1065,20 +1061,20 @@ pub fn stralgo(items: &[Resp], db: &Db) -> Resp {
                          if let Ok(v) = str_val.parse::<usize>() {
                              min_match_len = v;
                          } else {
-                             return Resp::Error("ERR minmatchlen is not an integer".to_string());
+                             return Resp::StaticError("ERR minmatchlen is not an integer");
                          }
                      } else {
-                          return Resp::Error("ERR minmatchlen is not an integer".to_string());
+                          return Resp::StaticError("ERR minmatchlen is not an integer");
                      }
                  } else {
-                      return Resp::Error("ERR minmatchlen is not an integer".to_string());
+                      return Resp::StaticError("ERR minmatchlen is not an integer");
                  }
                  i += 2;
              } else {
-                 return Resp::Error("ERR syntax error".to_string());
+                 return Resp::StaticError("ERR syntax error");
              }
         } else {
-             return Resp::Error("ERR syntax error".to_string());
+             return Resp::StaticError("ERR syntax error");
         }
     }
     

@@ -8,7 +8,11 @@ use tokio::net::tcp::OwnedWriteHalf;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Resp {
     SimpleString(Bytes),
+    /// Owned error string, for dynamically formatted messages.
     Error(String),
+    /// Zero-allocation error for static string literals.
+    #[allow(dead_code)]
+    StaticError(&'static str),
     Integer(i64),
     BulkString(Option<Bytes>),
     Array(Option<Vec<Resp>>),
@@ -203,6 +207,11 @@ pub fn write_frame<'a>(
                 writer.write_all(s.as_bytes()).await?;
                 writer.write_all(b"\r\n").await?;
             }
+            Resp::StaticError(s) => {
+                writer.write_all(b"-").await?;
+                writer.write_all(s.as_bytes()).await?;
+                writer.write_all(b"\r\n").await?;
+            }
             Resp::Integer(i) => {
                 writer.write_all(b":").await?;
                 writer.write_all(i.to_string().as_bytes()).await?;
@@ -246,6 +255,7 @@ impl Resp {
         match self {
             Resp::SimpleString(s) => format!("+{}\r\n", String::from_utf8_lossy(s)).into_bytes(),
             Resp::Error(s) => format!("-{}\r\n", s).into_bytes(),
+            Resp::StaticError(s) => format!("-{}\r\n", s).into_bytes(),
             Resp::Integer(i) => format!(":{}\r\n", i).into_bytes(),
             Resp::BulkString(None) => b"$-1\r\n".to_vec(),
             Resp::BulkString(Some(data)) => {

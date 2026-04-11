@@ -33,6 +33,9 @@ fn print_resp(r: &Resp) {
         Resp::Error(s) => {
             println!("(error) {}", s);
         }
+        Resp::StaticError(s) => {
+            println!("(error) {}", s);
+        }
         Resp::Integer(i) => {
             println!("{}", i);
         }

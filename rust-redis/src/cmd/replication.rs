@@ -258,9 +258,8 @@ async fn replication_worker(ctx: &ServerContext, host: &str, port: u16) -> Resul
                      
                      // Append to AOF if enabled
                      if let Some(frame_to_append) = frame_for_aof {
-                          if let Some(aof_mutex) = &ctx.aof {
-                              let mut aof = aof_mutex.lock().await;
-                              let _ = aof.append(&frame_to_append).await;
+                          if let Some(aof) = &ctx.aof {
+                              aof.append(&frame_to_append).await;
                           }
                      }
 

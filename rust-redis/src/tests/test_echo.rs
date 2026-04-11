@@ -10,7 +10,10 @@ async fn run_cmd_bytes(args: Vec<Bytes>, conn_ctx: &mut ConnectionContext, serve
     }
     let frame = Resp::Array(Some(resp_args));
     let (resp, _) = process_frame(frame, conn_ctx, server_ctx).await;
-    resp
+    match resp {
+        Resp::StaticError(s) => Resp::Error(s.to_string()),
+        other => other,
+    }
 }
 
 #[tokio::test]

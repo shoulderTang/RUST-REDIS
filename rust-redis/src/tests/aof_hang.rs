@@ -1,4 +1,4 @@
-use crate::aof::{Aof, AppendFsync};
+use crate::aof::{Aof, AppendFsync, start_aof_task};
 use crate::cmd::scripting;
 use crate::conf::Config;
 use crate::db::Db;
@@ -6,7 +6,6 @@ use crate::resp::Resp;
 use bytes::Bytes;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::Mutex;
 use crate::cmd::ServerContext;
 use crate::cmd::ConnectionContext;
 use crate::cmd::process_frame;
@@ -32,24 +31,23 @@ async fn test_aof_hang_reproduction() {
     let databases = Arc::new(vec![RwLock::new(Db::default())]);
     let script_manager = scripting::create_script_manager();
     
-    // Initialize AOF exactly like server.rs
+    // Initialize AOF exactly like server.rs: load first, then hand off to task.
     let aof = Aof::new(&path, config.appendfsync)
             .await
             .expect("failed to open AOF file");
-    
-    // Create dummy load
+
     let mut server_ctx : ServerContext = crate::tests::helper::create_server_context();
     Arc::make_mut(&mut server_ctx.config).appendfilename = path.to_string();
     aof.load(&server_ctx)
         .await
         .expect("failed to load AOF");
 
-    let aof_arc = Arc::new(Mutex::new(aof));
+    let aof_writer = start_aof_task(aof);
 
     let server_ctx = ServerContext {
         databases: databases.clone(),
         acl: Arc::new(std::sync::RwLock::new(crate::acl::Acl::new())),
-        aof: Some(aof_arc.clone()),
+        aof: Some(aof_writer),
         config: Arc::new(config),
         script_manager: script_manager.clone(),
         blocking_waiters: Arc::new(dashmap::DashMap::new()),
@@ -129,7 +127,7 @@ async fn test_aof_hang_reproduction() {
         
         if let Some(cmd) = cmd_to_log {
             if let Some(aof) = &server_ctx.aof {
-                aof.lock().await.append(&cmd).await.expect("append failed");
+                aof.append(&cmd).await;
             }
         }
         res

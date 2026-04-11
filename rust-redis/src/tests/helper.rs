@@ -15,7 +15,12 @@ pub async fn run_cmd(args: Vec<&str>, conn_ctx: &mut ConnectionContext, server_c
     }
     let req = Resp::Array(Some(resp_args));
     let (res, _) = process_frame(req, conn_ctx, server_ctx).await;
-    res
+    // Normalize StaticError -> Error so tests written against Resp::Error(String) keep working.
+    // In production the response goes over the wire and is decoded as Resp::Error(String) anyway.
+    match res {
+        Resp::StaticError(s) => Resp::Error(s.to_string()),
+        other => other,
+    }
 }
 
 pub fn create_server_context() -> ServerContext {

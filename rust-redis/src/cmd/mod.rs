@@ -1,4 +1,4 @@
-use crate::aof::Aof;
+use crate::aof::AofWriter;
 use crate::cmd::scripting::ScriptManager;
 use crate::conf::Config;
 use crate::db::Db;
@@ -115,11 +115,11 @@ fn touch_watched_key(key: &[u8], db_idx: usize, server_ctx: &ServerContext) {
 
 pub fn watch(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) -> Resp {
     if items.len() < 2 {
-        return Resp::Error("ERR wrong number of arguments for 'watch' command".to_string());
+        return Resp::StaticError("ERR wrong number of arguments for 'watch' command");
     }
 
     if conn_ctx.in_multi {
-        return Resp::Error("ERR WATCH inside MULTI is not allowed".to_string());
+        return Resp::StaticError("ERR WATCH inside MULTI is not allowed");
     }
 
     for item in items.iter().skip(1) {
@@ -229,7 +229,7 @@ pub struct NodeConn {
 pub struct ServerContext {
     pub databases: Arc<Vec<RwLock<Db>>>,
     pub acl: Arc<RwLock<Acl>>,
-    pub aof: Option<Arc<Mutex<Aof>>>,
+    pub aof: Option<AofWriter>,
     pub config: Arc<Config>,
     pub script_manager: Arc<ScriptManager>,
     pub blocking_waiters: Arc<DashMap<(usize, Vec<u8>), VecDeque<tokio::sync::mpsc::Sender<(Vec<u8>, Vec<u8>)>>>>,
@@ -754,26 +754,29 @@ pub async fn process_frame(
     conn_ctx: &mut ConnectionContext,
     server_ctx: &ServerContext,
 ) -> (Resp, Option<Resp>) {
-    let original_frame = frame.clone();
     //println!("loaded frame: {:?}", frame);
-    let (res, custom_log, cmd_name_opt) = match frame {
+    let (res, custom_log, cmd_name_opt, original_items) = match frame {
         Resp::Array(Some(items)) => {
             if items.is_empty() {
-                (Resp::Error("ERR empty command".to_string()), None, None)
+                (Resp::StaticError("ERR empty command"), None, None, None)
             } else {
                 let cmd_raw = match as_bytes(&items[0]) {
                     Some(b) => b,
-                    None => return (Resp::Error("ERR invalid command".to_string()), None),
+                    None => return (Resp::StaticError("ERR invalid command"), None),
                 };
 
                 let cmd_name = command_name(cmd_raw);
+                // Cache once per command: avoids 3× RwLock acquisitions and 5× utf8+string checks
+                let role = *server_ctx.replication_role.read().unwrap();
+                let is_write = std::str::from_utf8(cmd_raw)
+                    .map_or(false, |s| command::is_write_command(s));
 
                 // Authentication Check
                 if server_ctx.config.requirepass.is_some() && !conn_ctx.authenticated {
                      if let Command::Auth = cmd_name {
                          // allowed
                      } else {
-                        return (Resp::Error("NOAUTH Authentication required.".to_string()), None);
+                        return (Resp::StaticError("NOAUTH Authentication required."), None);
                      }
                 }
 
@@ -789,41 +792,25 @@ pub async fn process_frame(
                         age: 0,
                         client_id: conn_ctx.id,
                     });
-                    (e, None, Some(cmd_name))
+                    (e, None, Some(cmd_name), Some(items))
                 } else if server_ctx.replica_read_only.load(Ordering::Relaxed)
-                    && *server_ctx.replication_role.read().unwrap() == ReplicationRole::Slave
-                    && std::str::from_utf8(cmd_raw).map_or(false, |s| command::is_write_command(s))
-                    // Exceptions: master sending commands to replica
-                    // How do we distinguish master connection? 
-                    // Usually master connection doesn't go through process_frame this way or is specially marked?
-                    // In current impl, master connection is handled in replication_worker which calls process_frame.
-                    // But master connection context might need a flag.
-                    // Actually, replication_worker calls process_frame. We should mark ConnectionContext.
+                    && role == ReplicationRole::Slave
+                    && is_write
                     && !conn_ctx.is_master
                 {
-                     (
-                        Resp::Error("READONLY You can't write against a read only replica.".to_string()),
+                    (
+                        Resp::StaticError("READONLY You can't write against a read only replica."),
                         None,
                         Some(cmd_name),
-                    )
-                } else if server_ctx.replica_read_only.load(Ordering::Relaxed)
-                    && *server_ctx.replication_role.read().unwrap() == ReplicationRole::Slave
-                    && std::str::from_utf8(cmd_raw).map_or(false, |s| command::is_write_command(s))
-                    && !conn_ctx.is_master
-                {
-                     (
-                        Resp::Error("READONLY You can't write against a read only replica.".to_string()),
-                        None,
-                        Some(cmd_name),
+                        Some(items),
                     )
                 } else if server_ctx.min_replicas_to_write.load(Ordering::Relaxed) > 0
-                    && *server_ctx.replication_role.read().unwrap() == ReplicationRole::Master
-                    && std::str::from_utf8(cmd_raw).map_or(false, |s| command::is_write_command(s))
+                    && role == ReplicationRole::Master
+                    && is_write
                     && {
                         let min_replicas = server_ctx.min_replicas_to_write.load(Ordering::Relaxed);
                         let max_lag = server_ctx.min_replicas_max_lag.load(Ordering::Relaxed);
-                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-                        
+                        let now = crate::clock::now_secs();
                         let healthy_replicas = server_ctx.replica_ack_time.iter()
                             .filter(|r| now.saturating_sub(*r.value()) <= max_lag)
                             .count();
@@ -832,7 +819,7 @@ pub async fn process_frame(
                 {
                     let min_replicas = server_ctx.min_replicas_to_write.load(Ordering::Relaxed);
                     let max_lag = server_ctx.min_replicas_max_lag.load(Ordering::Relaxed);
-                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                    let now = crate::clock::now_secs();
                     let healthy_replicas = server_ctx.replica_ack_time.iter()
                         .filter(|r| now.saturating_sub(*r.value()) <= max_lag)
                         .count();
@@ -840,28 +827,29 @@ pub async fn process_frame(
                         Resp::Error(format!("NOREPLICAS Not enough good replicas to write. {} < {}", healthy_replicas, min_replicas)),
                         None,
                         Some(cmd_name),
+                        Some(items),
                     )
                 } else if server_ctx.maxmemory.load(Ordering::Relaxed) > 0
                     && evict::is_over_maxmemory(server_ctx.maxmemory.load(Ordering::Relaxed))
-                    && std::str::from_utf8(cmd_raw).map_or(false, |s| command::is_write_command(s))
+                    && is_write
                     && *server_ctx.maxmemory_policy.read().unwrap()
                         == crate::conf::EvictionPolicy::NoEviction
                 {
                     (
-                        Resp::Error(
-                            "OOM command not allowed when used memory > 'maxmemory'.".to_string(),
-                        ),
+                        Resp::StaticError("OOM command not allowed when used memory > 'maxmemory'."),
                         None,
                         Some(cmd_name),
+                        Some(items),
                     )
                 } else if server_ctx.stop_writes_on_bgsave_error.load(Ordering::Relaxed)
                     && !server_ctx.last_bgsave_ok.load(Ordering::Relaxed)
-                    && std::str::from_utf8(cmd_raw).map_or(false, |s| command::is_write_command(s))
+                    && is_write
                 {
                     (
-                        Resp::Error("MISCONF Redis is configured to report errors after a last background save failed. Writing commands are disabled.".to_string()),
+                        Resp::StaticError("MISCONF Redis is configured to report errors after a last background save failed. Writing commands are disabled."),
                         None,
                         Some(cmd_name),
+                        Some(items),
                     )
                 } else {
                     // Perform eviction if needed (already checked it's not noeviction or we are not over limit for write cmd)
@@ -929,7 +917,7 @@ pub async fn process_frame(
                     // Check if this was a write command and invalidate watched keys
                     // Only trigger if the command was NOT queued
                     let is_queued = matches!(res, Resp::SimpleString(ref s) if s.as_ref() == b"QUEUED");
-                    let is_error = matches!(res, Resp::Error(_));
+                    let is_error = matches!(res, Resp::Error(_) | Resp::StaticError(_));
                     if !is_queued && !is_error {
                         if let Ok(s) = std::str::from_utf8(cmd_raw) {
                             if command::is_write_command(s) {
@@ -986,17 +974,18 @@ pub async fn process_frame(
                             logq.pop_back();
                         }
                     }
-                    (res, log, Some(cmd_name))
+                    (res, log, Some(cmd_name), Some(items))
                 }
             }
         }
-        _ => (Resp::Error("ERR protocol error: expected array".to_string()), None, None),
+        _ => (Resp::StaticError("ERR protocol error: expected array"), None, None, None),
     };
 
     let cmd_to_log = if let Some(l) = custom_log {
         Some(l)
-    } else if let (Resp::Array(Some(items)), Some(cmd_name)) = (&original_frame, cmd_name_opt) {
-        if items.is_empty() {
+    } else if let Some(cmd_name) = cmd_name_opt {
+        if let Some(items) = original_items.as_ref() {
+            if items.is_empty() {
             None
         } else if let Some(b) = as_bytes(&items[0]) {
             if let Ok(s) = std::str::from_utf8(&b) {
@@ -1045,15 +1034,11 @@ pub async fn process_frame(
                         }
                         Command::Blmove => {
                             // Rewrite to LMOVE with the same arguments
-                            if let Resp::Array(Some(orig_items)) = &original_frame {
-                                if !orig_items.is_empty() {
-                                    let mut new_items = orig_items.clone();
-                                    // Replace command name
-                                    new_items[0] = Resp::BulkString(Some(bytes::Bytes::from_static(b"LMOVE")));
-                                    Some(Resp::Array(Some(new_items)))
-                                } else {
-                                    None
-                                }
+                            if !items.is_empty() {
+                                let mut new_items = items.clone();
+                                // Replace command name
+                                new_items[0] = Resp::BulkString(Some(bytes::Bytes::from_static(b"LMOVE")));
+                                Some(Resp::Array(Some(new_items)))
                             } else {
                                 None
                             }
@@ -1104,13 +1089,16 @@ pub async fn process_frame(
                             if command::is_blocking_command(s) {
                                 None
                             } else {
-                                Some(original_frame.clone())
+                                Some(Resp::Array(Some(items.clone())))
                             }
                         }
                     }
                 } else {
                     None
                 }
+            } else {
+                None
+            }
             } else {
                 None
             }
@@ -1161,12 +1149,12 @@ fn check_access(
                 let first = slots[0];
                 for s in &slots {
                     if *s != first {
-                        return Err(Resp::Error("CROSSSLOT Keys in request don't hash to the same slot".to_string()));
+                        return Err(Resp::StaticError("CROSSSLOT Keys in request don't hash to the same slot"));
                     }
                 }
                 let st = server_ctx.cluster.read().unwrap();
                 if first >= st.slots.len() {
-                    return Err(Resp::Error("CLUSTERDOWN Hash slot not served".to_string()));
+                    return Err(Resp::StaticError("CLUSTERDOWN Hash slot not served"));
                 }
                 // 先检查 MIGRATING/IMPORTING 状态
                 match &st.slot_state[first] {
@@ -1196,7 +1184,7 @@ fn check_access(
                                     let moved = format!("MOVED {} {}:{}", first, n.ip, n.port);
                                     return Err(Resp::Error(moved));
                                 } else {
-                                    return Err(Resp::Error("CLUSTERDOWN Hash slot not served".to_string()));
+                                    return Err(Resp::StaticError("CLUSTERDOWN Hash slot not served"));
                                 }
                             } else {
                                 if let Some(n) = st.nodes.get(owner) {
@@ -1208,7 +1196,7 @@ fn check_access(
                     }
                     None => {
                         if server_ctx.config.cluster_require_full_coverage {
-                            return Err(Resp::Error("CLUSTERDOWN Hash slot not served".to_string()));
+                            return Err(Resp::StaticError("CLUSTERDOWN Hash slot not served"));
                         }
                     }
                 }
@@ -1216,7 +1204,7 @@ fn check_access(
         }
         Ok(())
     } else {
-         Err(Resp::Error("ERR User not found".to_string()))
+         Err(Resp::StaticError("ERR User not found"))
     }
 }
 
@@ -1230,7 +1218,7 @@ async fn dispatch_command(
         match cmd {
             Command::Multi => {
                 return (
-                    Resp::Error("ERR MULTI calls can not be nested".to_string()),
+                    Resp::StaticError("ERR MULTI calls can not be nested"),
                     None,
                 );
             }
@@ -1249,7 +1237,7 @@ async fn dispatch_command(
         match cmd {
             Command::Subscribe | Command::Unsubscribe | Command::Ping | Command::Reset => {},
             _ => {
-                 return (Resp::Error("ERR only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT / RESET allowed in this context".to_string()), None);
+                 return (Resp::StaticError("ERR only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT / RESET allowed in this context"), None);
             }
         }
     }
@@ -1277,7 +1265,7 @@ async fn dispatch_command(
         Command::Exec => {
             if !conn_ctx.in_multi {
                 return (
-                    Resp::Error("ERR EXEC without MULTI".to_string()),
+                    Resp::StaticError("ERR EXEC without MULTI"),
                     None,
                 );
             }
@@ -1298,14 +1286,14 @@ async fn dispatch_command(
 
             for q in queued {
                 if q.is_empty() {
-                    results.push(Resp::Error("ERR empty command".to_string()));
+                    results.push(Resp::StaticError("ERR empty command"));
                     continue;
                 }
                 let cmd_raw = match as_bytes(&q[0]) {
                     Some(b) => b,
                     None => {
                         results
-                            .push(Resp::Error("ERR invalid command".to_string()));
+                            .push(Resp::StaticError("ERR invalid command"));
                         continue;
                     }
                 };
@@ -1334,7 +1322,7 @@ async fn dispatch_command(
         Command::Discard => {
             if !conn_ctx.in_multi {
                 return (
-                    Resp::Error("ERR DISCARD without MULTI".to_string()),
+                    Resp::StaticError("ERR DISCARD without MULTI"),
                     None,
                 );
             }
@@ -1356,12 +1344,12 @@ async fn dispatch_command(
                     _ => (Resp::BulkString(None), None),
                 }
             } else {
-                (Resp::Error("ERR wrong number of arguments for 'PING'".to_string()), None)
+                (Resp::StaticError("ERR wrong number of arguments for 'PING'"), None)
             }
         }
         Command::Echo => {
             if items.len() != 2 {
-                (Resp::Error("ERR wrong number of arguments for 'echo' command".to_string()), None)
+                (Resp::StaticError("ERR wrong number of arguments for 'echo' command"), None)
             } else {
                 match &items[1] {
                     Resp::BulkString(Some(b)) => (Resp::BulkString(Some(b.clone())), None),
@@ -1524,7 +1512,7 @@ async fn dispatch_command(
             if server_ctx.config.cluster_enabled {
                 (cluster::cluster(items, conn_ctx, server_ctx), None)
             } else {
-                (Resp::Error("ERR This instance has cluster support disabled".to_string()), None)
+                (Resp::StaticError("ERR This instance has cluster support disabled"), None)
             }
         }
         Command::Info => (info::info(items, server_ctx), None),
@@ -1534,26 +1522,26 @@ async fn dispatch_command(
         Command::Script => (scripting::script(items, &server_ctx.script_manager), None),
         Command::Select => {
             if items.len() != 2 {
-                (Resp::Error("ERR wrong number of arguments for 'select' command".to_string()), None)
+                (Resp::StaticError("ERR wrong number of arguments for 'select' command"), None)
             } else {
                 match as_bytes(&items[1]) {
                     Some(b) => match std::str::from_utf8(&b) {
                         Ok(s) => match s.parse::<usize>() {
                             Ok(idx) => {
                                 if server_ctx.config.cluster_enabled && idx != 0 {
-                                    (Resp::Error("ERR SELECT is not allowed in cluster mode".to_string()), None)
+                                    (Resp::StaticError("ERR SELECT is not allowed in cluster mode"), None)
                                 } else if idx < server_ctx.databases.len() {
                                     conn_ctx.db_index = idx;
                                     (Resp::SimpleString(bytes::Bytes::from_static(b"OK")), None)
                                 } else {
-                                    (Resp::Error("ERR DB index is out of range".to_string()), None)
+                                    (Resp::StaticError("ERR DB index is out of range"), None)
                                 }
                             }
-                            Err(_) => (Resp::Error("ERR value is not an integer or out of range".to_string()), None),
+                            Err(_) => (Resp::StaticError("ERR value is not an integer or out of range"), None),
                         },
-                        Err(_) => (Resp::Error("ERR value is not an integer or out of range".to_string()), None),
+                        Err(_) => (Resp::StaticError("ERR value is not an integer or out of range"), None),
                     },
-                    None => (Resp::Error("ERR value is not an integer or out of range".to_string()), None),
+                    None => (Resp::StaticError("ERR value is not an integer or out of range"), None),
                 }
             }
         }
@@ -1601,16 +1589,16 @@ async fn dispatch_command(
                 let aof = aof.clone();
                 let databases = server_ctx.databases.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = aof.lock().await.rewrite(&databases).await {
+                    if let Err(e) = aof.rewrite(databases).await {
                         error!("Background AOF rewrite failed: {}", e);
                     }
                 });
                 (Resp::SimpleString(bytes::Bytes::from_static(b"Background append only file rewriting started")), None)
             } else {
-                (Resp::Error("ERR AOF is not enabled".to_string()), None)
+                (Resp::StaticError("ERR AOF is not enabled"), None)
             }
         }
-        Command::Unknown => (Resp::Error("ERR unknown command".to_string()), None),
+        Command::Unknown => (Resp::StaticError("ERR unknown command"), None),
     }//;
     // // 非 ASKING 命令执行完毕后重置 asking 标志
     // if cmd != Command::Asking {
@@ -1869,9 +1857,8 @@ pub fn start_expiration_task(ctx: ServerContext) {
                       ]));
                       
                       // 1. Append SELECT to AOF
-                      if let Some(aof_mutex) = &ctx_clone.aof {
-                          let mut aof = aof_mutex.lock().await;
-                          let _ = aof.append(&select_cmd).await;
+                      if let Some(aof) = &ctx_clone.aof {
+                          aof.append(&select_cmd).await;
                       }
  
                       // 2. Propagate SELECT to Replicas
@@ -1900,9 +1887,8 @@ pub fn start_expiration_task(ctx: ServerContext) {
                     ]));
 
                     // 1. Append to AOF
-                    if let Some(aof_mutex) = &ctx_clone.aof {
-                        let mut aof = aof_mutex.lock().await;
-                        let _ = aof.append(&del_cmd).await;
+                    if let Some(aof) = &ctx_clone.aof {
+                        aof.append(&del_cmd).await;
                     }
 
                     // 2. Propagate to Replicas
@@ -2092,7 +2078,7 @@ async fn ping_node(ip: &str, port: u16) -> bool {
     let req = Resp::Array(Some(vec![resp_bulk("PING")]));
     match send_resp_command(ip, port, req).await {
         Ok(Some(Resp::SimpleString(_))) | Ok(Some(Resp::BulkString(_))) | Ok(Some(Resp::Integer(_))) => true,
-        Ok(Some(Resp::Error(_))) => false,
+        Ok(Some(Resp::Error(_))) | Ok(Some(Resp::StaticError(_))) => false,
         _ => false,
     }
 }

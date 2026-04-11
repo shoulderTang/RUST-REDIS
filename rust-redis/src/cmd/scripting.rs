@@ -38,6 +38,11 @@ fn resp_to_lua<'lua>(lua: &'lua Lua, resp: &Resp) -> LuaResult<LuaValue<'lua>> {
             table.set("err", e.as_str())?;
             Ok(LuaValue::Table(table))
         }
+        Resp::StaticError(e) => {
+            let table = lua.create_table()?;
+            table.set("err", *e)?;
+            Ok(LuaValue::Table(table))
+        }
         Resp::Integer(i) => Ok(LuaValue::Integer(*i)),
         Resp::BulkString(Some(b)) => Ok(LuaValue::String(lua.create_string(b)?)),
         Resp::BulkString(None) => Ok(LuaValue::Boolean(false)),
@@ -128,8 +133,10 @@ async  fn redis_call_handler<'lua>(
     let (res, _) = super::process_frame(frame, &mut local_conn_ctx, server_ctx).await;
 
     if raise_error {
-        if let Resp::Error(msg) = &res {
-            return Err(LuaError::external(msg.clone()));
+        match &res {
+            Resp::Error(msg) => return Err(LuaError::external(msg.clone())),
+            Resp::StaticError(msg) => return Err(LuaError::external(*msg)),
+            _ => {}
         }
     }
 

@@ -13,6 +13,74 @@ use tokio::io::{self, AsyncWriteExt, BufWriter};
 use tokio::task::JoinHandle;
 use rand::Rng;
 
+enum AofMsg {
+    Append(Resp),
+    AppendSync(Resp, tokio::sync::oneshot::Sender<()>),
+    Rewrite(Arc<Vec<RwLock<Db>>>, tokio::sync::oneshot::Sender<io::Result<()>>),
+}
+
+/// Cheaply cloneable handle to the background AOF writer task.
+/// Callers send commands through a channel; the task owns the file exclusively.
+#[derive(Clone)]
+pub struct AofWriter {
+    sender: tokio::sync::mpsc::Sender<AofMsg>,
+    policy: AppendFsync,
+}
+
+impl AofWriter {
+    /// Append a command.  For `appendfsync always` this awaits the disk sync;
+    /// for `everysec` / `no` it is fire-and-forget (best-effort channel send).
+    pub async fn append(&self, cmd: &Resp) {
+        match self.policy {
+            AppendFsync::Always => {
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                if self.sender.send(AofMsg::AppendSync(cmd.clone(), tx)).await.is_ok() {
+                    let _ = rx.await;
+                }
+            }
+            _ => {
+                let _ = self.sender.try_send(AofMsg::Append(cmd.clone()));
+            }
+        }
+    }
+
+    /// Trigger an AOF rewrite and wait for it to complete.
+    pub async fn rewrite(&self, databases: Arc<Vec<RwLock<Db>>>) -> io::Result<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.sender
+            .send(AofMsg::Rewrite(databases, tx))
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "AOF task died"))?;
+        rx.await
+            .unwrap_or_else(|_| Err(io::Error::new(io::ErrorKind::Other, "AOF task died")))
+    }
+}
+
+/// Consume `aof`, start a background task that owns it, and return an `AofWriter`
+/// that sends commands to that task via a bounded channel.
+pub fn start_aof_task(aof: Aof) -> AofWriter {
+    let policy = aof.policy;
+    let (sender, mut receiver) = tokio::sync::mpsc::channel::<AofMsg>(4096);
+    tokio::spawn(async move {
+        let mut aof = aof;
+        while let Some(msg) = receiver.recv().await {
+            match msg {
+                AofMsg::Append(frame) => {
+                    let _ = aof.append(&frame).await;
+                }
+                AofMsg::AppendSync(frame, reply) => {
+                    let _ = aof.append(&frame).await;
+                    let _ = reply.send(());
+                }
+                AofMsg::Rewrite(databases, reply) => {
+                    let _ = reply.send(aof.rewrite(&databases).await);
+                }
+            }
+        }
+    });
+    AofWriter { sender, policy }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AppendFsync {
     Always,
@@ -320,6 +388,11 @@ where
                 writer.write_all(b"\r\n").await?;
             }
             Resp::Error(s) => {
+                writer.write_all(b"-").await?;
+                writer.write_all(s.as_bytes()).await?;
+                writer.write_all(b"\r\n").await?;
+            }
+            Resp::StaticError(s) => {
                 writer.write_all(b"-").await?;
                 writer.write_all(s.as_bytes()).await?;
                 writer.write_all(b"\r\n").await?;
