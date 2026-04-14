@@ -25,7 +25,28 @@ const RDB_TYPE_ZSET: u8 = 3;
 const RDB_TYPE_HASH: u8 = 4;
 const RDB_TYPE_STREAM_LISTPACKS: u8 = 15;
 
-// Minimal CRC64 implementation (Placeholder for Redis compatibility)
+// CRC-64/Jones — the same variant Redis uses (poly 0xad93d23594c935a9, reflected).
+static CRC64_TABLE: std::sync::OnceLock<[u64; 256]> = std::sync::OnceLock::new();
+
+fn crc64_table() -> &'static [u64; 256] {
+    CRC64_TABLE.get_or_init(|| {
+        let poly: u64 = 0xad93d23594c935a9;
+        let mut table = [0u64; 256];
+        for i in 0usize..256 {
+            let mut crc = i as u64;
+            for _ in 0..8 {
+                if crc & 1 != 0 {
+                    crc = (crc >> 1) ^ poly;
+                } else {
+                    crc >>= 1;
+                }
+            }
+            table[i] = crc;
+        }
+        table
+    })
+}
+
 struct Crc64 {
     crc: u64,
 }
@@ -35,8 +56,12 @@ impl Crc64 {
         Crc64 { crc: 0 }
     }
 
-    fn update(&mut self, _data: &[u8]) {
-        // TODO: Implement actual CRC64 ISO
+    fn update(&mut self, data: &[u8]) {
+        let table = crc64_table();
+        for byte in data {
+            let idx = ((self.crc ^ *byte as u64) & 0xff) as usize;
+            self.crc = table[idx] ^ (self.crc >> 8);
+        }
     }
 
     fn digest(&self) -> u64 {

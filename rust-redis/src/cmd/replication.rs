@@ -374,8 +374,6 @@ pub fn replconf(items: &[Resp], conn_ctx: &mut ConnectionContext, ctx: &ServerCo
     Resp::SimpleString(Bytes::from_static(b"OK"))
 }
 
-use std::os::unix::io::FromRawFd;
-
 pub async fn psync(items: &[Resp], conn_ctx: &mut ConnectionContext, ctx: &ServerContext) -> Resp {
     if items.len() < 3 {
         return Resp::Error("ERR wrong number of arguments for 'psync' command".to_string());
@@ -452,152 +450,17 @@ pub async fn psync(items: &[Resp], conn_ctx: &mut ConnectionContext, ctx: &Serve
     let compression = ctx.rdbcompression.load(std::sync::atomic::Ordering::Relaxed);
     let checksum = ctx.rdbchecksum.load(std::sync::atomic::Ordering::Relaxed);
     
-    // Check if we have a file descriptor for streaming
-    if let Some(client_fd) = conn_ctx.client_fd {
-        // Fork for streaming
-         unsafe {
-             let pid = libc::fork();
-             match pid {
-                 -1 => return Resp::Error("ERR fork failed for background sync".to_string()),
-                 0 => {
-                     // Child process
-                     // Create a TcpStream from raw fd
-                     let stream = std::net::TcpStream::from_raw_fd(client_fd);
-                     stream.set_nonblocking(false).expect("Failed to set blocking");
-                     let mut writer = std::io::BufWriter::new(stream);
-                     
-                     // Send header first (using synchronous write)
-                     use std::io::Write;
-                     // We need to encode the header as RESP
-                     // SimpleString: +<string>\r\n
-                     let header_bytes = format!("+FULLRESYNC {} {}\r\n", runid, current_off);
-                     let _ = writer.write_all(header_bytes.as_bytes());
+    // Generate RDB snapshot in a blocking thread to avoid blocking the async runtime.
+    // The entire snapshot is buffered in memory so the length prefix can be sent atomically.
+    let databases_clone = ctx.databases.clone();
+    let rdb_data = tokio::task::spawn_blocking(move || {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut enc = RdbEncoder::new(&mut buf, compression, checksum);
+        let _ = enc.save(&databases_clone);
+        buf
+    }).await.unwrap_or_default();
 
-                     // Now stream RDB
-                     // We need to construct the RDB payload. 
-                     // Since we are streaming directly to socket, we don't know the length upfront.
-                     // Redis uses $EOF:<40 bytes random string>\r\n...<40 bytes random string> for diskless replication
-                     // Or just standard bulk string if we can calculate length? 
-                     // RdbEncoder normally writes to a writer.
-                     // If we want to send it as a BulkString, we need the length first.
-                     // However, standard Redis diskless replication often sends:
-                     // $EOF:<40 bytes delimiter>\r\n<stream>\r\n<delimiter>
-                     // But here let's stick to standard bulk string format if possible, 
-                     // or just raw RDB if the client supports it? 
-                     // Actually, the RESP protocol expects a length prefix for BulkString.
-                     // If we cannot know the length, we might need to buffer... BUT that defeats the purpose.
-                     // Redis supports "preamble" in diskless mode.
-                     // Let's check how Redis does it. 
-                     // Redis sends $<length>\r\n<data>\r\n. To do this without buffering, we need to know size.
-                     // So we must calculate size first? No, that's slow.
-                     // Redis uses a special format for diskless replication if configured, 
-                     // or it writes to a temp file and then sends it.
-                     // "repl-diskless-sync" in Redis means: "The master creates a new process that writes the RDB file directly to slave sockets, without touching the disk."
-                     // How does it send the length?
-                     // Redis uses the $EOF:<delimiter> format which is a non-standard extension or just valid for replication stream?
-                     // It seems standard clients (like redis-cli) might not support it, but replicas do.
-                     // Let's implement the standard Bulk String format by buffering in memory for now? 
-                     // Wait, the user asked for "streaming".
-                     // If we assume the replica supports the EOF format:
-                     // $EOF:<40 chars>\r\n<data><40 chars>
-                     
-                     // Generate proper random delimiter
-                     let mut rng = rand::rng();
-                     let delimiter: String = (0..40).map(|_| {
-                         let idx = rng.random_range(0..16);
-                         let chars = b"0123456789abcdef";
-                         chars[idx] as char
-                     }).collect();
-
-                     let prefix = format!("$EOF:{}\r\n", delimiter);
-                     let _ = writer.write_all(prefix.as_bytes());
-                     
-                     let mut enc = RdbEncoder::new(&mut writer, compression, checksum);
-                     let _ = enc.save(&ctx.databases);
-                     
-                     let _ = writer.write_all(delimiter.as_bytes());
-                     let _ = writer.flush();
-                     
-                     libc::_exit(0);
-                 }
-                 child_pid => {
-                     // Parent process
-                     // We don't send anything here, the child will send the response directly to the socket.
-                     // BUT, we are in an async function that expects a Resp return.
-                     // And the connection loop will try to send this Resp.
-                     // If we return Resp::String("OK"), it will be sent to the socket, interfering with child's output.
-                     // We need a way to tell the caller "don't send anything, control taken over".
-                     // OR, we just return a special Resp that is ignored/handled?
-                     // The caller is `process_frame`. It sends the response.
-                     // If we close the socket in parent? No, we need it open for future commands.
-                     // Actually, for PSYNC, the connection enters "replication mode".
-                     // The child writes to the socket. The parent should probably NOT write to the socket 
-                     // until the child is done.
-                     // But the child will write the RDB and then exit.
-                     // The parent needs to know when the child is done to resume sending commands (like replication stream).
-                     
-                     // Problem: process_frame returns a Resp which is sent to the socket.
-                     // We should return a special "NoReply" response or similar.
-                     // Let's assume we can return a specialized Resp::Internal("Forking") which is not sent?
-                     // Or we return a dummy valid response that the child will OVERWRITE?
-                     // No, if parent writes, it races with child.
-                     
-                     // For this simplified implementation:
-                     // We can't easily suppress the parent's write in the current architecture without changing `process_frame` return type.
-                     // However, we can return `Resp::Error("...wait...")` ? No.
-                     
-                     // Let's modify `process_frame` to handle a "Detach" or "NoResponse" case?
-                     // Or, since we are hacking:
-                     // The child writes the FULLRESYNC + RDB.
-                     // The parent MUST NOT write anything.
-                     // But `process_frame` always writes the result.
-                     
-                     // WORKAROUND:
-                     // 1. Parent returns a special Resp that means "Do not send".
-                     //    We can add `Resp::DoNotSend` variant.
-                     // 2. OR, we let the parent send the header "+FULLRESYNC...", and child only sends RDB.
-                     //    But parent sends it via async Tokio, child via raw fd.
-                     //    Parent `write_frame` -> buffer -> socket.
-                     //    If we return FULLRESYNC from parent, it will be written.
-                     //    Then we need to wait for it to be flushed before child writes?
-                     //    Fork happens BEFORE return.
-                     //    If we fork, child inherits the socket state.
-                     
-                     // Correct approach:
-                     // Parent sends FULLRESYNC.
-                     // Parent flushes.
-                     // THEN Fork.
-                     // But we are deep inside `psync` function called by `process_frame`.
-                     // We can't flush here easily (we don't have the writer).
-                     
-                     // Alternative:
-                     // Return a special error that the main loop recognizes?
-                     // Or change `process_frame` signature to return `Option<Resp>`.
-                     
-                     // Let's look at `process_frame` signature: `-> (Resp, Option<Resp>)` (response, aof_log).
-                     
-                     // We will add `Resp::Nothing` (or similar) to `Resp` enum?
-                     // `Resp` is defined in `resp.rs`.
-                     
-                     // Let's check `resp.rs`.
-                     ctx.rdb_child_pid.store(child_pid, std::sync::atomic::Ordering::Relaxed);
-                     // Send control message to switch writer to buffering mode if it's not already
-                     if let Some(sender) = &conn_ctx.msg_sender {
-                         let _ = sender.send(Resp::Control("START_RDB_TRANSFER".to_string())).await;
-                     }
-                     return Resp::NoReply;
-                 }
-             }
-         }
-    } else {
-         // Fallback to memory buffer if no FD available (shouldn't happen if properly initialized)
-         let mut buf: Vec<u8> = Vec::new();
-         {
-             let mut enc = RdbEncoder::new(&mut buf, compression, checksum);
-             let _ = enc.save(&ctx.databases);
-         }
-         Resp::Multiple(vec![header, Resp::BulkString(Some(Bytes::from(buf)))])
-    }
+    Resp::Multiple(vec![header, Resp::BulkString(Some(Bytes::from(rdb_data)))])
 }
 
 pub async fn wait(items: &[Resp], _conn_ctx: &mut ConnectionContext, ctx: &ServerContext) -> Resp {

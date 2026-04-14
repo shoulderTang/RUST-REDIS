@@ -252,48 +252,6 @@ async fn run_server(
         loop {
             interval.tick().await;
 
-            // Check for child process exit (RDB save or AOF rewrite)
-            unsafe {
-                let mut status: libc::c_int = 0;
-                let pid = libc::waitpid(-1, &mut status, libc::WNOHANG);
-                if pid > 0 {
-                    let current_pid = server_ctx_for_save.rdb_child_pid.load(Ordering::Relaxed);
-                    if pid == current_pid {
-                         if libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0 {
-                             info!("Background saving terminated with success");
-                             server_ctx_for_save.last_save_time.store(
-                                 std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64,
-                                 Ordering::Relaxed
-                             );
-                             server_ctx_for_save.last_bgsave_ok.store(true, Ordering::Relaxed);
-                             server_ctx_for_save.dirty.store(0, Ordering::Relaxed);
-                             
-                             // If this was a sync RDB, notify the client
-                             let sync_client = server_ctx_for_save.rdb_sync_client_id.load(Ordering::Relaxed);
-                             if sync_client > 0 {
-                                 let sender = if let Some(ci) = server_ctx_for_save.clients.get(&sync_client) {
-                                     ci.msg_sender.clone()
-                                 } else {
-                                     None
-                                 };
-                                 if let Some(sender) = sender {
-                                     let _ = sender.send(Resp::Control("RDB_FINISHED".to_string())).await;
-                                 }
-                                 server_ctx_for_save.rdb_sync_client_id.store(0, Ordering::Relaxed);
-                             }
-                         } else {
-                             error!("Background saving failed");
-                             server_ctx_for_save.last_bgsave_ok.store(false, Ordering::Relaxed);
-                             
-                             // If this was a sync RDB, we should probably close the connection or notify error
-                             // For now just clear ID
-                             server_ctx_for_save.rdb_sync_client_id.store(0, Ordering::Relaxed);
-                         }
-                         server_ctx_for_save.rdb_child_pid.store(-1, Ordering::Relaxed);
-                    }
-                }
-            }
-            
             let dirty = server_ctx_for_save.dirty.load(Ordering::Relaxed);
             let last_save = server_ctx_for_save.last_save_time.load(Ordering::Relaxed);
             let now = std::time::SystemTime::now()

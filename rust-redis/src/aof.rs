@@ -16,6 +16,7 @@ use rand::Rng;
 enum AofMsg {
     Append(Resp),
     AppendSync(Resp, tokio::sync::oneshot::Sender<()>),
+    Flush(tokio::sync::oneshot::Sender<()>),
     Rewrite(Arc<Vec<RwLock<Db>>>, tokio::sync::oneshot::Sender<io::Result<()>>),
 }
 
@@ -29,7 +30,7 @@ pub struct AofWriter {
 
 impl AofWriter {
     /// Append a command.  For `appendfsync always` this awaits the disk sync;
-    /// for `everysec` / `no` it is fire-and-forget (best-effort channel send).
+    /// for `everysec` / `no` it waits for channel capacity rather than dropping.
     pub async fn append(&self, cmd: &Resp) {
         match self.policy {
             AppendFsync::Always => {
@@ -39,8 +40,18 @@ impl AofWriter {
                 }
             }
             _ => {
-                let _ = self.sender.try_send(AofMsg::Append(cmd.clone()));
+                // Use blocking send — drops are never acceptable for durability.
+                let _ = self.sender.send(AofMsg::Append(cmd.clone())).await;
             }
+        }
+    }
+
+    /// Flush all pending writes to disk and wait until they are complete.
+    /// Call this before process exit so no buffered commands are lost.
+    pub async fn flush(&self) {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if self.sender.send(AofMsg::Flush(tx)).await.is_ok() {
+            let _ = rx.await;
         }
     }
 
@@ -70,6 +81,11 @@ pub fn start_aof_task(aof: Aof) -> AofWriter {
                 }
                 AofMsg::AppendSync(frame, reply) => {
                     let _ = aof.append(&frame).await;
+                    let _ = reply.send(());
+                }
+                AofMsg::Flush(reply) => {
+                    let _ = aof.writer.flush().await;
+                    let _ = aof.writer.get_mut().sync_data().await;
                     let _ = reply.send(());
                 }
                 AofMsg::Rewrite(databases, reply) => {

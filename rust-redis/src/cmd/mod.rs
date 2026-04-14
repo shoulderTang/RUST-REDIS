@@ -1504,6 +1504,10 @@ async fn dispatch_command(
             (Resp::Array(Some(res)), None)
         }
         Command::Shutdown => {
+            // Flush AOF before exiting so no buffered commands are lost.
+            if let Some(aof) = &server_ctx.aof {
+                aof.flush().await;
+            }
             std::process::exit(0);
         }
         Command::Command => (command::command(items), None),

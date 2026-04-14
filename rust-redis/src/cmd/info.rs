@@ -123,12 +123,8 @@ fn get_memory_info(ctx: &ServerContext) -> String {
         new_peak = stored_peak;
     }
 
-    // Lua memory
-    let lua_mem = if let Ok(lua) = ctx.script_manager.lua.lock() {
-        lua.used_memory() as u64
-    } else {
-        0
-    };
+    // Lua memory: each EVAL uses a per-call VM, so no shared instance to query.
+    let lua_mem = 0u64;
 
     let mut s = String::new();
     s.push_str("# Memory\r\n");

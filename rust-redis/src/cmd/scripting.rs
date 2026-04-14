@@ -8,19 +8,18 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use mlua::prelude::*;
 use sha1::{Digest, Sha1};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Arc;
 use tokio::task::block_in_place;
 use tokio::runtime::Handle;
 
 pub struct ScriptManager {
+    /// SHA1 → script source cache, shared across all connections.
     pub cache: DashMap<String, String>,
-    pub lua: Mutex<Lua>,
 }
 
 pub fn create_script_manager() -> Arc<ScriptManager> {
     Arc::new(ScriptManager {
         cache: DashMap::new(),
-        lua: Mutex::new(Lua::new()),
     })
 }
 
@@ -168,13 +167,11 @@ async fn eval_script(
         })
         .collect();
 
-    let server_ctx = server_ctx.clone();
-    let conn_ctx = conn_ctx.clone();
-    let script = script.to_string();
-
     block_in_place(move || {
-        let lua_guard = server_ctx.script_manager.lua.lock().unwrap();
-        let lua = &*lua_guard;
+        // Each EVAL call gets its own Lua VM — no global lock, no serialization.
+        // block_in_place + Handle::block_on is the correct mlua pattern for
+        // running non-Send Lua futures inside a multi-thread Tokio runtime.
+        let lua = Lua::new();
 
         {
             let globals = lua.globals();
@@ -192,38 +189,26 @@ async fn eval_script(
 
             let server_ctx_clone = server_ctx.clone();
             let conn_ctx_clone = conn_ctx.clone();
-            
+
             let redis_call = lua
                 .create_async_function(move |lua, args| {
                     let server_ctx = server_ctx_clone.clone();
                     let conn_ctx = conn_ctx_clone.clone();
                     async move {
-                        redis_call_handler(
-                            lua,
-                            args,
-                            true,
-                            &server_ctx,
-                            &conn_ctx,
-                        ).await
+                        redis_call_handler(lua, args, true, &server_ctx, &conn_ctx).await
                     }
                 })
                 .unwrap();
 
             let server_ctx_clone = server_ctx.clone();
             let conn_ctx_clone = conn_ctx.clone();
-            
+
             let redis_pcall = lua
                 .create_async_function(move |lua, args| {
                     let server_ctx = server_ctx_clone.clone();
                     let conn_ctx = conn_ctx_clone.clone();
                     async move {
-                        redis_call_handler(
-                            lua,
-                            args,
-                            false,
-                            &server_ctx,
-                            &conn_ctx,
-                        ).await
+                        redis_call_handler(lua, args, false, &server_ctx, &conn_ctx).await
                     }
                 })
                 .unwrap();
@@ -236,7 +221,7 @@ async fn eval_script(
         }
 
         Handle::current().block_on(async move {
-            match lua.load(&script).eval_async::<LuaValue>().await {
+            match lua.load(script).eval_async::<LuaValue>().await {
                 Ok(val) => lua_to_resp(val),
                 Err(e) => Resp::Error(format!("ERR error running script: {}", e)),
             }

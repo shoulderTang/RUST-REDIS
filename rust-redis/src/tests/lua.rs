@@ -171,11 +171,14 @@ async fn test_script_commands() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_lua_state_reuse() {
+async fn test_lua_isolation_per_call() {
+    // Each EVAL call runs in its own Lua VM — global variables set in one call
+    // are NOT visible in subsequent calls.  This is the trade-off made to allow
+    // concurrent EVAL execution without a global serializing mutex.
     let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
-    // Set a global variable
+    // First EVAL sets a global and returns it — should succeed.
     let script1 = "my_global = 10; return my_global";
     let req1 = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("EVAL"))),
@@ -188,7 +191,7 @@ async fn test_lua_state_reuse() {
         _ => panic!("expected Integer(10), got {:?}", res1),
     }
 
-    // Read the global variable in a separate EVAL call
+    // Second EVAL runs in a fresh VM — my_global is nil, returns false/nil.
     let script2 = "return my_global";
     let req2 = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("EVAL"))),
@@ -196,8 +199,9 @@ async fn test_lua_state_reuse() {
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
     let (res2, _) = process_frame(req2, &mut conn_ctx, &server_ctx).await;
+    // nil in Lua maps to BulkString(None) / false — global is not carried over.
     match res2 {
-        Resp::Integer(i) => assert_eq!(i, 10), // Should still be 10 if reused
-        _ => panic!("expected Integer(10), got {:?}", res2),
+        Resp::BulkString(None) => {}
+        _ => panic!("expected nil (BulkString(None)) for isolated Lua VM, got {:?}", res2),
     }
 }
