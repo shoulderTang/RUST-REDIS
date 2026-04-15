@@ -22,7 +22,9 @@ async fn test_move() {
         pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
         pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
         run_id: std::sync::Arc::new(std::sync::RwLock::new("test".to_string())),
-        replid2: std::sync::Arc::new(std::sync::RwLock::new("0000000000000000000000000000000000000000".to_string())),
+        replid2: std::sync::Arc::new(std::sync::RwLock::new(
+            "0000000000000000000000000000000000000000".to_string(),
+        )),
         second_repl_offset: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(-1)),
         start_time: std::time::Instant::now(),
         client_count: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -53,9 +55,15 @@ async fn test_move() {
         min_replicas_max_lag: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(10)),
         repl_diskless_sync: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         repl_diskless_sync_delay: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(5)),
-        maxmemory_policy: std::sync::Arc::new(std::sync::RwLock::new(crate::conf::EvictionPolicy::NoEviction)),
+        maxmemory_policy: std::sync::Arc::new(std::sync::RwLock::new(
+            crate::conf::EvictionPolicy::NoEviction,
+        )),
         maxmemory_samples: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(5)),
-        save_params: std::sync::Arc::new(std::sync::RwLock::new(vec![(3600, 1), (300, 100), (60, 10000)])),
+        save_params: std::sync::Arc::new(std::sync::RwLock::new(vec![
+            (3600, 1),
+            (300, 100),
+            (60, 10000),
+        ])),
         last_bgsave_ok: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         dirty: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         last_save_time: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0)),
@@ -64,7 +72,9 @@ async fn test_move() {
         tracking_clients: std::sync::Arc::new(dashmap::DashMap::new()),
         acl_log: std::sync::Arc::new(std::sync::RwLock::new(std::collections::VecDeque::new())),
         latency_events: std::sync::Arc::new(dashmap::DashMap::new()),
-        replication_role: std::sync::Arc::new(std::sync::RwLock::new(crate::cmd::ReplicationRole::Master)),
+        replication_role: std::sync::Arc::new(std::sync::RwLock::new(
+            crate::cmd::ReplicationRole::Master,
+        )),
         master_host: std::sync::Arc::new(std::sync::RwLock::new(None)),
         master_port: std::sync::Arc::new(std::sync::RwLock::new(None)),
         repl_waiters: std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
@@ -84,7 +94,7 @@ async fn test_move() {
 
     // 1. SET key in DB 0
     run_cmd(vec!["SET", "foo", "bar"], &mut conn, &server_ctx).await;
-    
+
     // 2. MOVE to DB 1
     let res = run_cmd(vec!["MOVE", "foo", "1"], &mut conn, &server_ctx).await;
     assert_eq!(res, Resp::Integer(1));
@@ -117,7 +127,9 @@ async fn test_swapdb() {
         pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
         pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
         run_id: std::sync::Arc::new(std::sync::RwLock::new("test".to_string())),
-        replid2: std::sync::Arc::new(std::sync::RwLock::new("0000000000000000000000000000000000000000".to_string())),
+        replid2: std::sync::Arc::new(std::sync::RwLock::new(
+            "0000000000000000000000000000000000000000".to_string(),
+        )),
         second_repl_offset: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(-1)),
         start_time: std::time::Instant::now(),
         client_count: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -148,9 +160,15 @@ async fn test_swapdb() {
         min_replicas_max_lag: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(10)),
         repl_diskless_sync: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         repl_diskless_sync_delay: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(5)),
-        maxmemory_policy: std::sync::Arc::new(std::sync::RwLock::new(crate::conf::EvictionPolicy::NoEviction)),
+        maxmemory_policy: std::sync::Arc::new(std::sync::RwLock::new(
+            crate::conf::EvictionPolicy::NoEviction,
+        )),
         maxmemory_samples: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(5)),
-        save_params: std::sync::Arc::new(std::sync::RwLock::new(vec![(3600, 1), (300, 100), (60, 10000)])),
+        save_params: std::sync::Arc::new(std::sync::RwLock::new(vec![
+            (3600, 1),
+            (300, 100),
+            (60, 10000),
+        ])),
         last_bgsave_ok: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         dirty: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         last_save_time: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(0)),
@@ -159,7 +177,9 @@ async fn test_swapdb() {
         tracking_clients: std::sync::Arc::new(dashmap::DashMap::new()),
         acl_log: std::sync::Arc::new(std::sync::RwLock::new(std::collections::VecDeque::new())),
         latency_events: std::sync::Arc::new(dashmap::DashMap::new()),
-        replication_role: std::sync::Arc::new(std::sync::RwLock::new(crate::cmd::ReplicationRole::Master)),
+        replication_role: std::sync::Arc::new(std::sync::RwLock::new(
+            crate::cmd::ReplicationRole::Master,
+        )),
         master_host: std::sync::Arc::new(std::sync::RwLock::new(None)),
         master_port: std::sync::Arc::new(std::sync::RwLock::new(None)),
         repl_waiters: std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
@@ -175,7 +195,7 @@ async fn test_swapdb() {
     };
 
     let mut conn = crate::tests::helper::create_connection_context();
-    
+
     // 1. SET in DB 0 and DB 1
     conn.db_index = 0;
     run_cmd(vec!["SET", "db0_key", "val0"], &mut conn, &server_ctx).await;

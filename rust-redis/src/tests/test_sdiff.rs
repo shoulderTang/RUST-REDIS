@@ -1,7 +1,7 @@
 use crate::resp::Resp;
+use crate::tests::helper::run_cmd;
 use bytes::Bytes;
 use std::collections::HashSet;
-use crate::tests::helper::run_cmd;
 
 #[tokio::test]
 async fn test_sdiff() {
@@ -10,7 +10,12 @@ async fn test_sdiff() {
 
     // Setup
     // s1: {a, b, c, d}
-    run_cmd(vec!["SADD", "s1", "a", "b", "c", "d"], &mut conn_ctx, &server_ctx).await;
+    run_cmd(
+        vec!["SADD", "s1", "a", "b", "c", "d"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     // s2: {c}
     run_cmd(vec!["SADD", "s2", "c"], &mut conn_ctx, &server_ctx).await;
     // s3: {a, e}
@@ -33,7 +38,9 @@ async fn test_sdiff() {
             let mut members = HashSet::new();
             for item in items {
                 match item {
-                    Resp::BulkString(Some(b)) => { members.insert(b); },
+                    Resp::BulkString(Some(b)) => {
+                        members.insert(b);
+                    }
                     _ => panic!("Expected BulkString"),
                 }
             }
@@ -52,7 +59,9 @@ async fn test_sdiff() {
             let mut members = HashSet::new();
             for item in items {
                 match item {
-                    Resp::BulkString(Some(b)) => { members.insert(b); },
+                    Resp::BulkString(Some(b)) => {
+                        members.insert(b);
+                    }
                     _ => panic!("Expected BulkString"),
                 }
             }
@@ -80,14 +89,24 @@ async fn test_sdiff() {
 
     // 6. WRONGTYPE first key
     run_cmd(vec!["SET", "string_key", "val"], &mut conn_ctx, &server_ctx).await;
-    let res = run_cmd(vec!["SDIFF", "string_key", "s1"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["SDIFF", "string_key", "s1"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Error(msg) => assert!(msg.contains("WRONGTYPE")),
         _ => panic!("Expected Error"),
     }
 
     // 7. WRONGTYPE subsequent key
-    let res = run_cmd(vec!["SDIFF", "s1", "string_key"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["SDIFF", "s1", "string_key"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Error(msg) => assert!(msg.contains("WRONGTYPE")),
         _ => panic!("Expected Error"),

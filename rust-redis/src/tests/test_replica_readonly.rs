@@ -1,5 +1,5 @@
-use crate::tests::helper::{create_server_context, create_connection_context, run_cmd};
 use crate::resp::Resp;
+use crate::tests::helper::{create_connection_context, create_server_context, run_cmd};
 use bytes::Bytes;
 use std::sync::atomic::Ordering;
 
@@ -25,13 +25,13 @@ async fn test_replica_read_only() {
     // 3. Try read command (GET) -> Should succeed (return null)
     let res = run_cmd(vec!["GET", "foo"], &mut conn_ctx, &ctx).await;
     match res {
-        Resp::BulkString(None) => {},
+        Resp::BulkString(None) => {}
         _ => panic!("Expected Nil, got {:?}", res),
     }
 
     // 4. Simulate Master connection (is_master = true)
     conn_ctx.is_master = true;
-    
+
     // 5. Try write command from master -> Should succeed
     let res = run_cmd(vec!["SET", "foo", "bar"], &mut conn_ctx, &ctx).await;
     assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));

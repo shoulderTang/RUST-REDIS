@@ -1,4 +1,4 @@
-use crate::cmd::{process_frame, ConnectionContext, ServerContext};
+use crate::cmd::{ConnectionContext, ServerContext, process_frame};
 use crate::resp::Resp;
 use bytes::Bytes;
 use std::sync::Arc;
@@ -29,8 +29,8 @@ async fn test_config_maxmemory() {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 2);
             match &items[0] {
-                 Resp::BulkString(Some(b)) => assert_eq!(String::from_utf8_lossy(b), "maxmemory"),
-                 _ => panic!("expected maxmemory key"),
+                Resp::BulkString(Some(b)) => assert_eq!(String::from_utf8_lossy(b), "maxmemory"),
+                _ => panic!("expected maxmemory key"),
             }
             // 100mb = 100 * 1024 * 1024 = 104857600
             match &items[1] {
@@ -68,7 +68,7 @@ async fn test_config_maxmemory() {
         }
         _ => panic!("expected Array response"),
     }
-    
+
     // 5. Set maxmemory raw bytes
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("CONFIG"))),
@@ -78,7 +78,7 @@ async fn test_config_maxmemory() {
     ]));
     let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
-    
+
     // 6. Verify raw bytes
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("CONFIG"))),
@@ -87,12 +87,10 @@ async fn test_config_maxmemory() {
     ]));
     let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
-        Resp::Array(Some(items)) => {
-            match &items[1] {
-                Resp::BulkString(Some(b)) => assert_eq!(String::from_utf8_lossy(b), "1000"),
-                _ => panic!("expected maxmemory value 1000"),
-            }
-        }
+        Resp::Array(Some(items)) => match &items[1] {
+            Resp::BulkString(Some(b)) => assert_eq!(String::from_utf8_lossy(b), "1000"),
+            _ => panic!("expected maxmemory value 1000"),
+        },
         _ => panic!("expected Array response"),
     }
 }
@@ -123,7 +121,9 @@ async fn test_config_replication_params() {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 2);
             match &items[0] {
-                Resp::BulkString(Some(b)) => assert_eq!(String::from_utf8_lossy(b), "repl-backlog-size"),
+                Resp::BulkString(Some(b)) => {
+                    assert_eq!(String::from_utf8_lossy(b), "repl-backlog-size")
+                }
                 _ => panic!("expected repl-backlog-size key"),
             }
             match &items[1] {
@@ -155,7 +155,9 @@ async fn test_config_replication_params() {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 2);
             match &items[0] {
-                Resp::BulkString(Some(b)) => assert_eq!(String::from_utf8_lossy(b), "repl-ping-replica-period"),
+                Resp::BulkString(Some(b)) => {
+                    assert_eq!(String::from_utf8_lossy(b), "repl-ping-replica-period")
+                }
                 _ => panic!("expected repl-ping-replica-period key"),
             }
             match &items[1] {

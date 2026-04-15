@@ -1,5 +1,5 @@
-use std::sync::{Arc, RwLock};
 use bytes::Bytes;
+use std::sync::{Arc, RwLock};
 
 #[path = "../sentinel.rs"]
 mod sentinel;
@@ -7,8 +7,8 @@ mod sentinel;
 #[path = "../resp.rs"]
 mod resp;
 
-use sentinel::{SentinelState, MasterInstance, SlaveInstance, SentinelInstance};
 use resp::Resp;
+use sentinel::{MasterInstance, SentinelInstance, SentinelState, SlaveInstance};
 
 #[tokio::test]
 async fn test_sentinel_ckquorum_logic() {
@@ -23,18 +23,22 @@ async fn test_sentinel_ckquorum_logic() {
     {
         let masters = state.masters.read().unwrap();
         let mut m = masters.get("mymaster").unwrap().write().unwrap();
-        m.sentinels.insert("s1".to_string(), SentinelInstance {
-            ip: "10.0.0.1".to_string(),
-            port: 26379,
-            run_id: "s1".to_string(),
-            last_ping_time: 0,
-            last_pong_time: 0,
-            s_down_since_time: 0,
-            leader_epoch: 0,
-            leader_runid: None,
-        });
+        m.sentinels.insert(
+            "s1".to_string(),
+            SentinelInstance {
+                ip: "10.0.0.1".to_string(),
+                port: 26379,
+                run_id: "s1".to_string(),
+                last_ping_time: 0,
+                last_pong_time: 0,
+                s_down_since_time: 0,
+                leader_epoch: 0,
+                leader_runid: None,
+            },
+        );
     }
-    let (_total, reachable, _majority, _quorum, ok) = sentinel::check_quorum_for_master(&state, "mymaster").unwrap();
+    let (_total, reachable, _majority, _quorum, ok) =
+        sentinel::check_quorum_for_master(&state, "mymaster").unwrap();
     assert_eq!(reachable, 2);
     assert!(ok);
     {
@@ -44,7 +48,8 @@ async fn test_sentinel_ckquorum_logic() {
             s1.s_down_since_time = 123;
         }
     }
-    let (_total2, reachable2, _majority2, _quorum2, ok2) = sentinel::check_quorum_for_master(&state, "mymaster").unwrap();
+    let (_total2, reachable2, _majority2, _quorum2, ok2) =
+        sentinel::check_quorum_for_master(&state, "mymaster").unwrap();
     assert_eq!(reachable2, 1);
     assert!(!ok2);
 }
@@ -60,7 +65,11 @@ async fn test_sentinel_monitor_and_remove_commands() {
         assert!(masters.is_empty());
     }
 
-    assert!(state.monitor_master("mymaster", "127.0.0.1", 6379, 2).is_ok());
+    assert!(
+        state
+            .monitor_master("mymaster", "127.0.0.1", 6379, 2)
+            .is_ok()
+    );
 
     {
         let masters = state.masters.read().unwrap();
@@ -81,7 +90,11 @@ async fn test_sentinel_set_command_options() {
     let sentinel_port = 26379;
     let state = SentinelState::new(sentinel_ip, sentinel_port);
 
-    assert!(state.monitor_master("mymaster", "127.0.0.1", 6379, 2).is_ok());
+    assert!(
+        state
+            .monitor_master("mymaster", "127.0.0.1", 6379, 2)
+            .is_ok()
+    );
 
     let options = vec![
         ("down-after-milliseconds".to_string(), "5000".to_string()),
@@ -106,12 +119,13 @@ async fn test_sentinel_slaves_command() {
     let sentinel_ip = "127.0.0.1".to_string();
     let sentinel_port = 26379;
     let state = SentinelState::new(sentinel_ip, sentinel_port);
-    
+
     // Add a master with some slaves
     {
         let mut masters = state.masters.write().unwrap();
-        let mut master = MasterInstance::new("mymaster".to_string(), "127.0.0.1".to_string(), 6379, 2);
-        
+        let mut master =
+            MasterInstance::new("mymaster".to_string(), "127.0.0.1".to_string(), 6379, 2);
+
         let slave1 = SlaveInstance {
             ip: "127.0.0.1".to_string(),
             port: 6380,
@@ -121,7 +135,7 @@ async fn test_sentinel_slaves_command() {
             last_pong_time: 0,
             s_down_since_time: 0,
         };
-        
+
         let slave2 = SlaveInstance {
             ip: "127.0.0.1".to_string(),
             port: 6381,
@@ -131,20 +145,20 @@ async fn test_sentinel_slaves_command() {
             last_pong_time: 0,
             s_down_since_time: 0,
         };
-        
+
         master.slaves.insert("slave1".to_string(), slave1);
         master.slaves.insert("slave2".to_string(), slave2);
-        
+
         masters.insert("mymaster".to_string(), Arc::new(RwLock::new(master)));
     }
-    
+
     // Test SENTINEL SLAVES command
     let _command = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("SENTINEL"))),
         Resp::BulkString(Some(Bytes::from("SLAVES"))),
         Resp::BulkString(Some(Bytes::from("mymaster"))),
     ]));
-    
+
     // This would normally be called through process_sentinel_command
     // For now, we just verify the data structure is correct
     let masters = state.masters.read().unwrap();
@@ -161,12 +175,13 @@ async fn test_sentinel_sentinels_command() {
     let sentinel_ip = "127.0.0.1".to_string();
     let sentinel_port = 26379;
     let state = SentinelState::new(sentinel_ip, sentinel_port);
-    
+
     // Add a master with some sentinels
     {
         let mut masters = state.masters.write().unwrap();
-        let mut master = MasterInstance::new("mymaster".to_string(), "127.0.0.1".to_string(), 6379, 2);
-        
+        let mut master =
+            MasterInstance::new("mymaster".to_string(), "127.0.0.1".to_string(), 6379, 2);
+
         let sentinel1 = SentinelInstance {
             ip: "127.0.0.1".to_string(),
             port: 26379,
@@ -177,7 +192,7 @@ async fn test_sentinel_sentinels_command() {
             leader_epoch: 0,
             leader_runid: None,
         };
-        
+
         let sentinel2 = SentinelInstance {
             ip: "127.0.0.1".to_string(),
             port: 26380,
@@ -188,20 +203,20 @@ async fn test_sentinel_sentinels_command() {
             leader_epoch: 0,
             leader_runid: None,
         };
-        
+
         master.sentinels.insert("sentinel1".to_string(), sentinel1);
         master.sentinels.insert("sentinel2".to_string(), sentinel2);
-        
+
         masters.insert("mymaster".to_string(), Arc::new(RwLock::new(master)));
     }
-    
+
     // Test SENTINEL SENTINELS command
     let _command = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("SENTINEL"))),
         Resp::BulkString(Some(Bytes::from("SENTINELS"))),
         Resp::BulkString(Some(Bytes::from("mymaster"))),
     ]));
-    
+
     // This would normally be called through process_sentinel_command
     // For now, we just verify the data structure is correct
     let masters = state.masters.read().unwrap();
@@ -218,12 +233,13 @@ async fn test_sentinel_reset_command() {
     let sentinel_ip = "127.0.0.1".to_string();
     let sentinel_port = 26379;
     let state = SentinelState::new(sentinel_ip, sentinel_port);
-    
+
     // Add a master with slaves and sentinels
     {
         let mut masters = state.masters.write().unwrap();
-        let mut master = MasterInstance::new("mymaster".to_string(), "127.0.0.1".to_string(), 6379, 2);
-        
+        let mut master =
+            MasterInstance::new("mymaster".to_string(), "127.0.0.1".to_string(), 6379, 2);
+
         let slave = SlaveInstance {
             ip: "127.0.0.1".to_string(),
             port: 6380,
@@ -233,7 +249,7 @@ async fn test_sentinel_reset_command() {
             last_pong_time: 0,
             s_down_since_time: 0,
         };
-        
+
         let sentinel = SentinelInstance {
             ip: "127.0.0.1".to_string(),
             port: 26379,
@@ -244,14 +260,14 @@ async fn test_sentinel_reset_command() {
             leader_epoch: 0,
             leader_runid: None,
         };
-        
+
         master.slaves.insert("slave".to_string(), slave);
         master.sentinels.insert("sentinel".to_string(), sentinel);
         master.s_down_since_time = 12345; // Set some state
-        
+
         masters.insert("mymaster".to_string(), Arc::new(RwLock::new(master)));
     }
-    
+
     // Verify initial state
     {
         let masters = state.masters.read().unwrap();
@@ -260,7 +276,7 @@ async fn test_sentinel_reset_command() {
         assert_eq!(master.sentinels.len(), 1);
         assert_eq!(master.s_down_since_time, 12345);
     }
-    
+
     // This would normally be called through process_sentinel_command
     // For now, we just verify the reset logic works
     {
@@ -272,7 +288,7 @@ async fn test_sentinel_reset_command() {
             master.last_ping_time = 0;
             master.slaves.clear();
             master.sentinels.clear();
-            
+
             assert_eq!(master.slaves.len(), 0);
             assert_eq!(master.sentinels.len(), 0);
             assert_eq!(master.s_down_since_time, 0);

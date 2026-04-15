@@ -1,9 +1,9 @@
-use crate::db::{Db, Value, Entry};
+use crate::db::{Db, Entry, Value};
 use crate::resp::{Resp, as_bytes};
 use bytes::Bytes;
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::str;
-use std::cmp::Ordering;
 
 struct SortOptions {
     by_pattern: Option<String>,
@@ -55,7 +55,7 @@ fn sort_impl(items: &[Resp], db: &Db, readonly: bool) -> Resp {
             None => return Resp::Error("ERR invalid argument".to_string()),
         };
         let arg = String::from_utf8_lossy(&arg_bytes);
-        
+
         if arg.eq_ignore_ascii_case("ASC") {
             opts.ascending = true;
             i += 1;
@@ -69,29 +69,39 @@ fn sort_impl(items: &[Resp], db: &Db, readonly: bool) -> Resp {
             if i + 2 >= items.len() {
                 return Resp::Error("ERR syntax error".to_string());
             }
-            let start_bytes = match as_bytes(&items[i+1]) {
+            let start_bytes = match as_bytes(&items[i + 1]) {
                 Some(b) => b,
                 None => return Resp::Error("ERR invalid limit".to_string()),
             };
-            let count_bytes = match as_bytes(&items[i+2]) {
+            let count_bytes = match as_bytes(&items[i + 2]) {
                 Some(b) => b,
                 None => return Resp::Error("ERR invalid limit".to_string()),
             };
-            
-            opts.limit_start = match str::from_utf8(&start_bytes).ok().and_then(|s| s.parse().ok()) {
+
+            opts.limit_start = match str::from_utf8(&start_bytes)
+                .ok()
+                .and_then(|s| s.parse().ok())
+            {
                 Some(n) => n,
-                None => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+                None => {
+                    return Resp::Error("ERR value is not an integer or out of range".to_string());
+                }
             };
-            opts.limit_count = match str::from_utf8(&count_bytes).ok().and_then(|s| s.parse().ok()) {
+            opts.limit_count = match str::from_utf8(&count_bytes)
+                .ok()
+                .and_then(|s| s.parse().ok())
+            {
                 Some(n) => n,
-                None => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+                None => {
+                    return Resp::Error("ERR value is not an integer or out of range".to_string());
+                }
             };
             i += 3;
         } else if arg.eq_ignore_ascii_case("BY") {
             if i + 1 >= items.len() {
                 return Resp::Error("ERR syntax error".to_string());
             }
-            let pattern_bytes = match as_bytes(&items[i+1]) {
+            let pattern_bytes = match as_bytes(&items[i + 1]) {
                 Some(b) => b,
                 None => return Resp::Error("ERR invalid pattern".to_string()),
             };
@@ -101,11 +111,12 @@ fn sort_impl(items: &[Resp], db: &Db, readonly: bool) -> Resp {
             if i + 1 >= items.len() {
                 return Resp::Error("ERR syntax error".to_string());
             }
-            let pattern_bytes = match as_bytes(&items[i+1]) {
+            let pattern_bytes = match as_bytes(&items[i + 1]) {
                 Some(b) => b,
                 None => return Resp::Error("ERR invalid pattern".to_string()),
             };
-            opts.get_patterns.push(String::from_utf8_lossy(&pattern_bytes).to_string());
+            opts.get_patterns
+                .push(String::from_utf8_lossy(&pattern_bytes).to_string());
             i += 2;
         } else if arg.eq_ignore_ascii_case("STORE") {
             if readonly {
@@ -114,7 +125,7 @@ fn sort_impl(items: &[Resp], db: &Db, readonly: bool) -> Resp {
             if i + 1 >= items.len() {
                 return Resp::Error("ERR syntax error".to_string());
             }
-            let store_key_bytes = match as_bytes(&items[i+1]) {
+            let store_key_bytes = match as_bytes(&items[i + 1]) {
                 Some(b) => Bytes::copy_from_slice(b),
                 None => return Resp::Error("ERR invalid store key".to_string()),
             };
@@ -141,7 +152,12 @@ fn sort_impl(items: &[Resp], db: &Db, readonly: bool) -> Resp {
                 Value::ZSet(z) => {
                     elements = z.members.keys().cloned().collect();
                 }
-                _ => return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                _ => {
+                    return Resp::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    );
+                }
             }
         }
     } else {
@@ -149,15 +165,16 @@ fn sort_impl(items: &[Resp], db: &Db, readonly: bool) -> Resp {
     }
 
     // Prepare sort keys
-    let mut with_sort_keys: Vec<(Bytes, Option<f64>, Option<String>)> = Vec::with_capacity(elements.len());
-    
+    let mut with_sort_keys: Vec<(Bytes, Option<f64>, Option<String>)> =
+        Vec::with_capacity(elements.len());
+
     for elem in &elements {
         let sort_key_val = if let Some(pattern) = &opts.by_pattern {
             if pattern == "nosort" {
                 // Special case, don't sort, just limit/get
                 // But we still need a value to keep structure.
                 // If "nosort", we might skip sorting step, but let's just use empty.
-                 None
+                None
             } else {
                 lookup_key(db, pattern, elem)
             }
@@ -171,7 +188,7 @@ fn sort_impl(items: &[Resp], db: &Db, readonly: bool) -> Resp {
 
         if let Some(sk) = sort_key_val {
             if opts.alpha {
-                 str_val = Some(String::from_utf8_lossy(&sk).to_string());
+                str_val = Some(String::from_utf8_lossy(&sk).to_string());
             } else {
                 // Try parse as f64
                 if let Ok(s) = str::from_utf8(&sk) {
@@ -183,21 +200,25 @@ fn sort_impl(items: &[Resp], db: &Db, readonly: bool) -> Resp {
                         // If ALPHA is not specified, and value is not a number, Redis returns an error:
                         // "ERR One or more scores can't be converted into double"
                         // So we should verify this.
-                        return Resp::Error("ERR One or more scores can't be converted into double".to_string());
+                        return Resp::Error(
+                            "ERR One or more scores can't be converted into double".to_string(),
+                        );
                     }
                 } else {
-                    return Resp::Error("ERR One or more scores can't be converted into double".to_string());
+                    return Resp::Error(
+                        "ERR One or more scores can't be converted into double".to_string(),
+                    );
                 }
             }
         } else {
-             // If key missing (lookup failed) -> 0 or empty string
-             if opts.alpha {
-                 str_val = Some("".to_string());
-             } else {
-                 num_val = Some(0.0);
-             }
+            // If key missing (lookup failed) -> 0 or empty string
+            if opts.alpha {
+                str_val = Some("".to_string());
+            } else {
+                num_val = Some(0.0);
+            }
         }
-        
+
         with_sort_keys.push((elem.clone(), num_val, str_val));
     }
 
@@ -210,12 +231,8 @@ fn sort_impl(items: &[Resp], db: &Db, readonly: bool) -> Resp {
             } else {
                 a.1.partial_cmp(&b.1).unwrap_or(Ordering::Equal)
             };
-            
-            if opts.ascending {
-                cmp
-            } else {
-                cmp.reverse()
-            }
+
+            if opts.ascending { cmp } else { cmp.reverse() }
         });
     }
 
@@ -236,10 +253,10 @@ fn sort_impl(items: &[Resp], db: &Db, readonly: bool) -> Resp {
 
     // Apply GET
     let mut result_items: Vec<Resp> = Vec::new();
-    
+
     for (elem, _, _) in sliced {
         if opts.get_patterns.is_empty() {
-             result_items.push(Resp::BulkString(Some(elem.clone())));
+            result_items.push(Resp::BulkString(Some(elem.clone())));
         } else {
             for pattern in &opts.get_patterns {
                 if pattern == "#" {
@@ -260,20 +277,20 @@ fn sort_impl(items: &[Resp], db: &Db, readonly: bool) -> Resp {
                 list.push_back(b.clone());
             } else {
                 // If GET returned None, what does STORE do?
-                // Redis stores it? No, Redis lists can't hold nulls? 
+                // Redis stores it? No, Redis lists can't hold nulls?
                 // Wait, GET can return nil.
                 // "If the key is not found, a nil bulk string is returned."
                 // "STORE ... elements are stored in the list."
-                // Redis list implementation usually requires binary safe strings. 
+                // Redis list implementation usually requires binary safe strings.
                 // If GET returns nil, does it store empty string or skip?
                 // Documentation says: "If a specified key does not exist, the SORT command returns a nil bulk reply for that element."
                 // For STORE: "The command overwrites the destination key... containing the sorted elements."
                 // It seems we should convert nil to empty string or handle it.
                 // Redis behavior: nil is not stored in list? Or stored as empty?
-                // Actually Redis lists can't store "nil". 
+                // Actually Redis lists can't store "nil".
                 // Let's assume for now we don't store nils or store them as empty bytes?
-                // Checking Redis source or behavior: "SORT ... GET ... STORE" 
-                // If GET misses, it emits NULL Bulk String. 
+                // Checking Redis source or behavior: "SORT ... GET ... STORE"
+                // If GET misses, it emits NULL Bulk String.
                 // When STORING, NULLs are usually not valid in LIST?
                 // Actually, if I recall correctly, Redis Lists are lists of Strings.
                 // If GET returns NULL, maybe it skips? Or maybe it errors?
@@ -283,26 +300,26 @@ fn sort_impl(items: &[Resp], db: &Db, readonly: bool) -> Resp {
                 // Let's look up `lookup_key` implementation details.
             }
         }
-        
+
         // Re-construct list properly
         let mut final_list = VecDeque::new();
         for item in &result_items {
-             match item {
-                 Resp::BulkString(Some(b)) => final_list.push_back(b.clone()),
-                 Resp::BulkString(None) => {}, // Skip? Or store empty? 
-                 _ => {},
-             }
+            match item {
+                Resp::BulkString(Some(b)) => final_list.push_back(b.clone()),
+                Resp::BulkString(None) => {} // Skip? Or store empty?
+                _ => {}
+            }
         }
-        
+
         // Actually, if we look at `rpush`, it takes values.
         // Let's store what we have. If we have None, we can't put it in `Value::List`.
         // `Value::List` is `VecDeque<bytes::Bytes>`.
         // So we strictly cannot store None.
-        
+
         // Override destination
         let new_entry = Entry::new(Value::List(final_list.clone()), None);
         db.insert(store_key, new_entry);
-        
+
         Resp::Integer(final_list.len() as i64)
     } else {
         Resp::Array(Some(result_items))
@@ -316,21 +333,21 @@ fn lookup_key(db: &Db, pattern: &str, elem: &Bytes) -> Option<Bytes> {
 
     // This lookup is complex because `pattern` could imply a hash field access if it contains `->`
     // Format: `key` or `key->field`
-    
+
     if let Some(idx) = pattern.find("->") {
         let pattern_key_part = &pattern[0..idx];
-        let pattern_field_part = &pattern[idx+2..];
-        
+        let pattern_field_part = &pattern[idx + 2..];
+
         let real_key_str = pattern_key_part.replace("*", &elem_str);
         let real_field_str = pattern_field_part.replace("*", &elem_str);
-        
+
         let real_key = Bytes::from(real_key_str);
         let real_field = Bytes::from(real_field_str);
-        
+
         if let Some(entry) = db.get(&real_key) {
-             if let Value::Hash(h) = &entry.value {
-                 return h.get(&real_field).cloned();
-             }
+            if let Value::Hash(h) = &entry.value {
+                return h.get(&real_field).cloned();
+            }
         }
         None
     } else {

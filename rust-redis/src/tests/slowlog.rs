@@ -1,4 +1,4 @@
-use crate::cmd::{process_frame, ConnectionContext};
+use crate::cmd::{ConnectionContext, process_frame};
 use crate::resp::Resp;
 use bytes::Bytes;
 use std::sync::atomic::Ordering;
@@ -101,7 +101,7 @@ async fn test_slowlog_config() {
 
     // Initial check (defaults from create_server_context which uses Config::default())
     // Config::default() -> slowlog_log_slower_than = 10000, slowlog_max_len = 128
-    
+
     // Test CONFIG GET slowlog-log-slower-than
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("CONFIG"))),
@@ -130,7 +130,10 @@ async fn test_slowlog_config() {
     assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
 
     // Verify change
-    assert_eq!(server_ctx.slowlog_threshold_us.load(Ordering::Relaxed), 5000);
+    assert_eq!(
+        server_ctx.slowlog_threshold_us.load(Ordering::Relaxed),
+        5000
+    );
 
     // Test CONFIG GET slowlog-max-len
     let req = Resp::Array(Some(vec![

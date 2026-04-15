@@ -7,7 +7,12 @@ use tokio::time::timeout;
 
 use std::sync::atomic::Ordering;
 
-pub fn lpush(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerContext) -> Resp {
+pub fn lpush(
+    items: &[Resp],
+    db: &Db,
+    conn_ctx: &ConnectionContext,
+    server_ctx: &ServerContext,
+) -> Resp {
     if items.len() < 3 {
         return Resp::Error("ERR wrong number of arguments for 'LPUSH'".to_string());
     }
@@ -15,11 +20,6 @@ pub fn lpush(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCo
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
         _ => return Resp::Error("ERR invalid key".to_string()),
-    };
-
-    let db = {
-        let db_lock = server_ctx.databases[conn_ctx.db_index].read().unwrap();
-        db_lock.clone()
     };
 
     let mut count = 0;
@@ -33,7 +33,7 @@ pub fn lpush(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCo
         // Check for blocking waiters
         let mut handled = false;
         let map_key = (conn_ctx.db_index, key.to_vec());
-        
+
         // We need to loop because the first waiter might be dead (dropped receiver)
         loop {
             // Scope the lock
@@ -78,7 +78,7 @@ pub fn lpush(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCo
             let mut entry = db
                 .entry(key.clone())
                 .or_insert_with(|| Entry::new(Value::List(VecDeque::new()), None));
-            
+
             if entry.is_expired() {
                 entry.value = Value::List(VecDeque::new());
                 entry.expires_at = None;
@@ -88,7 +88,9 @@ pub fn lpush(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCo
                 list.push_front(val);
                 count = list.len();
             } else {
-                return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
+                return Resp::Error(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+                );
             }
         } else {
             // Value was sent to a waiter, so list length might not increase?
@@ -104,9 +106,9 @@ pub fn lpush(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCo
             // Let's verify standard Redis behavior if possible.
             // Assuming 0 if consumed.
             if let Some(entry) = db.get(&key) {
-                 if let Value::List(list) = &entry.value {
-                     count = list.len();
-                 }
+                if let Value::List(list) = &entry.value {
+                    count = list.len();
+                }
             } else {
                 count = 0;
             }
@@ -115,7 +117,12 @@ pub fn lpush(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCo
     Resp::Integer(count as i64)
 }
 
-pub fn rpush(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerContext) -> Resp {
+pub fn rpush(
+    items: &[Resp],
+    db: &Db,
+    conn_ctx: &ConnectionContext,
+    server_ctx: &ServerContext,
+) -> Resp {
     if items.len() < 3 {
         return Resp::Error("ERR wrong number of arguments for 'RPUSH'".to_string());
     }
@@ -123,11 +130,6 @@ pub fn rpush(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCo
         Resp::BulkString(Some(b)) => b.clone(),
         Resp::SimpleString(s) => s.clone(),
         _ => return Resp::Error("ERR invalid key".to_string()),
-    };
-
-    let db = {
-        let db_lock = server_ctx.databases[conn_ctx.db_index].read().unwrap();
-        db_lock.clone()
     };
 
     let mut count = 0;
@@ -141,7 +143,7 @@ pub fn rpush(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCo
         // Check for blocking waiters
         let mut handled = false;
         let map_key = (conn_ctx.db_index, key.to_vec());
-        
+
         // We need to loop because the first waiter might be dead (dropped receiver)
         loop {
             // Scope the lock
@@ -178,7 +180,7 @@ pub fn rpush(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCo
             let mut entry = db
                 .entry(key.clone())
                 .or_insert_with(|| Entry::new(Value::List(VecDeque::new()), None));
-            
+
             if entry.is_expired() {
                 entry.value = Value::List(VecDeque::new());
                 entry.expires_at = None;
@@ -188,13 +190,15 @@ pub fn rpush(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCo
                 list.push_back(val);
                 count = list.len();
             } else {
-                return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
+                return Resp::Error(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+                );
             }
         } else {
             if let Some(entry) = db.get(&key) {
-                 if let Value::List(list) = &entry.value {
-                     count = list.len();
-                 }
+                if let Value::List(list) = &entry.value {
+                    count = list.len();
+                }
             } else {
                 count = 0;
             }
@@ -297,13 +301,13 @@ pub fn lrange(items: &[Resp], db: &Db) -> Resp {
         Resp::SimpleString(s) => s.clone(),
         _ => return Resp::Error("ERR invalid key".to_string()),
     };
-    
+
     let start = match &items[2] {
         Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).parse::<i64>(),
         Resp::SimpleString(s) => String::from_utf8_lossy(s).parse::<i64>(),
         _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
     };
-    
+
     let stop = match &items[3] {
         Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).parse::<i64>(),
         Resp::SimpleString(s) => String::from_utf8_lossy(s).parse::<i64>(),
@@ -320,20 +324,24 @@ pub fn lrange(items: &[Resp], db: &Db) -> Resp {
                     let len = list.len() as i64;
                     let start = if start < 0 { len + start } else { start };
                     let stop = if stop < 0 { len + stop } else { stop };
-                    
+
                     let start = if start < 0 { 0 } else { start } as usize;
                     let stop = if stop < 0 { 0 } else { stop } as usize;
-                    
+
                     if start >= list.len() {
                         return Resp::Array(Some(vec![]));
                     }
-                    
-                    let stop = if stop >= list.len() { list.len() - 1 } else { stop };
-                    
+
+                    let stop = if stop >= list.len() {
+                        list.len() - 1
+                    } else {
+                        stop
+                    };
+
                     if start > stop {
                         return Resp::Array(Some(vec![]));
                     }
-                    
+
                     let mut result = Vec::new();
                     for i in start..=stop {
                         if let Some(val) = list.get(i) {
@@ -362,6 +370,7 @@ enum PopDirection {
 
 async fn blocking_pop_generic(
     items: &[Resp],
+    db: &Db,
     conn_ctx: &ConnectionContext,
     server_ctx: &ServerContext,
     direction: PopDirection,
@@ -385,7 +394,6 @@ async fn blocking_pop_generic(
         Err(_) => return Resp::Error("ERR timeout is not a float or out of range".to_string()),
     };
 
-    let db = server_ctx.databases[conn_ctx.db_index].read().unwrap().clone();
     let mut keys = Vec::new();
 
     // 1. Try to serve from existing lists immediately
@@ -398,40 +406,45 @@ async fn blocking_pop_generic(
         keys.push(key.clone());
 
         if let Some(mut entry) = db.get_mut(&key) {
-             if entry.is_expired() {
-                 drop(entry);
-                 db.remove(&key);
-                 continue;
-             }
-             if let Value::List(list) = &mut entry.value {
-                 let val_opt = match direction {
-                     PopDirection::Left => list.pop_front(),
-                     PopDirection::Right => list.pop_back(),
-                 };
-                 if let Some(val) = val_opt {
-                     // Found item, return immediately
-                     return Resp::Array(Some(vec![
-                         Resp::BulkString(Some(key)),
-                         Resp::BulkString(Some(val)),
-                     ]));
-                 }
-             }
+            if entry.is_expired() {
+                drop(entry);
+                db.remove(&key);
+                continue;
+            }
+            if let Value::List(list) = &mut entry.value {
+                let val_opt = match direction {
+                    PopDirection::Left => list.pop_front(),
+                    PopDirection::Right => list.pop_back(),
+                };
+                if let Some(val) = val_opt {
+                    // Found item, return immediately
+                    return Resp::Array(Some(vec![
+                        Resp::BulkString(Some(key)),
+                        Resp::BulkString(Some(val)),
+                    ]));
+                }
+            }
         }
     }
 
     // 2. If no data, block
     let (tx, mut rx) = tokio::sync::mpsc::channel::<(Vec<u8>, Vec<u8>)>(1);
-    
+
     // Register waiter for all keys
     for key in &keys {
         let map_key = (conn_ctx.db_index, key.to_vec());
-        let mut queue = server_ctx.blocking_waiters.entry(map_key).or_insert_with(VecDeque::new);
+        let mut queue = server_ctx
+            .blocking_waiters
+            .entry(map_key)
+            .or_insert_with(VecDeque::new);
         queue.push_back(tx.clone());
     }
 
     // Wait
-    server_ctx.blocked_client_count.fetch_add(1, Ordering::Relaxed);
-    
+    server_ctx
+        .blocked_client_count
+        .fetch_add(1, Ordering::Relaxed);
+
     let (_shutdown_tx, mut shutdown_rx) = if let Some(rx) = &conn_ctx.shutdown {
         (None, rx.clone())
     } else {
@@ -464,7 +477,9 @@ async fn blocking_pop_generic(
             }
         }
     };
-    server_ctx.blocked_client_count.fetch_sub(1, Ordering::Relaxed);
+    server_ctx
+        .blocked_client_count
+        .fetch_sub(1, Ordering::Relaxed);
 
     match result {
         Some((key, val)) => Resp::Array(Some(vec![
@@ -475,12 +490,22 @@ async fn blocking_pop_generic(
     }
 }
 
-pub async fn blpop(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerContext) -> Resp {
-    blocking_pop_generic(items, conn_ctx, server_ctx, PopDirection::Left).await
+pub async fn blpop(
+    items: &[Resp],
+    db: &Db,
+    conn_ctx: &ConnectionContext,
+    server_ctx: &ServerContext,
+) -> Resp {
+    blocking_pop_generic(items, db, conn_ctx, server_ctx, PopDirection::Left).await
 }
 
-pub async fn brpop(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerContext) -> Resp {
-    blocking_pop_generic(items, conn_ctx, server_ctx, PopDirection::Right).await
+pub async fn brpop(
+    items: &[Resp],
+    db: &Db,
+    conn_ctx: &ConnectionContext,
+    server_ctx: &ServerContext,
+) -> Resp {
+    blocking_pop_generic(items, db, conn_ctx, server_ctx, PopDirection::Right).await
 }
 
 fn parse_direction(arg: &Resp) -> Result<PopDirection, Resp> {
@@ -585,7 +610,7 @@ fn lmove_execute(
                             return Err(Resp::Error(
                                 "WRONGTYPE Operation against a key holding the wrong kind of value"
                                     .to_string(),
-                            ))
+                            ));
                         }
                     }
                 }
@@ -616,7 +641,7 @@ fn lmove_execute(
                             return Err(Resp::Error(
                                 "WRONGTYPE Operation against a key holding the wrong kind of value"
                                     .to_string(),
-                            ))
+                            ));
                         }
                     }
                 }
@@ -718,6 +743,7 @@ fn blmove_push_to_dest(
 
 pub async fn blmove(
     items: &[Resp],
+    db: &Db,
     conn_ctx: &ConnectionContext,
     server_ctx: &ServerContext,
 ) -> Resp {
@@ -758,9 +784,7 @@ pub async fn blmove(
         Err(_) => return Resp::Error("ERR timeout is not a float or out of range".to_string()),
     };
 
-    let db = server_ctx.databases[conn_ctx.db_index].read().unwrap().clone();
-
-    match lmove_execute(&db, &src_key, &dst_key, where_from, where_to) {
+    match lmove_execute(db, &src_key, &dst_key, where_from, where_to) {
         Ok(Some(v)) => return Resp::BulkString(Some(v)),
         Ok(None) => {}
         Err(e) => return e,
@@ -775,7 +799,9 @@ pub async fn blmove(
         .or_insert_with(VecDeque::new);
     queue.push_back(tx);
 
-    server_ctx.blocked_client_count.fetch_add(1, Ordering::Relaxed);
+    server_ctx
+        .blocked_client_count
+        .fetch_add(1, Ordering::Relaxed);
     let result = if timeout_secs > 0.0 {
         let duration = Duration::from_secs_f64(timeout_secs);
         match timeout(duration, rx.recv()).await {
@@ -789,13 +815,14 @@ pub async fn blmove(
             None => None,
         }
     };
-    server_ctx.blocked_client_count.fetch_sub(1, Ordering::Relaxed);
+    server_ctx
+        .blocked_client_count
+        .fetch_sub(1, Ordering::Relaxed);
 
     match result {
         Some(v) => {
             let value = bytes::Bytes::from(v);
-            let db = server_ctx.databases[conn_ctx.db_index].read().unwrap().clone();
-            match blmove_push_to_dest(&db, &dst_key, where_to, value.clone()) {
+            match blmove_push_to_dest(db, &dst_key, where_to, value.clone()) {
                 Ok(()) => Resp::BulkString(Some(value)),
                 Err(e) => e,
             }
@@ -857,7 +884,7 @@ pub fn linsert(items: &[Resp], db: &Db) -> Resp {
             db.remove(&key);
             return Resp::Integer(0);
         }
-        
+
         match &mut entry.value {
             Value::List(list) => {
                 let mut index = None;
@@ -1003,26 +1030,26 @@ pub fn ltrim(items: &[Resp], db: &Db) -> Resp {
                 let stop = if stop < 0 { len + stop } else { stop };
 
                 let start = if start < 0 { 0 } else { start };
-                
+
                 if start > stop || start >= len {
                     list.clear();
                     drop(entry);
                     db.remove(&key);
                     return Resp::SimpleString(bytes::Bytes::from_static(b"OK"));
                 }
-                
+
                 let start = start as usize;
                 let stop = if stop >= len { len - 1 } else { stop } as usize;
-                
+
                 if start > 0 {
                     for _ in 0..start {
                         list.pop_front();
                     }
                 }
-                
+
                 let new_len = stop - start + 1;
                 list.truncate(new_len);
-                
+
                 if list.is_empty() {
                     drop(entry);
                     db.remove(&key);
@@ -1066,11 +1093,11 @@ pub fn lindex(items: &[Resp], db: &Db) -> Resp {
             Value::List(list) => {
                 let len = list.len() as i64;
                 let idx = if index < 0 { len + index } else { index };
-                
+
                 if idx < 0 || idx >= len {
                     return Resp::BulkString(None);
                 }
-                
+
                 if let Some(val) = list.get(idx as usize) {
                     Resp::BulkString(Some(val.clone()))
                 } else {
@@ -1188,7 +1215,7 @@ pub fn lpos(items: &[Resp], db: &Db) -> Resp {
                 if i + 1 >= items.len() {
                     return Resp::Error("ERR syntax error".to_string());
                 }
-                rank = match &items[i+1] {
+                rank = match &items[i + 1] {
                     Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).parse().unwrap_or(0),
                     Resp::SimpleString(s) => String::from_utf8_lossy(s).parse().unwrap_or(0),
                     _ => 0,
@@ -1202,7 +1229,7 @@ pub fn lpos(items: &[Resp], db: &Db) -> Resp {
                 if i + 1 >= items.len() {
                     return Resp::Error("ERR syntax error".to_string());
                 }
-                let c = match &items[i+1] {
+                let c = match &items[i + 1] {
                     Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).parse().unwrap_or(-1),
                     Resp::SimpleString(s) => String::from_utf8_lossy(s).parse().unwrap_or(-1),
                     _ => -1,
@@ -1217,7 +1244,7 @@ pub fn lpos(items: &[Resp], db: &Db) -> Resp {
                 if i + 1 >= items.len() {
                     return Resp::Error("ERR syntax error".to_string());
                 }
-                let m = match &items[i+1] {
+                let m = match &items[i + 1] {
                     Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).parse().unwrap_or(-1),
                     Resp::SimpleString(s) => String::from_utf8_lossy(s).parse().unwrap_or(-1),
                     _ => -1,
@@ -1321,4 +1348,3 @@ pub fn lpos(items: &[Resp], db: &Db) -> Resp {
         }
     }
 }
-

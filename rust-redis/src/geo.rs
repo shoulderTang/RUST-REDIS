@@ -23,62 +23,62 @@ pub fn geohash_encode(lat: f64, lon: f64, step: u8) -> GeoHashBits {
     lon_offset = lon_offset.clamp(0.0, 1.0);
 
     let mut bits: u64 = 0;
-    
+
     // Interleave bits
-    // We want 'step' bits for each dimension? 
+    // We want 'step' bits for each dimension?
     // Redis uses 26 steps for 52 bits total.
-    
+
     for _ in 0..step {
         lat_offset *= 2.0;
         lon_offset *= 2.0;
-        
+
         let lat_bit = if lat_offset >= 1.0 {
             lat_offset -= 1.0;
             1
         } else {
             0
         };
-        
+
         let lon_bit = if lon_offset >= 1.0 {
             lon_offset -= 1.0;
             1
         } else {
             0
         };
-        
+
         bits <<= 1;
         bits |= lon_bit;
         bits <<= 1;
         bits |= lat_bit;
     }
-    
+
     GeoHashBits { bits, step }
 }
 
 pub fn geohash_decode(hash: GeoHashBits) -> (f64, f64) {
     let mut lat_range = (GEO_LAT_MIN, GEO_LAT_MAX);
     let mut lon_range = (GEO_LONG_MIN, GEO_LONG_MAX);
-    
+
     for i in (0..hash.step).rev() {
         let lat_bit = (hash.bits >> (i * 2)) & 1;
         let lon_bit = (hash.bits >> (i * 2 + 1)) & 1;
-        
+
         if lat_bit == 1 {
             lat_range.0 = (lat_range.0 + lat_range.1) / 2.0;
         } else {
             lat_range.1 = (lat_range.0 + lat_range.1) / 2.0;
         }
-        
+
         if lon_bit == 1 {
             lon_range.0 = (lon_range.0 + lon_range.1) / 2.0;
         } else {
             lon_range.1 = (lon_range.0 + lon_range.1) / 2.0;
         }
     }
-    
+
     let lat = (lat_range.0 + lat_range.1) / 2.0;
     let lon = (lon_range.0 + lon_range.1) / 2.0;
-    
+
     (lat, lon)
 }
 
@@ -93,10 +93,10 @@ pub fn geodist(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
 
     let u = ((lat2_rad - lat1_rad) / 2.0).sin();
     let v = ((lon2_rad - lon1_rad) / 2.0).sin();
-    
+
     let a = u * u + lat1_rad.cos() * lat2_rad.cos() * v * v;
     let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
-    
+
     EARTH_RADIUS_METERS * c
 }
 
@@ -109,16 +109,16 @@ pub fn geohash_to_base32(lat: f64, lon: f64) -> String {
     // Let's implement standard geohash string encoding.
     // It's slightly different from the 52-bit interleave used for ZSET score.
     // But conceptually similar.
-    
+
     let mut lat_range = (-90.0, 90.0);
     let mut lon_range = (-180.0, 180.0);
     let mut bits = 0;
     let mut bits_count = 0;
     let mut result = String::new();
     let precision = 11; // Standard length
-    
+
     let mut is_even = true;
-    
+
     while result.len() < precision {
         let mid;
         if is_even {
@@ -140,17 +140,17 @@ pub fn geohash_to_base32(lat: f64, lon: f64) -> String {
                 lat_range.1 = mid;
             }
         }
-        
+
         is_even = !is_even;
         bits_count += 1;
-        
+
         if bits_count == 5 {
             result.push(BASE32_CHARS[bits as usize] as char);
             bits = 0;
             bits_count = 0;
         }
     }
-    
+
     result
 }
 

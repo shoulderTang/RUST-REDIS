@@ -1,6 +1,6 @@
 use crate::resp::Resp;
-use bytes::Bytes;
 use crate::tests::helper::run_cmd;
+use bytes::Bytes;
 
 #[tokio::test]
 async fn test_hsetnx() {
@@ -8,7 +8,12 @@ async fn test_hsetnx() {
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // 1. HSETNX new key
-    let res = run_cmd(vec!["HSETNX", "myhash", "field1", "value1"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["HSETNX", "myhash", "field1", "value1"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Integer(n) => assert_eq!(n, 1),
         _ => panic!("Expected Integer 1, got {:?}", res),
@@ -22,7 +27,12 @@ async fn test_hsetnx() {
     }
 
     // 2. HSETNX existing field
-    let res = run_cmd(vec!["HSETNX", "myhash", "field1", "value2"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["HSETNX", "myhash", "field1", "value2"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Integer(n) => assert_eq!(n, 0),
         _ => panic!("Expected Integer 0, got {:?}", res),
@@ -36,7 +46,12 @@ async fn test_hsetnx() {
     }
 
     // 3. HSETNX new field in existing key
-    let res = run_cmd(vec!["HSETNX", "myhash", "field2", "value2"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["HSETNX", "myhash", "field2", "value2"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Integer(n) => assert_eq!(n, 1),
         _ => panic!("Expected Integer 1, got {:?}", res),
@@ -51,7 +66,12 @@ async fn test_hsetnx() {
 
     // 4. Wrong type
     run_cmd(vec!["SET", "mystring", "foo"], &mut conn_ctx, &server_ctx).await;
-    let res = run_cmd(vec!["HSETNX", "mystring", "field", "value"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["HSETNX", "mystring", "field", "value"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Error(e) => assert!(e.contains("WRONGTYPE")),
         _ => panic!("Expected WRONGTYPE, got {:?}", res),

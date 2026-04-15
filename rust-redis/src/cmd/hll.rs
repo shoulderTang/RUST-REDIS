@@ -1,6 +1,6 @@
-use crate::db::{Db, Value, Entry};
-use crate::resp::Resp;
+use crate::db::{Db, Entry, Value};
 use crate::hll::HyperLogLog;
+use crate::resp::Resp;
 use bytes::Bytes;
 
 pub fn pfadd(items: &[Resp], db: &Db) -> Resp {
@@ -26,7 +26,7 @@ pub fn pfadd(items: &[Resp], db: &Db) -> Resp {
             db.insert(key.clone(), Entry::new(Value::HyperLogLog(hll), None));
         }
     }
-    
+
     // Now get mutable access
     let mut entry = db.get_mut(&key).unwrap();
 
@@ -38,8 +38,14 @@ pub fn pfadd(items: &[Resp], db: &Db) -> Resp {
     };
 
     if is_string_hll {
-        let s = if let Value::String(s) = &entry.value { s.clone() } else { unreachable!() };
-        entry.value = Value::HyperLogLog(HyperLogLog { registers: s.to_vec() });
+        let s = if let Value::String(s) = &entry.value {
+            s.clone()
+        } else {
+            unreachable!()
+        };
+        entry.value = Value::HyperLogLog(HyperLogLog {
+            registers: s.to_vec(),
+        });
     }
 
     if let Value::HyperLogLog(hll) = &mut entry.value {
@@ -53,7 +59,9 @@ pub fn pfadd(items: &[Resp], db: &Db) -> Resp {
             }
         }
     } else {
-        return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
+        return Resp::Error(
+            "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+        );
     }
 
     Resp::Integer(if updated { 1 } else { 0 })
@@ -74,10 +82,14 @@ pub fn pfcount(items: &[Resp], db: &Db) -> Resp {
             match &entry.value {
                 Value::HyperLogLog(hll) => Resp::Integer(hll.count() as i64),
                 Value::String(s) if s.len() == 16384 => {
-                     let hll = HyperLogLog { registers: s.to_vec() };
-                     Resp::Integer(hll.count() as i64)
+                    let hll = HyperLogLog {
+                        registers: s.to_vec(),
+                    };
+                    Resp::Integer(hll.count() as i64)
                 }
-                _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                _ => Resp::Error(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+                ),
             }
         } else {
             Resp::Integer(0)
@@ -95,10 +107,17 @@ pub fn pfcount(items: &[Resp], db: &Db) -> Resp {
                 match &entry.value {
                     Value::HyperLogLog(hll) => temp_hll.merge(hll),
                     Value::String(s) if s.len() == 16384 => {
-                        let hll = HyperLogLog { registers: s.to_vec() };
+                        let hll = HyperLogLog {
+                            registers: s.to_vec(),
+                        };
                         temp_hll.merge(&hll);
                     }
-                    _ => return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                    _ => {
+                        return Resp::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        );
+                    }
                 }
             }
         }
@@ -117,7 +136,7 @@ pub fn pfmerge(items: &[Resp], db: &Db) -> Resp {
     };
 
     let mut temp_hll = HyperLogLog::new();
-    
+
     // Merge all keys including destination (starting from index 1)
     for i in 1..items.len() {
         let key = match &items[i] {
@@ -129,10 +148,17 @@ pub fn pfmerge(items: &[Resp], db: &Db) -> Resp {
             match &entry.value {
                 Value::HyperLogLog(hll) => temp_hll.merge(hll),
                 Value::String(s) if s.len() == 16384 => {
-                     let hll = HyperLogLog { registers: s.to_vec() };
-                     temp_hll.merge(&hll);
+                    let hll = HyperLogLog {
+                        registers: s.to_vec(),
+                    };
+                    temp_hll.merge(&hll);
                 }
-                _ => return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                _ => {
+                    return Resp::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    );
+                }
             }
         }
     }

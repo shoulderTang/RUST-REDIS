@@ -1,6 +1,6 @@
 use crate::resp::Resp;
-use bytes::Bytes;
 use crate::tests::helper::run_cmd;
+use bytes::Bytes;
 
 #[tokio::test]
 async fn test_lindex() {
@@ -8,7 +8,12 @@ async fn test_lindex() {
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // RPUSH mylist a b c
-    run_cmd(vec!["RPUSH", "mylist", "a", "b", "c"], &mut conn_ctx, &server_ctx).await;
+    run_cmd(
+        vec!["RPUSH", "mylist", "a", "b", "c"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
 
     // LINDEX mylist 0 -> a
     let res = run_cmd(vec!["LINDEX", "mylist", "0"], &mut conn_ctx, &server_ctx).await;
@@ -41,21 +46,21 @@ async fn test_lindex() {
     // LINDEX mylist 3 -> nil
     let res = run_cmd(vec!["LINDEX", "mylist", "3"], &mut conn_ctx, &server_ctx).await;
     match res {
-        Resp::BulkString(None) => {},
+        Resp::BulkString(None) => {}
         _ => panic!("Expected nil, got {:?}", res),
     }
 
     // LINDEX mylist -4 -> nil
     let res = run_cmd(vec!["LINDEX", "mylist", "-4"], &mut conn_ctx, &server_ctx).await;
     match res {
-        Resp::BulkString(None) => {},
+        Resp::BulkString(None) => {}
         _ => panic!("Expected nil, got {:?}", res),
     }
-    
+
     // LINDEX nonexist 0 -> nil
     let res = run_cmd(vec!["LINDEX", "nonexist", "0"], &mut conn_ctx, &server_ctx).await;
     match res {
-        Resp::BulkString(None) => {},
+        Resp::BulkString(None) => {}
         _ => panic!("Expected nil, got {:?}", res),
     }
 }

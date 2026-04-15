@@ -1,6 +1,6 @@
-use crate::resp::{Resp, as_bytes};
-use crate::cmd::{ServerContext, ConnectionContext};
 use crate::cluster::{NodeId, NodeRole, SlotState};
+use crate::cmd::{ConnectionContext, ServerContext};
+use crate::resp::{Resp, as_bytes};
 use bytes::Bytes;
 
 fn parse_addr(s: &str) -> Option<(String, u16)> {
@@ -10,7 +10,11 @@ fn parse_addr(s: &str) -> Option<(String, u16)> {
     Some((ip, port))
 }
 
-pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) -> Resp {
+pub fn cluster(
+    items: &[Resp],
+    _conn_ctx: &mut ConnectionContext,
+    server_ctx: &ServerContext,
+) -> Resp {
     if items.len() < 2 {
         return Resp::Error("ERR wrong number of arguments for 'cluster' command".to_string());
     }
@@ -37,7 +41,9 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
         }
         "KEYSLOT" => {
             if items.len() != 3 {
-                return Resp::Error("ERR wrong number of arguments for 'cluster keyslot'".to_string());
+                return Resp::Error(
+                    "ERR wrong number of arguments for 'cluster keyslot'".to_string(),
+                );
             }
             let key = match as_bytes(&items[2]) {
                 Some(b) => String::from_utf8_lossy(&b).to_string(),
@@ -48,7 +54,9 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
         }
         "COUNTKEYSINSLOT" => {
             if items.len() != 3 {
-                return Resp::Error("ERR wrong number of arguments for 'cluster countkeysinslot'".to_string());
+                return Resp::Error(
+                    "ERR wrong number of arguments for 'cluster countkeysinslot'".to_string(),
+                );
             }
             let slot = match as_bytes(&items[2]) {
                 Some(b) => match String::from_utf8_lossy(&b).parse::<u16>() {
@@ -74,7 +82,9 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
         }
         "GETKEYSINSLOT" => {
             if items.len() != 4 {
-                return Resp::Error("ERR wrong number of arguments for 'cluster getkeysinslot'".to_string());
+                return Resp::Error(
+                    "ERR wrong number of arguments for 'cluster getkeysinslot'".to_string(),
+                );
             }
             let slot = match as_bytes(&items[2]) {
                 Some(b) => match String::from_utf8_lossy(&b).parse::<u16>() {
@@ -136,7 +146,9 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
             let ip_clone = ip.clone();
             tokio::spawn(async move {
                 // Try to quickly replace placeholder with real run_id via MYID
-                if let Ok(Some(myid)) = crate::cmd::fetch_cluster_myid(&ctx_clone, &ip_clone, port).await {
+                if let Ok(Some(myid)) =
+                    crate::cmd::fetch_cluster_myid(&ctx_clone, &ip_clone, port).await
+                {
                     if let Ok(mut st) = ctx_clone.cluster.write() {
                         let node = crate::cluster::ClusterNode {
                             id: NodeId(myid),
@@ -150,8 +162,12 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
                         st.merge_topology(vec![node]);
                     }
                 }
-                if let Ok(Some(text)) = crate::cmd::fetch_cluster_nodes_text(&ctx_clone, &ip_clone, port).await {
-                    if let Ok(parsed) = crate::cluster::ClusterState::parse_nodes_overview_text(&text) {
+                if let Ok(Some(text)) =
+                    crate::cmd::fetch_cluster_nodes_text(&ctx_clone, &ip_clone, port).await
+                {
+                    if let Ok(parsed) =
+                        crate::cluster::ClusterState::parse_nodes_overview_text(&text)
+                    {
                         if let Ok(mut st) = ctx_clone.cluster.write() {
                             st.merge_topology(parsed);
                         }
@@ -159,13 +175,16 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
                 }
                 let my_ip = ctx_clone.config.bind.clone();
                 let my_port = ctx_clone.config.port;
-                let _ = crate::cmd::send_cluster_meet(&ctx_clone, &ip_clone, port, &my_ip, my_port).await;
+                let _ = crate::cmd::send_cluster_meet(&ctx_clone, &ip_clone, port, &my_ip, my_port)
+                    .await;
             });
             Resp::SimpleString(Bytes::from_static(b"OK"))
         }
         "ADDSLOTS" => {
             if items.len() < 3 {
-                return Resp::Error("ERR wrong number of arguments for 'cluster addslots'".to_string());
+                return Resp::Error(
+                    "ERR wrong number of arguments for 'cluster addslots'".to_string(),
+                );
             }
             let mut slots = Vec::new();
             for it in items.iter().skip(2) {
@@ -190,7 +209,9 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
         }
         "ADDSLOTSRANGE" => {
             if items.len() < 4 || (items.len() - 2) % 2 != 0 {
-                return Resp::Error("ERR wrong number of arguments for 'cluster addslotsrange'".to_string());
+                return Resp::Error(
+                    "ERR wrong number of arguments for 'cluster addslotsrange'".to_string(),
+                );
             }
             let mut slots = Vec::new();
             let mut it = items.iter().skip(2);
@@ -199,11 +220,17 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
                     Some(b) => b,
                     None => return Resp::Error("ERR invalid slot range".to_string()),
                 };
-                let start = match std::str::from_utf8(&start_b).ok().and_then(|s| s.parse::<u16>().ok()) {
+                let start = match std::str::from_utf8(&start_b)
+                    .ok()
+                    .and_then(|s| s.parse::<u16>().ok())
+                {
                     Some(v) => v,
                     None => return Resp::Error("ERR invalid slot".to_string()),
                 };
-                let end = match std::str::from_utf8(&end_b).ok().and_then(|s| s.parse::<u16>().ok()) {
+                let end = match std::str::from_utf8(&end_b)
+                    .ok()
+                    .and_then(|s| s.parse::<u16>().ok())
+                {
                     Some(v) => v,
                     None => return Resp::Error("ERR invalid slot".to_string()),
                 };
@@ -225,7 +252,9 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
         }
         "DELSLOTS" => {
             if items.len() < 3 {
-                return Resp::Error("ERR wrong number of arguments for 'cluster delslots'".to_string());
+                return Resp::Error(
+                    "ERR wrong number of arguments for 'cluster delslots'".to_string(),
+                );
             }
             let mut slots = Vec::new();
             for it in items.iter().skip(2) {
@@ -250,7 +279,9 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
         }
         "DELSLOTSRANGE" => {
             if items.len() < 4 || (items.len() - 2) % 2 != 0 {
-                return Resp::Error("ERR wrong number of arguments for 'cluster delslotsrange'".to_string());
+                return Resp::Error(
+                    "ERR wrong number of arguments for 'cluster delslotsrange'".to_string(),
+                );
             }
             let mut slots = Vec::new();
             let mut it = items.iter().skip(2);
@@ -259,11 +290,17 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
                     Some(b) => b,
                     None => return Resp::Error("ERR invalid slot range".to_string()),
                 };
-                let start = match std::str::from_utf8(&start_b).ok().and_then(|s| s.parse::<u16>().ok()) {
+                let start = match std::str::from_utf8(&start_b)
+                    .ok()
+                    .and_then(|s| s.parse::<u16>().ok())
+                {
                     Some(v) => v,
                     None => return Resp::Error("ERR invalid slot".to_string()),
                 };
-                let end = match std::str::from_utf8(&end_b).ok().and_then(|s| s.parse::<u16>().ok()) {
+                let end = match std::str::from_utf8(&end_b)
+                    .ok()
+                    .and_then(|s| s.parse::<u16>().ok())
+                {
                     Some(v) => v,
                     None => return Resp::Error("ERR invalid slot".to_string()),
                 };
@@ -285,7 +322,9 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
         }
         "SETSLOT" => {
             if items.len() < 4 {
-                return Resp::Error("ERR wrong number of arguments for 'cluster setslot'".to_string());
+                return Resp::Error(
+                    "ERR wrong number of arguments for 'cluster setslot'".to_string(),
+                );
             }
             let slot = match as_bytes(&items[2]) {
                 Some(b) => match String::from_utf8_lossy(&b).parse::<u16>() {
@@ -309,7 +348,10 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
                 }
                 "MIGRATING" => {
                     if items.len() < 5 {
-                        return Resp::Error("ERR wrong number of arguments for 'cluster setslot migrating'".to_string());
+                        return Resp::Error(
+                            "ERR wrong number of arguments for 'cluster setslot migrating'"
+                                .to_string(),
+                        );
                     }
                     let to_id = match as_bytes(&items[4]) {
                         Some(b) => NodeId(String::from_utf8_lossy(&b).to_string()),
@@ -324,7 +366,10 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
                 }
                 "IMPORTING" => {
                     if items.len() < 5 {
-                        return Resp::Error("ERR wrong number of arguments for 'cluster setslot importing'".to_string());
+                        return Resp::Error(
+                            "ERR wrong number of arguments for 'cluster setslot importing'"
+                                .to_string(),
+                        );
                     }
                     let from_id = match as_bytes(&items[4]) {
                         Some(b) => NodeId(String::from_utf8_lossy(&b).to_string()),
@@ -339,7 +384,9 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
                 }
                 "NODE" => {
                     if items.len() < 5 {
-                        return Resp::Error("ERR wrong number of arguments for 'cluster setslot node'".to_string());
+                        return Resp::Error(
+                            "ERR wrong number of arguments for 'cluster setslot node'".to_string(),
+                        );
                     }
                     let node_id = match as_bytes(&items[4]) {
                         Some(b) => NodeId(String::from_utf8_lossy(&b).to_string()),
@@ -365,7 +412,9 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
         }
         "FORGET" => {
             if items.len() != 3 {
-                return Resp::Error("ERR wrong number of arguments for 'cluster forget'".to_string());
+                return Resp::Error(
+                    "ERR wrong number of arguments for 'cluster forget'".to_string(),
+                );
             }
             let node_id = match as_bytes(&items[2]) {
                 Some(b) => NodeId(String::from_utf8_lossy(&b).to_string()),
@@ -403,7 +452,9 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
         }
         "REPLICATE" => {
             if items.len() != 3 {
-                return Resp::Error("ERR wrong number of arguments for 'cluster replicate'".to_string());
+                return Resp::Error(
+                    "ERR wrong number of arguments for 'cluster replicate'".to_string(),
+                );
             }
             let req_master_id = match as_bytes(&items[2]) {
                 Some(b) => NodeId(String::from_utf8_lossy(&b).to_string()),
@@ -417,10 +468,8 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
             let mut master_id = req_master_id.clone();
             if !st.nodes.contains_key(&master_id) {
                 if let Some((ip, port)) = parse_addr(&req_master_id.0) {
-                    if let Some((nid, _)) = st
-                        .nodes
-                        .iter()
-                        .find(|(_, n)| n.ip == ip && n.port == port)
+                    if let Some((nid, _)) =
+                        st.nodes.iter().find(|(_, n)| n.ip == ip && n.port == port)
                     {
                         master_id = nid.clone();
                     }
@@ -447,7 +496,9 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
         }
         "REPLICAS" | "SLAVES" => {
             if items.len() != 3 {
-                return Resp::Error("ERR wrong number of arguments for 'cluster replicas'".to_string());
+                return Resp::Error(
+                    "ERR wrong number of arguments for 'cluster replicas'".to_string(),
+                );
             }
             let master_id = match as_bytes(&items[2]) {
                 Some(b) => NodeId(String::from_utf8_lossy(&b).to_string()),
@@ -483,7 +534,9 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
                         let replicas: Vec<Resp> = st
                             .nodes
                             .values()
-                            .filter(|x| x.role == NodeRole::Replica && x.master_id.as_ref() == Some(&n.id))
+                            .filter(|x| {
+                                x.role == NodeRole::Replica && x.master_id.as_ref() == Some(&n.id)
+                            })
                             .map(|x| {
                                 Resp::Array(Some(vec![
                                     Resp::BulkString(Some(Bytes::from(x.ip.clone()))),
@@ -522,7 +575,10 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
                 "SETSLOT",
                 "SLOTS",
             ];
-            let arr = help.into_iter().map(|s| Resp::SimpleString(Bytes::from(s.to_string()))).collect();
+            let arr = help
+                .into_iter()
+                .map(|s| Resp::SimpleString(Bytes::from(s.to_string())))
+                .collect();
             Resp::Array(Some(arr))
         }
         "INFO" => {
@@ -534,10 +590,8 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
             let mut st = server_ctx.cluster.write().unwrap();
             let me = st.myself.clone();
             if let Some(node) = st.nodes.get_mut(&me) {
-                let slots_to_remove: Vec<u16> = node.slots
-                    .iter()
-                    .flat_map(|r| r.start..=r.end)
-                    .collect();
+                let slots_to_remove: Vec<u16> =
+                    node.slots.iter().flat_map(|r| r.start..=r.end).collect();
                 if !slots_to_remove.is_empty() {
                     let _ = st.del_slots(&me, &slots_to_remove);
                 }
@@ -553,7 +607,8 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
             let (text, path) = {
                 let st = server_ctx.cluster.read().unwrap();
                 let content = st.to_config_text();
-                let p = std::path::Path::new(&server_ctx.config.dir).join(&server_ctx.config.cluster_config_file);
+                let p = std::path::Path::new(&server_ctx.config.dir)
+                    .join(&server_ctx.config.cluster_config_file);
                 (content, p)
             };
             if let Some(parent) = path.parent() {
@@ -566,7 +621,9 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
         }
         "SET-CONFIG-EPOCH" => {
             if items.len() != 3 {
-                return Resp::Error("ERR wrong number of arguments for 'cluster set-config-epoch'".to_string());
+                return Resp::Error(
+                    "ERR wrong number of arguments for 'cluster set-config-epoch'".to_string(),
+                );
             }
             let epoch = match as_bytes(&items[2]) {
                 Some(b) => match String::from_utf8_lossy(&b).parse::<u64>() {
@@ -582,9 +639,7 @@ pub fn cluster(items: &[Resp], _conn_ctx: &mut ConnectionContext, server_ctx: &S
             st.current_epoch = epoch;
             Resp::SimpleString(Bytes::from_static(b"OK"))
         }
-        "LINKS" => {
-            Resp::Array(Some(vec![]))
-        }
+        "LINKS" => Resp::Array(Some(vec![])),
         "MYSHARDID" => {
             let st = server_ctx.cluster.read().unwrap();
             Resp::BulkString(Some(Bytes::from(st.myself.0.clone())))

@@ -4,6 +4,7 @@ use crate::conf::Config;
 use crate::db::{Db, Value};
 use crate::resp::{Resp, read_frame};
 use bytes::Bytes;
+use rand::Rng;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
@@ -11,13 +12,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::{self, AsyncWriteExt, BufWriter};
 use tokio::task::JoinHandle;
-use rand::Rng;
 
 enum AofMsg {
     Append(Resp),
     AppendSync(Resp, tokio::sync::oneshot::Sender<()>),
     Flush(tokio::sync::oneshot::Sender<()>),
-    Rewrite(Arc<Vec<RwLock<Db>>>, tokio::sync::oneshot::Sender<io::Result<()>>),
+    Rewrite(
+        Arc<Vec<RwLock<Db>>>,
+        tokio::sync::oneshot::Sender<io::Result<()>>,
+    ),
 }
 
 /// Cheaply cloneable handle to the background AOF writer task.
@@ -35,7 +38,12 @@ impl AofWriter {
         match self.policy {
             AppendFsync::Always => {
                 let (tx, rx) = tokio::sync::oneshot::channel();
-                if self.sender.send(AofMsg::AppendSync(cmd.clone(), tx)).await.is_ok() {
+                if self
+                    .sender
+                    .send(AofMsg::AppendSync(cmd.clone(), tx))
+                    .await
+                    .is_ok()
+                {
                     let _ = rx.await;
                 }
             }
@@ -157,7 +165,7 @@ impl Aof {
 
     pub async fn load(
         &self,
-      //  path: &str,
+        //  path: &str,
         server_ctx: &crate::cmd::ServerContext,
         // databases: &Arc<Vec<Db>>,
         // cfg: &Config,
@@ -181,8 +189,6 @@ impl Aof {
                 Ok(Some(frame)) => {
                     // process_frame requires Aof option now, but during load we pass None
                     // to avoid recursive or circular dependency issues and because we don't want to log loaded commands
-                    
-                    
 
                     // let acl = std::sync::Arc::new(std::sync::RwLock::new(crate::acl::Acl::new()));
                     // let mut rng = rand::rng();
@@ -206,7 +212,6 @@ impl Aof {
 
                     let _ = process_frame(frame, &mut conn_ctx, &server_ctx).await;
                     //current_db_index = conn_ctx.db_index;
-                    
                 }
                 Ok(None) => break,
                 Err(e) => return Err(e),
@@ -318,9 +323,11 @@ impl Aof {
                             args.push(Resp::BulkString(Some(Bytes::from("CREATE"))));
                             args.push(Resp::BulkString(Some(key.clone())));
                             args.push(Resp::BulkString(Some(Bytes::from(name.clone()))));
-                            args.push(Resp::BulkString(Some(Bytes::from(group.last_id.to_string()))));
+                            args.push(Resp::BulkString(Some(Bytes::from(
+                                group.last_id.to_string(),
+                            ))));
                             args.push(Resp::BulkString(Some(Bytes::from("MKSTREAM"))));
-                            
+
                             let cmd = Resp::Array(Some(args));
                             write_resp(&mut writer, &cmd).await?;
                         }

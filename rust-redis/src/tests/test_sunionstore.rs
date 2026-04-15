@@ -1,7 +1,7 @@
 use crate::resp::Resp;
+use crate::tests::helper::run_cmd;
 use bytes::Bytes;
 use std::collections::HashSet;
-use crate::tests::helper::run_cmd;
 
 #[tokio::test]
 async fn test_sunionstore() {
@@ -15,7 +15,12 @@ async fn test_sunionstore() {
     run_cmd(vec!["SADD", "s2", "b", "c"], &mut conn_ctx, &server_ctx).await;
 
     // 1. SUNIONSTORE dest s1 s2 -> {a, b, c}
-    let res = run_cmd(vec!["SUNIONSTORE", "dest", "s1", "s2"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["SUNIONSTORE", "dest", "s1", "s2"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Integer(n) => assert_eq!(n, 3),
         _ => panic!("Expected Integer 3"),
@@ -43,7 +48,12 @@ async fn test_sunionstore() {
 
     // 2. SUNIONSTORE with missing key -> treats as empty set
     // s1={a,b}, missing={} -> union={a,b}
-    let res = run_cmd(vec!["SUNIONSTORE", "dest_miss", "s1", "missing"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["SUNIONSTORE", "dest_miss", "s1", "missing"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Integer(n) => assert_eq!(n, 2),
         _ => panic!("Expected Integer 2"),
@@ -71,7 +81,12 @@ async fn test_sunionstore() {
     // 3. SUNIONSTORE overwrites destination
     run_cmd(vec!["SADD", "dest", "x", "y"], &mut conn_ctx, &server_ctx).await;
     // s2={b,c}
-    let res = run_cmd(vec!["SUNIONSTORE", "dest", "s2"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["SUNIONSTORE", "dest", "s2"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Integer(n) => assert_eq!(n, 2),
         _ => panic!("Expected Integer 2"),
@@ -99,7 +114,12 @@ async fn test_sunionstore() {
 
     // 4. WRONGTYPE in source key
     run_cmd(vec!["SET", "string_key", "val"], &mut conn_ctx, &server_ctx).await;
-    let res = run_cmd(vec!["SUNIONSTORE", "dest", "s1", "string_key"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["SUNIONSTORE", "dest", "s1", "string_key"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Error(msg) => assert!(msg.contains("WRONGTYPE")),
         _ => panic!("Expected Error WRONGTYPE"),
@@ -107,7 +127,12 @@ async fn test_sunionstore() {
 
     // 5. Destination overwrite from different type
     run_cmd(vec!["SET", "dest_str", "value"], &mut conn_ctx, &server_ctx).await;
-    let res = run_cmd(vec!["SUNIONSTORE", "dest_str", "s1"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["SUNIONSTORE", "dest_str", "s1"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Integer(n) => assert_eq!(n, 2),
         _ => panic!("Expected Integer 2"),

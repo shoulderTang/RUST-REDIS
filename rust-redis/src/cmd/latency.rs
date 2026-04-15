@@ -1,5 +1,5 @@
+use crate::cmd::{LatencyEvent, ServerContext};
 use crate::resp::Resp;
-use crate::cmd::{ServerContext, LatencyEvent};
 use bytes::Bytes;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -35,7 +35,9 @@ pub fn latency(items: &[Resp], server_ctx: &ServerContext) -> Resp {
         }
         "HISTORY" => {
             if items.len() < 3 {
-                return Resp::Error("ERR wrong number of arguments for 'latency history' command".to_string());
+                return Resp::Error(
+                    "ERR wrong number of arguments for 'latency history' command".to_string(),
+                );
             }
             let event_name = match &items[2] {
                 Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_string(),
@@ -58,7 +60,9 @@ pub fn latency(items: &[Resp], server_ctx: &ServerContext) -> Resp {
         }
         "GRAPH" => {
             if items.len() < 3 {
-                return Resp::Error("ERR wrong number of arguments for 'latency graph' command".to_string());
+                return Resp::Error(
+                    "ERR wrong number of arguments for 'latency graph' command".to_string(),
+                );
             }
             // Simple ASCII graph implementation or just a placeholder
             Resp::BulkString(Some(Bytes::from("ASCII graph not implemented yet")))
@@ -92,13 +96,22 @@ pub fn latency(items: &[Resp], server_ctx: &ServerContext) -> Resp {
             }
             Resp::Array(Some(res))
         }
-        _ => Resp::Error(format!("ERR unknown subcommand for 'LATENCY {}'", subcommand)),
+        _ => Resp::Error(format!(
+            "ERR unknown subcommand for 'LATENCY {}'",
+            subcommand
+        )),
     }
 }
 
 pub fn record_latency(server_ctx: &ServerContext, event: &str, duration_ms: u64) {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    let mut events = server_ctx.latency_events.entry(event.to_string()).or_insert_with(std::collections::VecDeque::new);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let mut events = server_ctx
+        .latency_events
+        .entry(event.to_string())
+        .or_insert_with(std::collections::VecDeque::new);
     events.push_back(LatencyEvent {
         timestamp: now,
         duration: duration_ms,

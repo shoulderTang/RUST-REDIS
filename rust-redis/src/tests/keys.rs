@@ -1,6 +1,6 @@
 use crate::resp::Resp;
-use bytes::Bytes;
 use crate::tests::helper::run_cmd;
+use bytes::Bytes;
 
 #[tokio::test]
 async fn test_scan() {
@@ -9,12 +9,17 @@ async fn test_scan() {
 
     // Create 100 keys
     for i in 0..100 {
-        run_cmd(vec!["SET", &format!("key:{:03}", i), "val"], &mut conn_ctx, &server_ctx).await;
+        run_cmd(
+            vec!["SET", &format!("key:{:03}", i), "val"],
+            &mut conn_ctx,
+            &server_ctx,
+        )
+        .await;
     }
 
     // SCAN 0 COUNT 20
     let res = run_cmd(vec!["SCAN", "0", "COUNT", "20"], &mut conn_ctx, &server_ctx).await;
-    
+
     let mut cursor: usize;
     let mut keys_found = std::collections::HashSet::new();
 
@@ -26,7 +31,7 @@ async fn test_scan() {
                 Resp::BulkString(Some(b)) => {
                     let s = std::str::from_utf8(b).unwrap();
                     cursor = s.parse().unwrap();
-                },
+                }
                 _ => panic!("expected BulkString cursor"),
             }
             // Parse keys
@@ -36,43 +41,48 @@ async fn test_scan() {
                         match key {
                             Resp::BulkString(Some(b)) => {
                                 keys_found.insert(b.clone());
-                            },
+                            }
                             _ => panic!("expected BulkString key"),
                         }
                     }
-                },
+                }
                 _ => panic!("expected Array of keys"),
             }
-        },
+        }
         _ => panic!("expected Array result"),
     }
 
     // Continue scanning until cursor is 0
     while cursor != 0 {
-        let res = run_cmd(vec!["SCAN", &cursor.to_string(), "COUNT", "20"], &mut conn_ctx, &server_ctx).await;
-         match res {
+        let res = run_cmd(
+            vec!["SCAN", &cursor.to_string(), "COUNT", "20"],
+            &mut conn_ctx,
+            &server_ctx,
+        )
+        .await;
+        match res {
             Resp::Array(Some(items)) => {
                 match &items[0] {
                     Resp::BulkString(Some(b)) => {
                         let s = std::str::from_utf8(b).unwrap();
                         cursor = s.parse().unwrap();
-                    },
+                    }
                     _ => panic!("expected BulkString cursor"),
                 }
                 match &items[1] {
                     Resp::Array(Some(keys)) => {
                         for key in keys {
-                             match key {
+                            match key {
                                 Resp::BulkString(Some(b)) => {
                                     keys_found.insert(b.clone());
-                                },
+                                }
                                 _ => panic!("expected BulkString key"),
                             }
                         }
-                    },
+                    }
                     _ => panic!("expected Array of keys"),
                 }
-            },
+            }
             _ => panic!("expected Array result"),
         }
     }
@@ -80,24 +90,27 @@ async fn test_scan() {
     assert_eq!(keys_found.len(), 100);
 
     // Test MATCH
-    let res = run_cmd(vec!["SCAN", "0", "MATCH", "key:01*", "COUNT", "1000"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["SCAN", "0", "MATCH", "key:01*", "COUNT", "1000"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
-        Resp::Array(Some(items)) => {
-             match &items[1] {
-                Resp::Array(Some(keys)) => {
-                    assert!(!keys.is_empty());
-                    for key in keys {
-                         match key {
-                            Resp::BulkString(Some(b)) => {
-                                let s = std::str::from_utf8(b).unwrap();
-                                assert!(s.starts_with("key:01"));
-                            },
-                            _ => panic!("expected BulkString key"),
+        Resp::Array(Some(items)) => match &items[1] {
+            Resp::Array(Some(keys)) => {
+                assert!(!keys.is_empty());
+                for key in keys {
+                    match key {
+                        Resp::BulkString(Some(b)) => {
+                            let s = std::str::from_utf8(b).unwrap();
+                            assert!(s.starts_with("key:01"));
                         }
+                        _ => panic!("expected BulkString key"),
                     }
-                },
-                _ => panic!("expected Array of keys"),
+                }
             }
+            _ => panic!("expected Array of keys"),
         },
         _ => panic!("expected Array result"),
     }
@@ -141,7 +154,12 @@ async fn test_rename_renamenx_persist() {
     assert_eq!(res, Resp::BulkString(Some(Bytes::from("v1"))));
 
     // Test PERSIST
-    run_cmd(vec!["SET", "k5", "v5", "EX", "100"], &mut conn_ctx, &server_ctx).await;
+    run_cmd(
+        vec!["SET", "k5", "v5", "EX", "100"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     let res = run_cmd(vec!["TTL", "k5"], &mut conn_ctx, &server_ctx).await;
     if let Resp::Integer(ttl) = res {
         assert!(ttl > 0);
@@ -273,10 +291,20 @@ async fn test_del() {
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // Setup keys
-    run_cmd(vec!["MSET", "k1", "v1", "k2", "v2", "k3", "v3"], &mut conn_ctx, &server_ctx).await;
+    run_cmd(
+        vec!["MSET", "k1", "v1", "k2", "v2", "k3", "v3"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
 
     // DEL k1 k2 k_missing
-    let res = run_cmd(vec!["DEL", "k1", "k2", "k_missing"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["DEL", "k1", "k2", "k_missing"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
 
     match res {
         Resp::Integer(i) => assert_eq!(i, 2),

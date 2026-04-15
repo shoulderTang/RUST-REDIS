@@ -1,6 +1,8 @@
 use crate::db::{Db, Entry, SortedSet, TotalOrderF64, Value};
+use crate::geo::{
+    geodist as calc_dist, geohash_decode, geohash_encode, geohash_to_base32, is_in_box,
+};
 use crate::resp::Resp;
-use crate::geo::{geohash_encode, geohash_decode, geohash_to_base32, geodist as calc_dist, is_in_box};
 use bytes::Bytes;
 use std::cmp::Ordering;
 
@@ -19,7 +21,7 @@ pub fn geoadd(items: &[Resp], db: &Db) -> Resp {
     let mut entry = db
         .entry(key)
         .or_insert_with(|| Entry::new(Value::ZSet(SortedSet::new()), None));
-    
+
     if entry.is_expired() {
         entry.value = Value::ZSet(SortedSet::new());
         entry.expires_at = None;
@@ -34,12 +36,12 @@ pub fn geoadd(items: &[Resp], db: &Db) -> Resp {
                 Resp::SimpleString(s) => std::str::from_utf8(s).ok(),
                 _ => return Resp::Error("ERR invalid longitude".to_string()),
             };
-            let lat_str = match &items[i+1] {
+            let lat_str = match &items[i + 1] {
                 Resp::BulkString(Some(b)) => std::str::from_utf8(b).ok(),
                 Resp::SimpleString(s) => std::str::from_utf8(s).ok(),
                 _ => return Resp::Error("ERR invalid latitude".to_string()),
             };
-            
+
             let lon: f64 = match lon_str.and_then(|s| s.parse().ok()) {
                 Some(v) => v,
                 None => return Resp::Error("ERR value is not a valid float".to_string()),
@@ -49,7 +51,7 @@ pub fn geoadd(items: &[Resp], db: &Db) -> Resp {
                 None => return Resp::Error("ERR value is not a valid float".to_string()),
             };
 
-            let member = match &items[i+2] {
+            let member = match &items[i + 2] {
                 Resp::BulkString(Some(b)) => b.clone(),
                 Resp::SimpleString(s) => s.clone(),
                 _ => return Resp::Error("ERR member must be a string".to_string()),
@@ -61,7 +63,8 @@ pub fn geoadd(items: &[Resp], db: &Db) -> Resp {
 
             if let Some(old_score) = zset.members.get(&member) {
                 if *old_score != score {
-                    zset.scores.remove(&(TotalOrderF64(*old_score), member.clone()));
+                    zset.scores
+                        .remove(&(TotalOrderF64(*old_score), member.clone()));
                     zset.members.insert(member.clone(), score);
                     zset.scores.insert((TotalOrderF64(score), member));
                     count += 1;
@@ -84,7 +87,7 @@ pub fn geodist(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 4 {
         return Resp::Error("ERR wrong number of arguments for 'geodist' command".to_string());
     }
-    
+
     let key = match &items[1] {
         Resp::BulkString(Some(b)) => b.clone(),
         _ => return Resp::Error("ERR key must be a string".to_string()),
@@ -107,7 +110,11 @@ pub fn geodist(items: &[Resp], db: &Db) -> Resp {
                 "km" => 1000.0,
                 "mi" => 1609.34,
                 "ft" => 0.3048,
-                _ => return Resp::Error("ERR unsupported unit provided. please use m, km, ft, mi".to_string()),
+                _ => {
+                    return Resp::Error(
+                        "ERR unsupported unit provided. please use m, km, ft, mi".to_string(),
+                    );
+                }
             },
             _ => 1.0,
         }
@@ -121,20 +128,26 @@ pub fn geodist(items: &[Resp], db: &Db) -> Resp {
             let score2 = zset.members.get(&member2);
 
             if let (Some(s1), Some(s2)) = (score1, score2) {
-                 let hash1 = crate::geo::GeoHashBits { bits: *s1 as u64, step: 26 };
-                 let (lat1, lon1) = geohash_decode(hash1);
-                 
-                 let hash2 = crate::geo::GeoHashBits { bits: *s2 as u64, step: 26 };
-                 let (lat2, lon2) = geohash_decode(hash2);
-                 
-                 let dist = calc_dist(lat1, lon1, lat2, lon2);
-                 let converted = dist / unit_scale;
-                 
-                 return Resp::BulkString(Some(Bytes::from(converted.to_string())));
+                let hash1 = crate::geo::GeoHashBits {
+                    bits: *s1 as u64,
+                    step: 26,
+                };
+                let (lat1, lon1) = geohash_decode(hash1);
+
+                let hash2 = crate::geo::GeoHashBits {
+                    bits: *s2 as u64,
+                    step: 26,
+                };
+                let (lat2, lon2) = geohash_decode(hash2);
+
+                let dist = calc_dist(lat1, lon1, lat2, lon2);
+                let converted = dist / unit_scale;
+
+                return Resp::BulkString(Some(Bytes::from(converted.to_string())));
             }
         }
     }
-    
+
     Resp::BulkString(None)
 }
 
@@ -161,17 +174,22 @@ pub fn geohash(items: &[Resp], db: &Db) -> Resp {
                 };
 
                 if let Some(score) = zset.members.get(&member) {
-                     let hash = crate::geo::GeoHashBits { bits: *score as u64, step: 26 };
-                     let (lat, lon) = geohash_decode(hash);
-                     let geohash_str = geohash_to_base32(lat, lon);
-                     result.push(Resp::BulkString(Some(Bytes::from(geohash_str))));
+                    let hash = crate::geo::GeoHashBits {
+                        bits: *score as u64,
+                        step: 26,
+                    };
+                    let (lat, lon) = geohash_decode(hash);
+                    let geohash_str = geohash_to_base32(lat, lon);
+                    result.push(Resp::BulkString(Some(Bytes::from(geohash_str))));
                 } else {
                     result.push(Resp::BulkString(None));
                 }
             }
             Resp::Array(Some(result))
         } else {
-            Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string())
+            Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            )
         }
     } else {
         let mut result = Vec::new();
@@ -205,21 +223,26 @@ pub fn geopos(items: &[Resp], db: &Db) -> Resp {
                 };
 
                 if let Some(score) = zset.members.get(&member) {
-                     let hash = crate::geo::GeoHashBits { bits: *score as u64, step: 26 };
-                     let (lat, lon) = geohash_decode(hash);
-                     
-                     let pos = vec![
-                         Resp::BulkString(Some(Bytes::from(lon.to_string()))),
-                         Resp::BulkString(Some(Bytes::from(lat.to_string()))),
-                     ];
-                     result.push(Resp::Array(Some(pos)));
+                    let hash = crate::geo::GeoHashBits {
+                        bits: *score as u64,
+                        step: 26,
+                    };
+                    let (lat, lon) = geohash_decode(hash);
+
+                    let pos = vec![
+                        Resp::BulkString(Some(Bytes::from(lon.to_string()))),
+                        Resp::BulkString(Some(Bytes::from(lat.to_string()))),
+                    ];
+                    result.push(Resp::Array(Some(pos)));
                 } else {
                     result.push(Resp::Array(None));
                 }
             }
             Resp::Array(Some(result))
         } else {
-            Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string())
+            Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            )
         }
     } else {
         let mut result = Vec::new();
@@ -268,12 +291,22 @@ fn geosearch_generic(
 ) -> Resp {
     let entry = match db.get(key) {
         Some(e) => e,
-        None => return if opts.store.is_some() { Resp::Integer(0) } else { Resp::Array(Some(Vec::new())) },
+        None => {
+            return if opts.store.is_some() {
+                Resp::Integer(0)
+            } else {
+                Resp::Array(Some(Vec::new()))
+            };
+        }
     };
 
     let zset = match &entry.value {
         Value::ZSet(zset) => zset,
-        _ => return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+        _ => {
+            return Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            );
+        }
     };
 
     struct GeoPoint {
@@ -287,13 +320,18 @@ fn geosearch_generic(
     let mut points = Vec::new();
 
     for (member, score) in &zset.members {
-        let hash = crate::geo::GeoHashBits { bits: *score as u64, step: 26 };
+        let hash = crate::geo::GeoHashBits {
+            bits: *score as u64,
+            step: 26,
+        };
         let (lat, lon) = geohash_decode(hash);
         let dist = calc_dist(lat, lon, lat_center, lon_center);
 
         let in_shape = match shape {
             GeoShape::Circle { radius_m } => dist <= radius_m,
-            GeoShape::Box { width_m, height_m } => is_in_box(lat, lon, lat_center, lon_center, width_m, height_m),
+            GeoShape::Box { width_m, height_m } => {
+                is_in_box(lat, lon, lat_center, lon_center, width_m, height_m)
+            }
         };
 
         if in_shape {
@@ -325,7 +363,11 @@ fn geosearch_generic(
         let mut dest_zset = SortedSet::new();
         let count = points.len() as i64;
         for p in points {
-            let score = if opts.store_dist { p.dist / unit_scale } else { p.score };
+            let score = if opts.store_dist {
+                p.dist / unit_scale
+            } else {
+                p.score
+            };
             dest_zset.members.insert(p.member.clone(), score);
             dest_zset.scores.insert((TotalOrderF64(score), p.member));
         }
@@ -339,24 +381,24 @@ fn geosearch_generic(
             } else {
                 let mut item = Vec::new();
                 item.push(Resp::BulkString(Some(p.member)));
-                
+
                 if opts.with_dist {
                     let d = p.dist / unit_scale;
                     item.push(Resp::BulkString(Some(Bytes::from(d.to_string()))));
                 }
-                
+
                 if opts.with_hash {
                     item.push(Resp::Integer(p.score as i64));
                 }
-                
+
                 if opts.with_coord {
-                     let pos = vec![
-                         Resp::BulkString(Some(Bytes::from(p.lon.to_string()))),
-                         Resp::BulkString(Some(Bytes::from(p.lat.to_string()))),
-                     ];
-                     item.push(Resp::Array(Some(pos)));
+                    let pos = vec![
+                        Resp::BulkString(Some(Bytes::from(p.lon.to_string()))),
+                        Resp::BulkString(Some(Bytes::from(p.lat.to_string()))),
+                    ];
+                    item.push(Resp::Array(Some(pos)));
                 }
-                
+
                 result.push(Resp::Array(Some(item)));
             }
         }
@@ -375,17 +417,26 @@ pub fn georadius(items: &[Resp], db: &Db) -> Resp {
     };
 
     let lon_center: f64 = match &items[2] {
-        Resp::BulkString(Some(b)) => std::str::from_utf8(b).ok().and_then(|s| s.parse().ok()).unwrap_or(0.0),
+        Resp::BulkString(Some(b)) => std::str::from_utf8(b)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.0),
         _ => 0.0,
     };
 
     let lat_center: f64 = match &items[3] {
-        Resp::BulkString(Some(b)) => std::str::from_utf8(b).ok().and_then(|s| s.parse().ok()).unwrap_or(0.0),
+        Resp::BulkString(Some(b)) => std::str::from_utf8(b)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.0),
         _ => 0.0,
     };
 
     let radius: f64 = match &items[4] {
-        Resp::BulkString(Some(b)) => std::str::from_utf8(b).ok().and_then(|s| s.parse().ok()).unwrap_or(0.0),
+        Resp::BulkString(Some(b)) => std::str::from_utf8(b)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.0),
         _ => 0.0,
     };
 
@@ -420,43 +471,55 @@ pub fn georadius(items: &[Resp], db: &Db) -> Resp {
                 "withhash" => opts.with_hash = true,
                 "count" => {
                     if i + 1 < items.len() {
-                        if let Resp::BulkString(Some(cb)) = &items[i+1] {
-                             opts.count = std::str::from_utf8(cb).ok().and_then(|s| s.parse().ok());
-                             i += 1;
+                        if let Resp::BulkString(Some(cb)) = &items[i + 1] {
+                            opts.count = std::str::from_utf8(cb).ok().and_then(|s| s.parse().ok());
+                            i += 1;
                         }
                     }
-                },
+                }
                 "asc" => opts.sort_asc = Some(true),
                 "desc" => opts.sort_asc = Some(false),
                 "store" => {
                     if i + 1 < items.len() {
-                        if let Resp::BulkString(Some(sb)) = &items[i+1] {
+                        if let Resp::BulkString(Some(sb)) = &items[i + 1] {
                             opts.store = Some(sb.clone());
                             i += 1;
                         }
                     }
-                },
+                }
                 "storedist" => {
                     if i + 1 < items.len() {
-                        if let Resp::BulkString(Some(sb)) = &items[i+1] {
+                        if let Resp::BulkString(Some(sb)) = &items[i + 1] {
                             opts.store = Some(sb.clone());
                             opts.store_dist = true;
                             i += 1;
                         }
                     }
-                },
-                _ => {},
+                }
+                _ => {}
             }
         }
         i += 1;
     }
 
-    geosearch_generic(db, &key, lat_center, lon_center, GeoShape::Circle { radius_m: radius * unit_scale }, unit_scale, opts)
+    geosearch_generic(
+        db,
+        &key,
+        lat_center,
+        lon_center,
+        GeoShape::Circle {
+            radius_m: radius * unit_scale,
+        },
+        unit_scale,
+        opts,
+    )
 }
 
 pub fn georadiusbymember(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 5 {
-        return Resp::Error("ERR wrong number of arguments for 'georadiusbymember' command".to_string());
+        return Resp::Error(
+            "ERR wrong number of arguments for 'georadiusbymember' command".to_string(),
+        );
     }
 
     let key = match &items[1] {
@@ -470,7 +533,10 @@ pub fn georadiusbymember(items: &[Resp], db: &Db) -> Resp {
     };
 
     let radius: f64 = match &items[3] {
-        Resp::BulkString(Some(b)) => std::str::from_utf8(b).ok().and_then(|s| s.parse().ok()).unwrap_or(0.0),
+        Resp::BulkString(Some(b)) => std::str::from_utf8(b)
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.0),
         _ => 0.0,
     };
 
@@ -490,15 +556,24 @@ pub fn georadiusbymember(items: &[Resp], db: &Db) -> Resp {
             if let Value::ZSet(zset) = &entry.value {
                 match zset.members.get(&member) {
                     Some(score) => {
-                        let hash = crate::geo::GeoHashBits { bits: *score as u64, step: 26 };
+                        let hash = crate::geo::GeoHashBits {
+                            bits: *score as u64,
+                            step: 26,
+                        };
                         geohash_decode(hash)
-                    },
-                    None => return Resp::Error("ERR could not decode requested zset member".to_string()),
+                    }
+                    None => {
+                        return Resp::Error(
+                            "ERR could not decode requested zset member".to_string(),
+                        );
+                    }
                 }
             } else {
-                return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
+                return Resp::Error(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+                );
             }
-        },
+        }
         None => return Resp::Error("ERR could not decode requested zset member".to_string()),
     };
 
@@ -523,38 +598,48 @@ pub fn georadiusbymember(items: &[Resp], db: &Db) -> Resp {
                 "withhash" => opts.with_hash = true,
                 "count" => {
                     if i + 1 < items.len() {
-                        if let Resp::BulkString(Some(cb)) = &items[i+1] {
-                             opts.count = std::str::from_utf8(cb).ok().and_then(|s| s.parse().ok());
-                             i += 1;
+                        if let Resp::BulkString(Some(cb)) = &items[i + 1] {
+                            opts.count = std::str::from_utf8(cb).ok().and_then(|s| s.parse().ok());
+                            i += 1;
                         }
                     }
-                },
+                }
                 "asc" => opts.sort_asc = Some(true),
                 "desc" => opts.sort_asc = Some(false),
                 "store" => {
                     if i + 1 < items.len() {
-                        if let Resp::BulkString(Some(sb)) = &items[i+1] {
+                        if let Resp::BulkString(Some(sb)) = &items[i + 1] {
                             opts.store = Some(sb.clone());
                             i += 1;
                         }
                     }
-                },
+                }
                 "storedist" => {
                     if i + 1 < items.len() {
-                        if let Resp::BulkString(Some(sb)) = &items[i+1] {
+                        if let Resp::BulkString(Some(sb)) = &items[i + 1] {
                             opts.store = Some(sb.clone());
                             opts.store_dist = true;
                             i += 1;
                         }
                     }
-                },
-                _ => {},
+                }
+                _ => {}
             }
         }
         i += 1;
     }
 
-    geosearch_generic(db, &key, lat_center, lon_center, GeoShape::Circle { radius_m: radius * unit_scale }, unit_scale, opts)
+    geosearch_generic(
+        db,
+        &key,
+        lat_center,
+        lon_center,
+        GeoShape::Circle {
+            radius_m: radius * unit_scale,
+        },
+        unit_scale,
+        opts,
+    )
 }
 
 pub fn geosearch(items: &[Resp], db: &Db) -> Resp {
@@ -571,7 +656,7 @@ pub fn geosearch(items: &[Resp], db: &Db) -> Resp {
     let mut lon_center = 0.0;
     let mut shape = None;
     let mut unit_scale = 1.0;
-    
+
     let mut opts = GeoSearchOptions {
         with_coord: false,
         with_dist: false,
@@ -590,66 +675,129 @@ pub fn geosearch(items: &[Resp], db: &Db) -> Resp {
             match s.as_str() {
                 "frommember" => {
                     if i + 1 < items.len() {
-                        if let Resp::BulkString(Some(mb)) = &items[i+1] {
+                        if let Resp::BulkString(Some(mb)) = &items[i + 1] {
                             match db.get(&key) {
                                 Some(entry) => {
                                     if let Value::ZSet(zset) = &entry.value {
                                         match zset.members.get(mb) {
                                             Some(score) => {
-                                                let hash = crate::geo::GeoHashBits { bits: *score as u64, step: 26 };
+                                                let hash = crate::geo::GeoHashBits {
+                                                    bits: *score as u64,
+                                                    step: 26,
+                                                };
                                                 let (lat, lon) = geohash_decode(hash);
                                                 lat_center = lat;
                                                 lon_center = lon;
-                                            },
-                                            None => return Resp::Error("ERR could not decode requested zset member".to_string()),
+                                            }
+                                            None => {
+                                                return Resp::Error(
+                                                    "ERR could not decode requested zset member"
+                                                        .to_string(),
+                                                );
+                                            }
                                         }
                                     } else {
                                         return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
                                     }
-                                },
-                                None => return Resp::Error("ERR could not decode requested zset member".to_string()),
+                                }
+                                None => {
+                                    return Resp::Error(
+                                        "ERR could not decode requested zset member".to_string(),
+                                    );
+                                }
                             }
                             i += 1;
                         }
                     }
-                },
+                }
                 "fromlonlat" => {
                     if i + 2 < items.len() {
-                        lon_center = std::str::from_utf8(match &items[i+1] { Resp::BulkString(Some(b)) => b, _ => b"" }).unwrap_or("0").parse().unwrap_or(0.0);
-                        lat_center = std::str::from_utf8(match &items[i+2] { Resp::BulkString(Some(b)) => b, _ => b"" }).unwrap_or("0").parse().unwrap_or(0.0);
+                        lon_center = std::str::from_utf8(match &items[i + 1] {
+                            Resp::BulkString(Some(b)) => b,
+                            _ => b"",
+                        })
+                        .unwrap_or("0")
+                        .parse()
+                        .unwrap_or(0.0);
+                        lat_center = std::str::from_utf8(match &items[i + 2] {
+                            Resp::BulkString(Some(b)) => b,
+                            _ => b"",
+                        })
+                        .unwrap_or("0")
+                        .parse()
+                        .unwrap_or(0.0);
                         i += 2;
                     }
-                },
+                }
                 "byradius" => {
                     if i + 2 < items.len() {
-                        let radius: f64 = std::str::from_utf8(match &items[i+1] { Resp::BulkString(Some(b)) => b, _ => b"" }).unwrap_or("0").parse().unwrap_or(0.0);
-                        let unit = std::str::from_utf8(match &items[i+2] { Resp::BulkString(Some(b)) => b, _ => b"" }).unwrap_or("m").to_lowercase();
-                        unit_scale = match get_unit_scale(&unit) { Ok(s) => s, Err(e) => return Resp::Error(e) };
-                        shape = Some(GeoShape::Circle { radius_m: radius * unit_scale });
+                        let radius: f64 = std::str::from_utf8(match &items[i + 1] {
+                            Resp::BulkString(Some(b)) => b,
+                            _ => b"",
+                        })
+                        .unwrap_or("0")
+                        .parse()
+                        .unwrap_or(0.0);
+                        let unit = std::str::from_utf8(match &items[i + 2] {
+                            Resp::BulkString(Some(b)) => b,
+                            _ => b"",
+                        })
+                        .unwrap_or("m")
+                        .to_lowercase();
+                        unit_scale = match get_unit_scale(&unit) {
+                            Ok(s) => s,
+                            Err(e) => return Resp::Error(e),
+                        };
+                        shape = Some(GeoShape::Circle {
+                            radius_m: radius * unit_scale,
+                        });
                         i += 2;
                     }
-                },
+                }
                 "bybox" => {
                     if i + 3 < items.len() {
-                        let width: f64 = std::str::from_utf8(match &items[i+1] { Resp::BulkString(Some(b)) => b, _ => b"" }).unwrap_or("0").parse().unwrap_or(0.0);
-                        let height: f64 = std::str::from_utf8(match &items[i+2] { Resp::BulkString(Some(b)) => b, _ => b"" }).unwrap_or("0").parse().unwrap_or(0.0);
-                        let unit = std::str::from_utf8(match &items[i+3] { Resp::BulkString(Some(b)) => b, _ => b"" }).unwrap_or("m").to_lowercase();
-                        unit_scale = match get_unit_scale(&unit) { Ok(s) => s, Err(e) => return Resp::Error(e) };
-                        shape = Some(GeoShape::Box { width_m: width * unit_scale, height_m: height * unit_scale });
+                        let width: f64 = std::str::from_utf8(match &items[i + 1] {
+                            Resp::BulkString(Some(b)) => b,
+                            _ => b"",
+                        })
+                        .unwrap_or("0")
+                        .parse()
+                        .unwrap_or(0.0);
+                        let height: f64 = std::str::from_utf8(match &items[i + 2] {
+                            Resp::BulkString(Some(b)) => b,
+                            _ => b"",
+                        })
+                        .unwrap_or("0")
+                        .parse()
+                        .unwrap_or(0.0);
+                        let unit = std::str::from_utf8(match &items[i + 3] {
+                            Resp::BulkString(Some(b)) => b,
+                            _ => b"",
+                        })
+                        .unwrap_or("m")
+                        .to_lowercase();
+                        unit_scale = match get_unit_scale(&unit) {
+                            Ok(s) => s,
+                            Err(e) => return Resp::Error(e),
+                        };
+                        shape = Some(GeoShape::Box {
+                            width_m: width * unit_scale,
+                            height_m: height * unit_scale,
+                        });
                         i += 3;
                     }
-                },
+                }
                 "withcoord" => opts.with_coord = true,
                 "withdist" => opts.with_dist = true,
                 "withhash" => opts.with_hash = true,
                 "count" => {
                     if i + 1 < items.len() {
-                        if let Resp::BulkString(Some(cb)) = &items[i+1] {
-                             opts.count = std::str::from_utf8(cb).ok().and_then(|s| s.parse().ok());
-                             i += 1;
+                        if let Resp::BulkString(Some(cb)) = &items[i + 1] {
+                            opts.count = std::str::from_utf8(cb).ok().and_then(|s| s.parse().ok());
+                            i += 1;
                         }
                         if i + 1 < items.len() {
-                            if let Resp::BulkString(Some(ab)) = &items[i+1] {
+                            if let Resp::BulkString(Some(ab)) = &items[i + 1] {
                                 if std::str::from_utf8(ab).unwrap_or("").to_lowercase() == "any" {
                                     opts.any = true;
                                     i += 1;
@@ -657,10 +805,10 @@ pub fn geosearch(items: &[Resp], db: &Db) -> Resp {
                             }
                         }
                     }
-                },
+                }
                 "asc" => opts.sort_asc = Some(true),
                 "desc" => opts.sort_asc = Some(false),
-                _ => {},
+                _ => {}
             }
         }
         i += 1;
@@ -675,7 +823,9 @@ pub fn geosearch(items: &[Resp], db: &Db) -> Resp {
 
 pub fn geosearchstore(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 3 {
-        return Resp::Error("ERR wrong number of arguments for 'geosearchstore' command".to_string());
+        return Resp::Error(
+            "ERR wrong number of arguments for 'geosearchstore' command".to_string(),
+        );
     }
 
     let dest = match &items[1] {
@@ -692,7 +842,7 @@ pub fn geosearchstore(items: &[Resp], db: &Db) -> Resp {
     let mut lon_center = 0.0;
     let mut shape = None;
     let mut unit_scale = 1.0;
-    
+
     let mut opts = GeoSearchOptions {
         with_coord: false,
         with_dist: false,
@@ -711,63 +861,126 @@ pub fn geosearchstore(items: &[Resp], db: &Db) -> Resp {
             match s.as_str() {
                 "frommember" => {
                     if i + 1 < items.len() {
-                        if let Resp::BulkString(Some(mb)) = &items[i+1] {
+                        if let Resp::BulkString(Some(mb)) = &items[i + 1] {
                             match db.get(&key) {
                                 Some(entry) => {
                                     if let Value::ZSet(zset) = &entry.value {
                                         match zset.members.get(mb) {
                                             Some(score) => {
-                                                let hash = crate::geo::GeoHashBits { bits: *score as u64, step: 26 };
+                                                let hash = crate::geo::GeoHashBits {
+                                                    bits: *score as u64,
+                                                    step: 26,
+                                                };
                                                 let (lat, lon) = geohash_decode(hash);
                                                 lat_center = lat;
                                                 lon_center = lon;
-                                            },
-                                            None => return Resp::Error("ERR could not decode requested zset member".to_string()),
+                                            }
+                                            None => {
+                                                return Resp::Error(
+                                                    "ERR could not decode requested zset member"
+                                                        .to_string(),
+                                                );
+                                            }
                                         }
                                     } else {
                                         return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
                                     }
-                                },
-                                None => return Resp::Error("ERR could not decode requested zset member".to_string()),
+                                }
+                                None => {
+                                    return Resp::Error(
+                                        "ERR could not decode requested zset member".to_string(),
+                                    );
+                                }
                             }
                             i += 1;
                         }
                     }
-                },
+                }
                 "fromlonlat" => {
                     if i + 2 < items.len() {
-                        lon_center = std::str::from_utf8(match &items[i+1] { Resp::BulkString(Some(b)) => b, _ => b"" }).unwrap_or("0").parse().unwrap_or(0.0);
-                        lat_center = std::str::from_utf8(match &items[i+2] { Resp::BulkString(Some(b)) => b, _ => b"" }).unwrap_or("0").parse().unwrap_or(0.0);
+                        lon_center = std::str::from_utf8(match &items[i + 1] {
+                            Resp::BulkString(Some(b)) => b,
+                            _ => b"",
+                        })
+                        .unwrap_or("0")
+                        .parse()
+                        .unwrap_or(0.0);
+                        lat_center = std::str::from_utf8(match &items[i + 2] {
+                            Resp::BulkString(Some(b)) => b,
+                            _ => b"",
+                        })
+                        .unwrap_or("0")
+                        .parse()
+                        .unwrap_or(0.0);
                         i += 2;
                     }
-                },
+                }
                 "byradius" => {
                     if i + 2 < items.len() {
-                        let radius: f64 = std::str::from_utf8(match &items[i+1] { Resp::BulkString(Some(b)) => b, _ => b"" }).unwrap_or("0").parse().unwrap_or(0.0);
-                        let unit = std::str::from_utf8(match &items[i+2] { Resp::BulkString(Some(b)) => b, _ => b"" }).unwrap_or("m").to_lowercase();
-                        unit_scale = match get_unit_scale(&unit) { Ok(s) => s, Err(e) => return Resp::Error(e) };
-                        shape = Some(GeoShape::Circle { radius_m: radius * unit_scale });
+                        let radius: f64 = std::str::from_utf8(match &items[i + 1] {
+                            Resp::BulkString(Some(b)) => b,
+                            _ => b"",
+                        })
+                        .unwrap_or("0")
+                        .parse()
+                        .unwrap_or(0.0);
+                        let unit = std::str::from_utf8(match &items[i + 2] {
+                            Resp::BulkString(Some(b)) => b,
+                            _ => b"",
+                        })
+                        .unwrap_or("m")
+                        .to_lowercase();
+                        unit_scale = match get_unit_scale(&unit) {
+                            Ok(s) => s,
+                            Err(e) => return Resp::Error(e),
+                        };
+                        shape = Some(GeoShape::Circle {
+                            radius_m: radius * unit_scale,
+                        });
                         i += 2;
                     }
-                },
+                }
                 "bybox" => {
                     if i + 3 < items.len() {
-                        let width: f64 = std::str::from_utf8(match &items[i+1] { Resp::BulkString(Some(b)) => b, _ => b"" }).unwrap_or("0").parse().unwrap_or(0.0);
-                        let height: f64 = std::str::from_utf8(match &items[i+2] { Resp::BulkString(Some(b)) => b, _ => b"" }).unwrap_or("0").parse().unwrap_or(0.0);
-                        let unit = std::str::from_utf8(match &items[i+3] { Resp::BulkString(Some(b)) => b, _ => b"" }).unwrap_or("m").to_lowercase();
-                        unit_scale = match get_unit_scale(&unit) { Ok(s) => s, Err(e) => return Resp::Error(e) };
-                        shape = Some(GeoShape::Box { width_m: width * unit_scale, height_m: height * unit_scale });
+                        let width: f64 = std::str::from_utf8(match &items[i + 1] {
+                            Resp::BulkString(Some(b)) => b,
+                            _ => b"",
+                        })
+                        .unwrap_or("0")
+                        .parse()
+                        .unwrap_or(0.0);
+                        let height: f64 = std::str::from_utf8(match &items[i + 2] {
+                            Resp::BulkString(Some(b)) => b,
+                            _ => b"",
+                        })
+                        .unwrap_or("0")
+                        .parse()
+                        .unwrap_or(0.0);
+                        let unit = std::str::from_utf8(match &items[i + 3] {
+                            Resp::BulkString(Some(b)) => b,
+                            _ => b"",
+                        })
+                        .unwrap_or("m")
+                        .to_lowercase();
+                        unit_scale = match get_unit_scale(&unit) {
+                            Ok(s) => s,
+                            Err(e) => return Resp::Error(e),
+                        };
+                        shape = Some(GeoShape::Box {
+                            width_m: width * unit_scale,
+                            height_m: height * unit_scale,
+                        });
                         i += 3;
                     }
-                },
+                }
                 "count" => {
                     if i + 1 < items.len() {
-                        if let Resp::BulkString(Some(cb)) = &items[i+1] {
-                             opts.count = std::str::from_utf8(cb).ok().and_then(|s| s.parse().ok());
-                             i += 1;
+                        if let Resp::BulkString(Some(cb)) = &items[i + 1] {
+                            opts.count = std::str::from_utf8(cb).ok().and_then(|s| s.parse().ok());
+                            i += 1;
                         }
                         if i + 1 < items.len() {
-                            if let Resp::BulkString(Some(ab)) = &items[i+1] {
+                            if let Resp::BulkString(Some(ab)) = &items[i + 1] {
                                 if std::str::from_utf8(ab).unwrap_or("").to_lowercase() == "any" {
                                     opts.any = true;
                                     i += 1;
@@ -775,11 +988,11 @@ pub fn geosearchstore(items: &[Resp], db: &Db) -> Resp {
                             }
                         }
                     }
-                },
+                }
                 "asc" => opts.sort_asc = Some(true),
                 "desc" => opts.sort_asc = Some(false),
                 "storedist" => opts.store_dist = true,
-                _ => {},
+                _ => {}
             }
         }
         i += 1;

@@ -1,9 +1,9 @@
-use std::sync::{Arc, RwLock};
-use crate::db::Db;
+use crate::cmd::{ServerContext, process_frame, scripting};
 use crate::conf::Config;
-use crate::cmd::{scripting, ServerContext, process_frame};
+use crate::db::Db;
 use crate::resp::Resp;
 use bytes::Bytes;
+use std::sync::{Arc, RwLock};
 
 #[tokio::test]
 async fn test_exists() {
@@ -64,7 +64,7 @@ async fn test_exists() {
 
 #[tokio::test]
 async fn test_type() {
-     let server_ctx = crate::tests::helper::create_server_context();
+    let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // TYPE k1 -> none
@@ -131,9 +131,7 @@ async fn test_flushdb() {
     process_frame(req, &mut conn_ctx, &server_ctx).await;
 
     // FLUSHDB
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("FLUSHDB"))),
-    ]));
+    let req = Resp::Array(Some(vec![Resp::BulkString(Some(Bytes::from("FLUSHDB")))]));
     let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
 
@@ -184,9 +182,7 @@ async fn test_flushall() {
     process_frame(req, &mut conn_ctx, &server_ctx).await;
 
     // FLUSHALL
-    let req = Resp::Array(Some(vec![
-        Resp::BulkString(Some(Bytes::from("FLUSHALL"))),
-    ]));
+    let req = Resp::Array(Some(vec![Resp::BulkString(Some(Bytes::from("FLUSHALL")))]));
     let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
 
@@ -267,8 +263,12 @@ async fn test_expireat() {
     ]));
     process_frame(req, &mut conn_ctx, &server_ctx).await;
 
-    let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + 10;
-    
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 10;
+
     // EXPIREAT k1 timestamp
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("EXPIREAT"))),
@@ -295,7 +295,7 @@ async fn test_expireat() {
 
 #[tokio::test]
 async fn test_pexpireat() {
-     let server_ctx = crate::tests::helper::create_server_context();
+    let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // SET k1 v1
@@ -306,8 +306,12 @@ async fn test_pexpireat() {
     ]));
     process_frame(req, &mut conn_ctx, &server_ctx).await;
 
-    let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64 + 10000;
-    
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        + 10000;
+
     // PEXPIREAT k1 timestamp
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("PEXPIREAT"))),
@@ -334,7 +338,7 @@ async fn test_pexpireat() {
 
 #[tokio::test]
 async fn test_persist() {
-     let server_ctx = crate::tests::helper::create_server_context();
+    let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // SET k1 v1 EX 10

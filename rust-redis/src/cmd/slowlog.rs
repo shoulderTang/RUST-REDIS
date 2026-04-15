@@ -1,17 +1,25 @@
-use crate::resp::Resp;
 use super::ServerContext;
+use crate::resp::Resp;
 use bytes::Bytes;
 use std::sync::atomic::Ordering;
 
 pub async fn slowlog(items: &[Resp], server_ctx: &ServerContext) -> (Resp, Option<Resp>) {
     if items.len() < 2 {
-        return (Resp::Error("ERR wrong number of arguments for 'SLOWLOG' command".to_string()), None);
+        return (
+            Resp::Error("ERR wrong number of arguments for 'SLOWLOG' command".to_string()),
+            None,
+        );
     }
     let sub = match &items[1] {
         Resp::BulkString(Some(b)) | Resp::SimpleString(b) => {
             String::from_utf8_lossy(&b[..]).to_uppercase()
         }
-        _ => return (Resp::Error("ERR subcommand must be a string".to_string()), None),
+        _ => {
+            return (
+                Resp::Error("ERR subcommand must be a string".to_string()),
+                None,
+            );
+        }
     };
     match sub.as_str() {
         "GET" => {
@@ -57,6 +65,9 @@ pub async fn slowlog(items: &[Resp], server_ctx: &ServerContext) -> (Resp, Optio
             log.clear();
             (Resp::SimpleString(Bytes::from("OK")), None)
         }
-        _ => (Resp::Error("ERR unknown SLOWLOG subcommand".to_string()), None),
+        _ => (
+            Resp::Error("ERR unknown SLOWLOG subcommand".to_string()),
+            None,
+        ),
     }
 }

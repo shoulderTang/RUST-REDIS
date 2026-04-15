@@ -1,20 +1,20 @@
-use crate::cmd::{process_frame, ConnectionContext, ServerContext};
-use crate::resp::Resp;
+use crate::cmd::{ConnectionContext, ServerContext, process_frame};
 use crate::conf::Config;
+use crate::resp::Resp;
 use bytes::Bytes;
-use std::sync::Arc;
 use std::fs;
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_config_rewrite() {
     let mut server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-    
+
     // We need a temp config file
     let temp_file = "temp_redis.conf";
     // Ensure it doesn't exist
     let _ = std::fs::remove_file(temp_file);
-    
+
     // Create a dummy config with this file path
     let mut config = Config::default();
     config.config_file = Some(temp_file.to_string());
@@ -35,7 +35,7 @@ async fn test_config_rewrite() {
     let content = fs::read_to_string(temp_file).unwrap();
     assert!(content.contains("port 12345"));
     assert!(content.contains("bind 127.0.0.1"));
-    
+
     // Clean up
     let _ = std::fs::remove_file(temp_file);
 }

@@ -1,49 +1,49 @@
+use crate::acl::Acl;
 use crate::aof::AofWriter;
 use crate::cmd::scripting::ScriptManager;
 use crate::conf::Config;
 use crate::db::Db;
-use crate::acl::Acl;
 use crate::resp::{Resp, as_bytes, read_frame, write_frame};
-use std::sync::{Arc, RwLock, OnceLock};
+use dashmap::DashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::Ordering;
-use std::collections::{HashMap, VecDeque, HashSet};
-use tokio::sync::Mutex;
+use std::sync::{Arc, OnceLock, RwLock};
 use tokio::io::{AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpStream;
-use dashmap::DashMap;
+use tokio::sync::Mutex;
 use tracing::error;
 
+pub mod acl;
+pub mod asking;
+pub mod bitmap;
+pub mod client;
+pub mod cluster;
 pub mod command;
 pub mod config;
+pub mod dump;
+pub mod evict;
+pub mod geo;
 pub mod hash;
+pub mod hello;
+pub mod hll;
+pub mod info;
 pub mod key;
+pub mod latency;
 pub mod list;
-pub mod scripting;
+pub mod memory;
+pub mod monitor;
+pub mod notify;
+pub mod pubsub;
+pub mod replication;
+pub mod reset;
 pub mod save;
+pub mod scripting;
 pub mod set;
+pub mod slowlog;
+pub mod sort;
 pub mod stream;
 pub mod string;
 pub mod zset;
-pub mod hll;
-pub mod bitmap;
-pub mod geo;
-pub mod info;
-pub mod acl;
-pub mod pubsub;
-pub mod client;
-pub mod monitor;
-pub mod slowlog;
-pub mod dump;
-pub mod evict;
-pub mod sort;
-pub mod hello;
-pub mod reset;
-pub mod notify;
-pub mod memory;
-pub mod latency;
-pub mod replication;
-pub mod cluster;
-pub mod asking;
 
 #[derive(Debug, Clone)]
 pub struct AclLogEntry {
@@ -62,7 +62,6 @@ pub struct LatencyEvent {
     pub duration: u64,
 }
 
-
 fn unwatch_all_keys(conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) {
     for (db_idx, keys) in conn_ctx.watched_keys.iter() {
         for key in keys {
@@ -75,8 +74,10 @@ fn unwatch_all_keys(conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext
 }
 
 fn touch_watched_key(key: &[u8], db_idx: usize, server_ctx: &ServerContext) {
+    let map_key = (db_idx, key.to_vec());
+
     // 1. Transaction WATCH
-    if let Some(clients) = server_ctx.watched_clients.get(&(db_idx, key.to_vec())) {
+    if let Some(clients) = server_ctx.watched_clients.get(&map_key) {
         for client_id in clients.iter() {
             if let Some(dirty_flag) = server_ctx.client_watched_dirty.get(client_id) {
                 dirty_flag.store(true, Ordering::SeqCst);
@@ -85,31 +86,30 @@ fn touch_watched_key(key: &[u8], db_idx: usize, server_ctx: &ServerContext) {
     }
 
     // 2. Client Side Caching Tracking
-    let client_ids = if let Some(entry) = server_ctx.tracking_clients.get(&(db_idx, key.to_vec())) {
+    let client_ids = if let Some(entry) = server_ctx.tracking_clients.get(&map_key) {
         Some(entry.value().clone())
     } else {
         None
     };
 
     if let Some(ids) = client_ids {
-        let mut keys_to_invalidate = Vec::new();
-        keys_to_invalidate.push(Resp::BulkString(Some(bytes::Bytes::from(key.to_vec()))));
-        
         let invalidation_msg = Resp::Array(Some(vec![
-            Resp::BulkString(Some(bytes::Bytes::from("invalidate"))),
-            Resp::Array(Some(keys_to_invalidate)),
+            Resp::BulkString(Some(bytes::Bytes::from_static(b"invalidate"))),
+            Resp::Array(Some(vec![Resp::BulkString(Some(
+                bytes::Bytes::copy_from_slice(key),
+            ))])),
         ]));
-        
+
         for client_id in ids.iter() {
-             if let Some(client_info) = server_ctx.clients.get(client_id) {
-                 if let Some(sender) = &client_info.msg_sender {
-                     let _ = sender.try_send(invalidation_msg.clone());
-                 }
-             }
-         }
-         // Redis 6.0 tracking usually removes keys after invalidation (except BCAST mode)
-         // For simplicity we remove them here.
-         server_ctx.tracking_clients.remove(&(db_idx, key.to_vec()));
+            if let Some(client_info) = server_ctx.clients.get(client_id) {
+                if let Some(sender) = &client_info.msg_sender {
+                    let _ = sender.try_send(invalidation_msg.clone());
+                }
+            }
+        }
+        // Redis 6.0 tracking usually removes keys after invalidation (except BCAST mode)
+        // For simplicity we remove them here.
+        server_ctx.tracking_clients.remove(&map_key);
     }
 }
 
@@ -125,9 +125,16 @@ pub fn watch(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &Serv
     for item in items.iter().skip(1) {
         if let Some(key) = as_bytes(item) {
             let key_vec = key.to_vec();
-            let keys = conn_ctx.watched_keys.entry(conn_ctx.db_index).or_insert_with(HashSet::new);
+            let keys = conn_ctx
+                .watched_keys
+                .entry(conn_ctx.db_index)
+                .or_insert_with(HashSet::new);
             if keys.insert(key_vec.clone()) {
-                server_ctx.watched_clients.entry((conn_ctx.db_index, key_vec)).or_insert_with(HashSet::new).insert(conn_ctx.id);
+                server_ctx
+                    .watched_clients
+                    .entry((conn_ctx.db_index, key_vec))
+                    .or_insert_with(HashSet::new)
+                    .insert(conn_ctx.id);
             }
         }
     }
@@ -176,7 +183,12 @@ pub struct ConnectionContext {
 }
 
 impl ConnectionContext {
-    pub fn new(id: u64, client_fd: Option<RawFd>, msg_sender: Option<tokio::sync::mpsc::Sender<Resp>>, shutdown: Option<tokio::sync::watch::Receiver<bool>>) -> Self {
+    pub fn new(
+        id: u64,
+        client_fd: Option<RawFd>,
+        msg_sender: Option<tokio::sync::mpsc::Sender<Resp>>,
+        shutdown: Option<tokio::sync::watch::Receiver<bool>>,
+    ) -> Self {
         Self {
             id,
             client_fd,
@@ -232,11 +244,17 @@ pub struct ServerContext {
     pub aof: Option<AofWriter>,
     pub config: Arc<Config>,
     pub script_manager: Arc<ScriptManager>,
-    pub blocking_waiters: Arc<DashMap<(usize, Vec<u8>), VecDeque<tokio::sync::mpsc::Sender<(Vec<u8>, Vec<u8>)>>>>,
-    pub blocking_zset_waiters: Arc<DashMap<(usize, Vec<u8>), VecDeque<(tokio::sync::mpsc::Sender<(Vec<u8>, Vec<u8>, f64)>, bool)>>>,
+    pub blocking_waiters:
+        Arc<DashMap<(usize, Vec<u8>), VecDeque<tokio::sync::mpsc::Sender<(Vec<u8>, Vec<u8>)>>>>,
+    pub blocking_zset_waiters: Arc<
+        DashMap<
+            (usize, Vec<u8>),
+            VecDeque<(tokio::sync::mpsc::Sender<(Vec<u8>, Vec<u8>, f64)>, bool)>,
+        >,
+    >,
     pub pubsub_channels: Arc<DashMap<String, DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>>,
     pub pubsub_patterns: Arc<DashMap<String, DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>>,
-    pub run_id: Arc<RwLock<String>>, // Primary Replication ID
+    pub run_id: Arc<RwLock<String>>,  // Primary Replication ID
     pub replid2: Arc<RwLock<String>>, // Secondary Replication ID
     pub second_repl_offset: Arc<std::sync::atomic::AtomicI64>,
     pub start_time: std::time::Instant,
@@ -306,9 +324,6 @@ pub struct SlowLogEntry {
     pub client_addr: String,
     pub client_name: String,
 }
-
-
-
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub(crate) enum Command {
@@ -517,91 +532,204 @@ pub enum ReplicationRole {
     Slave,
 }
 
-pub(crate) fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
+pub(crate) fn get_command_keys<'a>(cmd: Command, items: &'a [Resp]) -> Vec<&'a [u8]> {
     let mut keys = Vec::new();
     match cmd {
-        Command::Set | Command::SetNx | Command::SetEx | Command::PSetEx | Command::GetSet | Command::Get | Command::GetDel | Command::GetEx | Command::GetRange | Command::SetRange | Command::Incr | Command::Decr | Command::IncrBy | Command::IncrByFloat | Command::DecrBy |
-        Command::Append | Command::StrLen | Command::Lpush | Command::Rpush | Command::Lpop | Command::Rpop | Command::Blpop | Command::Brpop |
-        Command::Llen | Command::Lrange | Command::Linsert | Command::Lrem | Command::Lpos | Command::Ltrim | Command::Hset | Command::HsetNx | Command::HincrBy | Command::HincrByFloat | Command::Hget | Command::Hgetall | Command::Hmset | Command::Hdel | Command::HExists | Command::Hlen | Command::Hkeys | Command::Hvals | Command::HstrLen | Command::HRandField | Command::HScan | Command::Sadd | Command::Srem | Command::Sismember |
-        Command::Smembers | Command::Scard | Command::SPop | Command::SRandMember | Command::SScan | Command::Zadd | Command::ZIncrBy | Command::Zrem | Command::Zscore | Command::Zcard |
-        Command::Zrank | Command::ZRevRank | Command::Zrange | Command::ZRevRange | Command::Zrangebyscore | Command::Zrangebylex | Command::Zcount | Command::Zlexcount | Command::Zpopmin | Command::Bzpopmin | Command::Zpopmax | Command::Bzpopmax | Command::ZScan | Command::ZRandMember | Command::Zmscore | Command::Pfadd | Command::Pfcount | Command::GeoAdd | Command::GeoDist |
-        Command::GeoHash | Command::GeoPos | Command::GeoRadius | Command::GeoRadiusByMember | Command::GeoSearch | Command::GeoSearchStore | Command::Expire | Command::PExpire | Command::ExpireAt | Command::PExpireAt |
-        Command::Ttl | Command::PTtl | Command::Type | Command::Persist | Command::Move | Command::Xadd | Command::Xlen | Command::Xrange | Command::Xrevrange | Command::Xdel | Command::Xtrim | Command::Xinfo | Command::Xpending | Command::Xclaim | Command::Xautoclaim | Command::SetBit | Command::GetBit | Command::BitCount | Command::BitPos | Command::BitField | Command::Dump | Command::Restore | Command::Sort | Command::SortRo | Command::SMismember => {
-             if items.len() > 1 {
-                 if let Some(key) = as_bytes(&items[1]) {
-                     keys.push(key.to_vec());
-                 }
-             }
+        Command::Set
+        | Command::SetNx
+        | Command::SetEx
+        | Command::PSetEx
+        | Command::GetSet
+        | Command::Get
+        | Command::GetDel
+        | Command::GetEx
+        | Command::GetRange
+        | Command::SetRange
+        | Command::Incr
+        | Command::Decr
+        | Command::IncrBy
+        | Command::IncrByFloat
+        | Command::DecrBy
+        | Command::Append
+        | Command::StrLen
+        | Command::Lpush
+        | Command::Rpush
+        | Command::Lpop
+        | Command::Rpop
+        | Command::Blpop
+        | Command::Brpop
+        | Command::Llen
+        | Command::Lrange
+        | Command::Linsert
+        | Command::Lrem
+        | Command::Lpos
+        | Command::Ltrim
+        | Command::Hset
+        | Command::HsetNx
+        | Command::HincrBy
+        | Command::HincrByFloat
+        | Command::Hget
+        | Command::Hgetall
+        | Command::Hmset
+        | Command::Hdel
+        | Command::HExists
+        | Command::Hlen
+        | Command::Hkeys
+        | Command::Hvals
+        | Command::HstrLen
+        | Command::HRandField
+        | Command::HScan
+        | Command::Sadd
+        | Command::Srem
+        | Command::Sismember
+        | Command::Smembers
+        | Command::Scard
+        | Command::SPop
+        | Command::SRandMember
+        | Command::SScan
+        | Command::Zadd
+        | Command::ZIncrBy
+        | Command::Zrem
+        | Command::Zscore
+        | Command::Zcard
+        | Command::Zrank
+        | Command::ZRevRank
+        | Command::Zrange
+        | Command::ZRevRange
+        | Command::Zrangebyscore
+        | Command::Zrangebylex
+        | Command::Zcount
+        | Command::Zlexcount
+        | Command::Zpopmin
+        | Command::Bzpopmin
+        | Command::Zpopmax
+        | Command::Bzpopmax
+        | Command::ZScan
+        | Command::ZRandMember
+        | Command::Zmscore
+        | Command::Pfadd
+        | Command::Pfcount
+        | Command::GeoAdd
+        | Command::GeoDist
+        | Command::GeoHash
+        | Command::GeoPos
+        | Command::GeoRadius
+        | Command::GeoRadiusByMember
+        | Command::GeoSearch
+        | Command::GeoSearchStore
+        | Command::Expire
+        | Command::PExpire
+        | Command::ExpireAt
+        | Command::PExpireAt
+        | Command::Ttl
+        | Command::PTtl
+        | Command::Type
+        | Command::Persist
+        | Command::Move
+        | Command::Xadd
+        | Command::Xlen
+        | Command::Xrange
+        | Command::Xrevrange
+        | Command::Xdel
+        | Command::Xtrim
+        | Command::Xinfo
+        | Command::Xpending
+        | Command::Xclaim
+        | Command::Xautoclaim
+        | Command::SetBit
+        | Command::GetBit
+        | Command::BitCount
+        | Command::BitPos
+        | Command::BitField
+        | Command::Dump
+        | Command::Restore
+        | Command::Sort
+        | Command::SortRo
+        | Command::SMismember => {
+            if items.len() > 1 {
+                if let Some(key) = as_bytes(&items[1]) {
+                    keys.push(key);
+                }
+            }
         }
         Command::BitOp => {
             for item in items.iter().skip(2) {
                 if let Some(key) = as_bytes(item) {
-                    keys.push(key.to_vec());
+                    keys.push(key);
                 }
             }
         }
         Command::Rename | Command::RenameNx | Command::SMove | Command::Copy => {
             if items.len() > 2 {
                 if let Some(key) = as_bytes(&items[1]) {
-                    keys.push(key.to_vec());
+                    keys.push(key);
                 }
                 if let Some(key) = as_bytes(&items[2]) {
-                    keys.push(key.to_vec());
+                    keys.push(key);
                 }
             }
         }
         Command::Object => {
             if items.len() > 2 {
                 if let Some(key) = as_bytes(&items[2]) {
-                    keys.push(key.to_vec());
+                    keys.push(key);
                 }
             }
         }
         Command::Mset | Command::MsetNx => {
-             for i in (1..items.len()).step_by(2) {
-                 if let Some(key) = as_bytes(&items[i]) {
-                     keys.push(key.to_vec());
-                 }
-             }
+            for i in (1..items.len()).step_by(2) {
+                if let Some(key) = as_bytes(&items[i]) {
+                    keys.push(key);
+                }
+            }
         }
         Command::Exists | Command::Touch => {
-             for i in 1..items.len() {
-                 if let Some(key) = as_bytes(&items[i]) {
-                     keys.push(key.to_vec());
-                 }
-             }
+            for i in 1..items.len() {
+                if let Some(key) = as_bytes(&items[i]) {
+                    keys.push(key);
+                }
+            }
         }
-        Command::Mget | Command::Del | Command::Unlink | Command::Pfmerge | Command::SInter | Command::SInterStore | Command::SUnion | Command::SDiff | Command::SDiffStore | Command::Watch => {
-             for i in 1..items.len() {
-                 if let Some(key) = as_bytes(&items[i]) {
-                     keys.push(key.to_vec());
-                 }
-             }
+        Command::Mget
+        | Command::Del
+        | Command::Unlink
+        | Command::Pfmerge
+        | Command::SInter
+        | Command::SInterStore
+        | Command::SUnion
+        | Command::SDiff
+        | Command::SDiffStore
+        | Command::Watch => {
+            for i in 1..items.len() {
+                if let Some(key) = as_bytes(&items[i]) {
+                    keys.push(key);
+                }
+            }
         }
         Command::Eval | Command::EvalSha => {
-             if items.len() > 2 {
-                 if let Some(numkeys_bytes) = as_bytes(&items[2]) {
-                     if let Ok(numkeys_str) = std::str::from_utf8(&numkeys_bytes) {
-                         if let Ok(numkeys) = numkeys_str.parse::<usize>() {
-                             for i in 0..numkeys {
-                                 if 3 + i < items.len() {
-                                     if let Some(key) = as_bytes(&items[3+i]) {
-                                         keys.push(key.to_vec());
-                                     }
-                                 }
-                             }
-                         }
-                     }
-                 }
-             }
+            if items.len() > 2 {
+                if let Some(numkeys_bytes) = as_bytes(&items[2]) {
+                    if let Ok(numkeys_str) = std::str::from_utf8(&numkeys_bytes) {
+                        if let Ok(numkeys) = numkeys_str.parse::<usize>() {
+                            for i in 0..numkeys {
+                                if 3 + i < items.len() {
+                                    if let Some(key) = as_bytes(&items[3 + i]) {
+                                        keys.push(key);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         Command::Blmove | Command::Lmove => {
             if items.len() > 2 {
                 if let Some(key) = as_bytes(&items[1]) {
-                    keys.push(key.to_vec());
+                    keys.push(key);
                 }
                 if let Some(key) = as_bytes(&items[2]) {
-                    keys.push(key.to_vec());
+                    keys.push(key);
                 }
             }
         }
@@ -612,8 +740,8 @@ pub(crate) fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
                         if let Ok(numkeys) = numkeys_str.parse::<usize>() {
                             for i in 0..numkeys {
                                 if 2 + i < items.len() {
-                                    if let Some(key) = as_bytes(&items[2+i]) {
-                                        keys.push(key.to_vec());
+                                    if let Some(key) = as_bytes(&items[2 + i]) {
+                                        keys.push(key);
                                     }
                                 }
                             }
@@ -625,15 +753,15 @@ pub(crate) fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
         Command::Zunionstore => {
             if items.len() > 2 {
                 if let Some(dest) = as_bytes(&items[1]) {
-                    keys.push(dest.to_vec());
+                    keys.push(dest);
                 }
                 if let Some(numkeys_bytes) = as_bytes(&items[2]) {
                     if let Ok(numkeys_str) = std::str::from_utf8(&numkeys_bytes) {
                         if let Ok(numkeys) = numkeys_str.parse::<usize>() {
                             for i in 0..numkeys {
                                 if 3 + i < items.len() {
-                                    if let Some(key) = as_bytes(&items[3+i]) {
-                                        keys.push(key.to_vec());
+                                    if let Some(key) = as_bytes(&items[3 + i]) {
+                                        keys.push(key);
                                     }
                                 }
                             }
@@ -649,8 +777,8 @@ pub(crate) fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
                         if let Ok(numkeys) = numkeys_str.parse::<usize>() {
                             for i in 0..numkeys {
                                 if 2 + i < items.len() {
-                                    if let Some(key) = as_bytes(&items[2+i]) {
-                                        keys.push(key.to_vec());
+                                    if let Some(key) = as_bytes(&items[2 + i]) {
+                                        keys.push(key);
                                     }
                                 }
                             }
@@ -662,15 +790,15 @@ pub(crate) fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
         Command::Zinterstore => {
             if items.len() > 2 {
                 if let Some(dest) = as_bytes(&items[1]) {
-                    keys.push(dest.to_vec());
+                    keys.push(dest);
                 }
                 if let Some(numkeys_bytes) = as_bytes(&items[2]) {
                     if let Ok(numkeys_str) = std::str::from_utf8(&numkeys_bytes) {
                         if let Ok(numkeys) = numkeys_str.parse::<usize>() {
                             for i in 0..numkeys {
                                 if 3 + i < items.len() {
-                                    if let Some(key) = as_bytes(&items[3+i]) {
-                                        keys.push(key.to_vec());
+                                    if let Some(key) = as_bytes(&items[3 + i]) {
+                                        keys.push(key);
                                     }
                                 }
                             }
@@ -686,8 +814,8 @@ pub(crate) fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
                         if let Ok(numkeys) = numkeys_str.parse::<usize>() {
                             for i in 0..numkeys {
                                 if 2 + i < items.len() {
-                                    if let Some(key) = as_bytes(&items[2+i]) {
-                                        keys.push(key.to_vec());
+                                    if let Some(key) = as_bytes(&items[2 + i]) {
+                                        keys.push(key);
                                     }
                                 }
                             }
@@ -699,15 +827,15 @@ pub(crate) fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
         Command::Zdiffstore => {
             if items.len() > 2 {
                 if let Some(dest) = as_bytes(&items[1]) {
-                    keys.push(dest.to_vec());
+                    keys.push(dest);
                 }
                 if let Some(numkeys_bytes) = as_bytes(&items[2]) {
                     if let Ok(numkeys_str) = std::str::from_utf8(&numkeys_bytes) {
                         if let Ok(numkeys) = numkeys_str.parse::<usize>() {
                             for i in 0..numkeys {
                                 if 3 + i < items.len() {
-                                    if let Some(key) = as_bytes(&items[3+i]) {
-                                        keys.push(key.to_vec());
+                                    if let Some(key) = as_bytes(&items[3 + i]) {
+                                        keys.push(key);
                                     }
                                 }
                             }
@@ -717,28 +845,28 @@ pub(crate) fn get_command_keys(cmd: Command, items: &[Resp]) -> Vec<Vec<u8>> {
             }
         }
         Command::StrAlgo => {
-             for i in 2..items.len() {
-                 if let Some(arg) = as_bytes(&items[i]) {
-                     if arg.eq_ignore_ascii_case(b"KEYS") {
-                         if i + 2 < items.len() {
-                             if let Some(key) = as_bytes(&items[i+1]) {
-                                 keys.push(key.to_vec());
-                             }
-                             if let Some(key) = as_bytes(&items[i+2]) {
-                                 keys.push(key.to_vec());
-                             }
-                         }
-                         break;
-                     }
-                 }
-             }
+            for i in 2..items.len() {
+                if let Some(arg) = as_bytes(&items[i]) {
+                    if arg.eq_ignore_ascii_case(b"KEYS") {
+                        if i + 2 < items.len() {
+                            if let Some(key) = as_bytes(&items[i + 1]) {
+                                keys.push(key);
+                            }
+                            if let Some(key) = as_bytes(&items[i + 2]) {
+                                keys.push(key);
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
         }
         Command::Memory => {
             if items.len() >= 3 {
                 if let Some(sub) = as_bytes(&items[1]) {
                     if sub.eq_ignore_ascii_case(b"USAGE") {
                         if let Some(key) = as_bytes(&items[2]) {
-                            keys.push(key.to_vec());
+                            keys.push(key);
                         }
                     }
                 }
@@ -768,30 +896,33 @@ pub async fn process_frame(
                 let cmd_name = command_name(cmd_raw);
                 // Cache once per command: avoids 3× RwLock acquisitions and 5× utf8+string checks
                 let role = *server_ctx.replication_role.read().unwrap();
-                let is_write = std::str::from_utf8(cmd_raw)
-                    .map_or(false, |s| command::is_write_command(s));
+                let is_write =
+                    std::str::from_utf8(cmd_raw).map_or(false, |s| command::is_write_command(s));
 
                 // Authentication Check
                 if server_ctx.config.requirepass.is_some() && !conn_ctx.authenticated {
-                     if let Command::Auth = cmd_name {
-                         // allowed
-                     } else {
+                    if let Command::Auth = cmd_name {
+                        // allowed
+                    } else {
                         return (Resp::StaticError("NOAUTH Authentication required."), None);
-                     }
+                    }
                 }
 
                 // ACL Check
                 if let Err(e) = check_access(cmd_name, cmd_raw, &items, conn_ctx, server_ctx) {
                     // Record ACL log
-                    acl::record_acl_log(server_ctx, AclLogEntry {
-                        count: 1,
-                        reason: "command not allowed".to_string(),
-                        context: "toplevel".to_string(),
-                        object: String::from_utf8_lossy(cmd_raw).to_string(),
-                        username: conn_ctx.current_username.clone(),
-                        age: 0,
-                        client_id: conn_ctx.id,
-                    });
+                    acl::record_acl_log(
+                        server_ctx,
+                        AclLogEntry {
+                            count: 1,
+                            reason: "command not allowed".to_string(),
+                            context: "toplevel".to_string(),
+                            object: String::from_utf8_lossy(cmd_raw).to_string(),
+                            username: conn_ctx.current_username.clone(),
+                            age: 0,
+                            client_id: conn_ctx.id,
+                        },
+                    );
                     (e, None, Some(cmd_name), Some(items))
                 } else if server_ctx.replica_read_only.load(Ordering::Relaxed)
                     && role == ReplicationRole::Slave
@@ -811,7 +942,9 @@ pub async fn process_frame(
                         let min_replicas = server_ctx.min_replicas_to_write.load(Ordering::Relaxed);
                         let max_lag = server_ctx.min_replicas_max_lag.load(Ordering::Relaxed);
                         let now = crate::clock::now_secs();
-                        let healthy_replicas = server_ctx.replica_ack_time.iter()
+                        let healthy_replicas = server_ctx
+                            .replica_ack_time
+                            .iter()
                             .filter(|r| now.saturating_sub(*r.value()) <= max_lag)
                             .count();
                         healthy_replicas < min_replicas
@@ -820,11 +953,16 @@ pub async fn process_frame(
                     let min_replicas = server_ctx.min_replicas_to_write.load(Ordering::Relaxed);
                     let max_lag = server_ctx.min_replicas_max_lag.load(Ordering::Relaxed);
                     let now = crate::clock::now_secs();
-                    let healthy_replicas = server_ctx.replica_ack_time.iter()
+                    let healthy_replicas = server_ctx
+                        .replica_ack_time
+                        .iter()
                         .filter(|r| now.saturating_sub(*r.value()) <= max_lag)
                         .count();
                     (
-                        Resp::Error(format!("NOREPLICAS Not enough good replicas to write. {} < {}", healthy_replicas, min_replicas)),
+                        Resp::Error(format!(
+                            "NOREPLICAS Not enough good replicas to write. {} < {}",
+                            healthy_replicas, min_replicas
+                        )),
                         None,
                         Some(cmd_name),
                         Some(items),
@@ -836,17 +974,23 @@ pub async fn process_frame(
                         == crate::conf::EvictionPolicy::NoEviction
                 {
                     (
-                        Resp::StaticError("OOM command not allowed when used memory > 'maxmemory'."),
+                        Resp::StaticError(
+                            "OOM command not allowed when used memory > 'maxmemory'.",
+                        ),
                         None,
                         Some(cmd_name),
                         Some(items),
                     )
-                } else if server_ctx.stop_writes_on_bgsave_error.load(Ordering::Relaxed)
+                } else if server_ctx
+                    .stop_writes_on_bgsave_error
+                    .load(Ordering::Relaxed)
                     && !server_ctx.last_bgsave_ok.load(Ordering::Relaxed)
                     && is_write
                 {
                     (
-                        Resp::StaticError("MISCONF Redis is configured to report errors after a last background save failed. Writing commands are disabled."),
+                        Resp::StaticError(
+                            "MISCONF Redis is configured to report errors after a last background save failed. Writing commands are disabled.",
+                        ),
                         None,
                         Some(cmd_name),
                         Some(items),
@@ -861,9 +1005,11 @@ pub async fn process_frame(
 
                     // Monitor broadcasting
                     if !server_ctx.monitors.is_empty() {
-                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default();
                         let timestamp = format!("{}.{:06}", now.as_secs(), now.subsec_micros());
-                        
+
                         let client_addr = if conn_ctx.is_lua {
                             String::from("lua")
                         } else if let Some(ci) = server_ctx.clients.get(&conn_ctx.id) {
@@ -871,35 +1017,39 @@ pub async fn process_frame(
                         } else {
                             String::from("unknown")
                         };
-                        
-                        let mut cmd_str = format!("{} [{} {}]", timestamp, conn_ctx.db_index, client_addr);
-                        
+
+                        let mut cmd_str =
+                            format!("{} [{} {}]", timestamp, conn_ctx.db_index, client_addr);
+
                         for item in items.iter() {
                             match item {
-                                 Resp::BulkString(Some(b)) | Resp::SimpleString(b) => {
-                                     let s = String::from_utf8_lossy(&b[..]);
-                                     cmd_str.push_str(&format!(" \"{}\"", s));
-                                 }
-                                 Resp::Integer(i) => {
-                                      cmd_str.push_str(&format!(" \"{}\"", i));
-                                 }
-                                 _ => {}
+                                Resp::BulkString(Some(b)) | Resp::SimpleString(b) => {
+                                    let s = String::from_utf8_lossy(&b[..]);
+                                    cmd_str.push_str(&format!(" \"{}\"", s));
+                                }
+                                Resp::Integer(i) => {
+                                    cmd_str.push_str(&format!(" \"{}\"", i));
+                                }
+                                _ => {}
                             }
                         }
-                        
+
                         for m in server_ctx.monitors.iter() {
-                            let _ = m.value().try_send(Resp::SimpleString(bytes::Bytes::from(cmd_str.clone())));
+                            let _ = m
+                                .value()
+                                .try_send(Resp::SimpleString(bytes::Bytes::from(cmd_str.clone())));
                         }
                     }
 
                     let start = std::time::Instant::now();
                     let (res, log) = dispatch_command(cmd_name, &items, conn_ctx, server_ctx).await;
                     let elapsed_us = start.elapsed().as_micros() as i64;
-                    
+
                     // Record latency
-                    if elapsed_us > 1000 { // > 1ms
-                         let cmd_str = String::from_utf8_lossy(cmd_raw).to_lowercase();
-                         latency::record_latency(server_ctx, &cmd_str, (elapsed_us / 1000) as u64);
+                    if elapsed_us > 1000 {
+                        // > 1ms
+                        let cmd_str = String::from_utf8_lossy(cmd_raw).to_lowercase();
+                        latency::record_latency(server_ctx, &cmd_str, (elapsed_us / 1000) as u64);
                     }
 
                     // Handle client tracking
@@ -908,7 +1058,11 @@ pub async fn process_frame(
                             if !command::is_write_command(s) {
                                 let keys = get_command_keys(cmd_name, &items);
                                 for key in keys {
-                                    server_ctx.tracking_clients.entry((conn_ctx.db_index, key)).or_insert_with(HashSet::new).insert(conn_ctx.id);
+                                    server_ctx
+                                        .tracking_clients
+                                        .entry((conn_ctx.db_index, key.to_vec()))
+                                        .or_insert_with(HashSet::new)
+                                        .insert(conn_ctx.id);
                                 }
                             }
                         }
@@ -916,7 +1070,8 @@ pub async fn process_frame(
 
                     // Check if this was a write command and invalidate watched keys
                     // Only trigger if the command was NOT queued
-                    let is_queued = matches!(res, Resp::SimpleString(ref s) if s.as_ref() == b"QUEUED");
+                    let is_queued =
+                        matches!(res, Resp::SimpleString(ref s) if s.as_ref() == b"QUEUED");
                     let is_error = matches!(res, Resp::Error(_) | Resp::StaticError(_));
                     if !is_queued && !is_error {
                         if let Ok(s) = std::str::from_utf8(cmd_raw) {
@@ -930,19 +1085,30 @@ pub async fn process_frame(
 
                                 let keys = get_command_keys(cmd_name, &items);
                                 for key in keys {
-                                    touch_watched_key(&key, conn_ctx.db_index, server_ctx);
-                                    
+                                    touch_watched_key(key, conn_ctx.db_index, server_ctx);
+
                                     // Trigger keyspace notification
                                     let event = s.to_lowercase();
                                     let flags = notify::get_notify_flags_for_command(cmd_name);
-                                    notify::notify_keyspace_event(server_ctx, flags, &event, &key, conn_ctx.db_index).await;
+                                    notify::notify_keyspace_event(
+                                        server_ctx,
+                                        flags,
+                                        &event,
+                                        key,
+                                        conn_ctx.db_index,
+                                    )
+                                    .await;
                                 }
                             }
                         }
                     }
 
-                    if cmd_name != Command::Slowlog && elapsed_us >= server_ctx.slowlog_threshold_us.load(Ordering::Relaxed) {
-                        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+                    if cmd_name != Command::Slowlog
+                        && elapsed_us >= server_ctx.slowlog_threshold_us.load(Ordering::Relaxed)
+                    {
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default();
                         let timestamp = now.as_secs() as i64;
                         let mut args = Vec::new();
                         for item in items.iter() {
@@ -953,11 +1119,12 @@ pub async fn process_frame(
                                 _ => {}
                             }
                         }
-                        let (client_addr, client_name) = if let Some(ci) = server_ctx.clients.get(&conn_ctx.id) {
-                            (ci.addr.clone(), ci.name.clone())
-                        } else {
-                            (String::from("unknown"), String::new())
-                        };
+                        let (client_addr, client_name) =
+                            if let Some(ci) = server_ctx.clients.get(&conn_ctx.id) {
+                                (ci.addr.clone(), ci.name.clone())
+                            } else {
+                                (String::from("unknown"), String::new())
+                            };
                         let id = server_ctx.slowlog_next_id.fetch_add(1, Ordering::Relaxed);
                         let entry = SlowLogEntry {
                             id,
@@ -978,7 +1145,12 @@ pub async fn process_frame(
                 }
             }
         }
-        _ => (Resp::StaticError("ERR protocol error: expected array"), None, None, None),
+        _ => (
+            Resp::StaticError("ERR protocol error: expected array"),
+            None,
+            None,
+            None,
+        ),
     };
 
     let cmd_to_log = if let Some(l) = custom_log {
@@ -986,14 +1158,13 @@ pub async fn process_frame(
     } else if let Some(cmd_name) = cmd_name_opt {
         if let Some(items) = original_items.as_ref() {
             if items.is_empty() {
-            None
-        } else if let Some(b) = as_bytes(&items[0]) {
-            if let Ok(s) = std::str::from_utf8(&b) {
-                if command::is_write_command(s) && !conn_ctx.in_multi {
-                    match cmd_name {
-                        Command::Multi | Command::Exec | Command::Discard => None,
-                        Command::Blpop => {
-                            match &res {
+                None
+            } else if let Some(b) = as_bytes(&items[0]) {
+                if let Ok(s) = std::str::from_utf8(&b) {
+                    if command::is_write_command(s) && !conn_ctx.in_multi {
+                        match cmd_name {
+                            Command::Multi | Command::Exec | Command::Discard => None,
+                            Command::Blpop => match &res {
                                 Resp::Array(Some(arr)) if arr.len() >= 2 => {
                                     let key_bytes = match &arr[0] {
                                         Resp::BulkString(Some(k)) => k.clone(),
@@ -1002,7 +1173,9 @@ pub async fn process_frame(
                                     };
                                     if !key_bytes.is_empty() {
                                         Some(Resp::Array(Some(vec![
-                                            Resp::BulkString(Some(bytes::Bytes::from_static(b"LPOP"))),
+                                            Resp::BulkString(Some(bytes::Bytes::from_static(
+                                                b"LPOP",
+                                            ))),
                                             Resp::BulkString(Some(key_bytes)),
                                         ])))
                                     } else {
@@ -1010,10 +1183,8 @@ pub async fn process_frame(
                                     }
                                 }
                                 _ => None,
-                            }
-                        }
-                        Command::Brpop => {
-                            match &res {
+                            },
+                            Command::Brpop => match &res {
                                 Resp::Array(Some(arr)) if arr.len() >= 2 => {
                                     let key_bytes = match &arr[0] {
                                         Resp::BulkString(Some(k)) => k.clone(),
@@ -1022,7 +1193,9 @@ pub async fn process_frame(
                                     };
                                     if !key_bytes.is_empty() {
                                         Some(Resp::Array(Some(vec![
-                                            Resp::BulkString(Some(bytes::Bytes::from_static(b"RPOP"))),
+                                            Resp::BulkString(Some(bytes::Bytes::from_static(
+                                                b"RPOP",
+                                            ))),
                                             Resp::BulkString(Some(key_bytes)),
                                         ])))
                                     } else {
@@ -1030,75 +1203,79 @@ pub async fn process_frame(
                                     }
                                 }
                                 _ => None,
-                            }
-                        }
-                        Command::Blmove => {
-                            // Rewrite to LMOVE with the same arguments
-                            if !items.is_empty() {
-                                let mut new_items = items.clone();
-                                // Replace command name
-                                new_items[0] = Resp::BulkString(Some(bytes::Bytes::from_static(b"LMOVE")));
-                                Some(Resp::Array(Some(new_items)))
-                            } else {
-                                None
-                            }
-                        }
-                        Command::Bzpopmin => {
-                            // Rewrite to ZPOPMIN key
-                            match &res {
-                                Resp::Array(Some(arr)) if arr.len() >= 2 => {
-                                    let key_bytes = match &arr[0] {
-                                        Resp::BulkString(Some(k)) => k.clone(),
-                                        Resp::SimpleString(k) => k.clone(),
-                                        _ => bytes::Bytes::new(),
-                                    };
-                                    if !key_bytes.is_empty() {
-                                        Some(Resp::Array(Some(vec![
-                                            Resp::BulkString(Some(bytes::Bytes::from_static(b"ZPOPMIN"))),
-                                            Resp::BulkString(Some(key_bytes)),
-                                        ])))
-                                    } else {
-                                        None
-                                    }
+                            },
+                            Command::Blmove => {
+                                // Rewrite to LMOVE with the same arguments
+                                if !items.is_empty() {
+                                    let mut new_items = items.clone();
+                                    // Replace command name
+                                    new_items[0] =
+                                        Resp::BulkString(Some(bytes::Bytes::from_static(b"LMOVE")));
+                                    Some(Resp::Array(Some(new_items)))
+                                } else {
+                                    None
                                 }
-                                _ => None,
                             }
-                        }
-                        Command::Bzpopmax => {
-                            // Rewrite to ZPOPMAX key
-                            match &res {
-                                Resp::Array(Some(arr)) if arr.len() >= 2 => {
-                                    let key_bytes = match &arr[0] {
-                                        Resp::BulkString(Some(k)) => k.clone(),
-                                        Resp::SimpleString(k) => k.clone(),
-                                        _ => bytes::Bytes::new(),
-                                    };
-                                    if !key_bytes.is_empty() {
-                                        Some(Resp::Array(Some(vec![
-                                            Resp::BulkString(Some(bytes::Bytes::from_static(b"ZPOPMAX"))),
-                                            Resp::BulkString(Some(key_bytes)),
-                                        ])))
-                                    } else {
-                                        None
+                            Command::Bzpopmin => {
+                                // Rewrite to ZPOPMIN key
+                                match &res {
+                                    Resp::Array(Some(arr)) if arr.len() >= 2 => {
+                                        let key_bytes = match &arr[0] {
+                                            Resp::BulkString(Some(k)) => k.clone(),
+                                            Resp::SimpleString(k) => k.clone(),
+                                            _ => bytes::Bytes::new(),
+                                        };
+                                        if !key_bytes.is_empty() {
+                                            Some(Resp::Array(Some(vec![
+                                                Resp::BulkString(Some(bytes::Bytes::from_static(
+                                                    b"ZPOPMIN",
+                                                ))),
+                                                Resp::BulkString(Some(key_bytes)),
+                                            ])))
+                                        } else {
+                                            None
+                                        }
                                     }
+                                    _ => None,
                                 }
-                                _ => None,
+                            }
+                            Command::Bzpopmax => {
+                                // Rewrite to ZPOPMAX key
+                                match &res {
+                                    Resp::Array(Some(arr)) if arr.len() >= 2 => {
+                                        let key_bytes = match &arr[0] {
+                                            Resp::BulkString(Some(k)) => k.clone(),
+                                            Resp::SimpleString(k) => k.clone(),
+                                            _ => bytes::Bytes::new(),
+                                        };
+                                        if !key_bytes.is_empty() {
+                                            Some(Resp::Array(Some(vec![
+                                                Resp::BulkString(Some(bytes::Bytes::from_static(
+                                                    b"ZPOPMAX",
+                                                ))),
+                                                Resp::BulkString(Some(key_bytes)),
+                                            ])))
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                    _ => None,
+                                }
+                            }
+                            _ => {
+                                if command::is_blocking_command(s) {
+                                    None
+                                } else {
+                                    Some(Resp::Array(Some(items.clone())))
+                                }
                             }
                         }
-                        _ => {
-                            if command::is_blocking_command(s) {
-                                None
-                            } else {
-                                Some(Resp::Array(Some(items.clone())))
-                            }
-                        }
+                    } else {
+                        None
                     }
                 } else {
                     None
                 }
-            } else {
-                None
-            }
             } else {
                 None
             }
@@ -1122,19 +1299,25 @@ fn check_access(
     let acl_guard = server_ctx.acl.read().unwrap();
     if let Some(user) = acl_guard.get_user(&conn_ctx.current_username) {
         if !user.enabled {
-             return Err(Resp::Error(format!("NOPERM this user is disabled")));
+            return Err(Resp::Error(format!("NOPERM this user is disabled")));
         }
         let cmd_str = String::from_utf8_lossy(cmd_raw);
         if !user.can_execute(&cmd_str) {
-             return Err(Resp::Error(format!("NOPERM this user has no permissions to run the '{}' command", cmd_str)));
+            return Err(Resp::Error(format!(
+                "NOPERM this user has no permissions to run the '{}' command",
+                cmd_str
+            )));
         }
-        
+
         if !user.all_keys {
             let keys = get_command_keys(cmd, items);
             for key in keys {
-                 if !user.can_access_key(&key) {
-                      return Err(Resp::Error(format!("NOPERM this user has no permissions to access the key '{}'", String::from_utf8_lossy(&key))));
-                 }
+                if !user.can_access_key(key) {
+                    return Err(Resp::Error(format!(
+                        "NOPERM this user has no permissions to access the key '{}'",
+                        String::from_utf8_lossy(key)
+                    )));
+                }
             }
         }
         if server_ctx.config.cluster_enabled {
@@ -1142,14 +1325,16 @@ fn check_access(
             if !keys.is_empty() {
                 let mut slots = Vec::new();
                 for k in &keys {
-                    let ks = String::from_utf8_lossy(&k[..]).to_string();
+                    let ks = String::from_utf8_lossy(k).to_string();
                     let s = crate::cluster::ClusterState::key_slot(&ks) as usize;
                     slots.push(s);
                 }
                 let first = slots[0];
                 for s in &slots {
                     if *s != first {
-                        return Err(Resp::StaticError("CROSSSLOT Keys in request don't hash to the same slot"));
+                        return Err(Resp::StaticError(
+                            "CROSSSLOT Keys in request don't hash to the same slot",
+                        ));
                     }
                 }
                 let st = server_ctx.cluster.read().unwrap();
@@ -1184,7 +1369,9 @@ fn check_access(
                                     let moved = format!("MOVED {} {}:{}", first, n.ip, n.port);
                                     return Err(Resp::Error(moved));
                                 } else {
-                                    return Err(Resp::StaticError("CLUSTERDOWN Hash slot not served"));
+                                    return Err(Resp::StaticError(
+                                        "CLUSTERDOWN Hash slot not served",
+                                    ));
                                 }
                             } else {
                                 if let Some(n) = st.nodes.get(owner) {
@@ -1204,7 +1391,7 @@ fn check_access(
         }
         Ok(())
     } else {
-         Err(Resp::StaticError("ERR User not found"))
+        Err(Resp::StaticError("ERR User not found"))
     }
 }
 
@@ -1217,10 +1404,7 @@ async fn dispatch_command(
     if conn_ctx.in_multi {
         match cmd {
             Command::Multi => {
-                return (
-                    Resp::StaticError("ERR MULTI calls can not be nested"),
-                    None,
-                );
+                return (Resp::StaticError("ERR MULTI calls can not be nested"), None);
             }
             Command::Exec | Command::Discard | Command::Reset => {}
             _ => {
@@ -1235,9 +1419,14 @@ async fn dispatch_command(
 
     if !conn_ctx.subscriptions.is_empty() {
         match cmd {
-            Command::Subscribe | Command::Unsubscribe | Command::Ping | Command::Reset => {},
+            Command::Subscribe | Command::Unsubscribe | Command::Ping | Command::Reset => {}
             _ => {
-                 return (Resp::StaticError("ERR only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT / RESET allowed in this context"), None);
+                return (
+                    Resp::StaticError(
+                        "ERR only (P)SUBSCRIBE / (P)UNSUBSCRIBE / PING / QUIT / RESET allowed in this context",
+                    ),
+                    None,
+                );
             }
         }
     }
@@ -1252,9 +1441,7 @@ async fn dispatch_command(
         Command::Multi => {
             if items.len() != 1 {
                 return (
-                    Resp::Error(
-                        "ERR wrong number of arguments for 'multi' command".to_string(),
-                    ),
+                    Resp::Error("ERR wrong number of arguments for 'multi' command".to_string()),
                     None,
                 );
             }
@@ -1264,10 +1451,7 @@ async fn dispatch_command(
         }
         Command::Exec => {
             if !conn_ctx.in_multi {
-                return (
-                    Resp::StaticError("ERR EXEC without MULTI"),
-                    None,
-                );
+                return (Resp::StaticError("ERR EXEC without MULTI"), None);
             }
 
             conn_ctx.in_multi = false;
@@ -1292,8 +1476,7 @@ async fn dispatch_command(
                 let cmd_raw = match as_bytes(&q[0]) {
                     Some(b) => b,
                     None => {
-                        results
-                            .push(Resp::StaticError("ERR invalid command"));
+                        results.push(Resp::StaticError("ERR invalid command"));
                         continue;
                     }
                 };
@@ -1302,14 +1485,15 @@ async fn dispatch_command(
                     results.push(e);
                     continue;
                 }
-                let (res, _) = Box::pin(dispatch_command(inner_cmd, &q, conn_ctx, server_ctx)).await;
+                let (res, _) =
+                    Box::pin(dispatch_command(inner_cmd, &q, conn_ctx, server_ctx)).await;
 
                 // Trigger watched keys invalidation
                 if let Ok(s) = std::str::from_utf8(cmd_raw) {
                     if command::is_write_command(s) {
                         let keys = get_command_keys(inner_cmd, &q);
                         for key in keys {
-                            touch_watched_key(&key, conn_ctx.db_index, server_ctx);
+                            touch_watched_key(key, conn_ctx.db_index, server_ctx);
                         }
                     }
                 }
@@ -1321,10 +1505,7 @@ async fn dispatch_command(
         }
         Command::Discard => {
             if !conn_ctx.in_multi {
-                return (
-                    Resp::StaticError("ERR DISCARD without MULTI"),
-                    None,
-                );
+                return (Resp::StaticError("ERR DISCARD without MULTI"), None);
             }
             conn_ctx.in_multi = false;
             conn_ctx.multi_queue.clear();
@@ -1344,12 +1525,18 @@ async fn dispatch_command(
                     _ => (Resp::BulkString(None), None),
                 }
             } else {
-                (Resp::StaticError("ERR wrong number of arguments for 'PING'"), None)
+                (
+                    Resp::StaticError("ERR wrong number of arguments for 'PING'"),
+                    None,
+                )
             }
         }
         Command::Echo => {
             if items.len() != 2 {
-                (Resp::StaticError("ERR wrong number of arguments for 'echo' command"), None)
+                (
+                    Resp::StaticError("ERR wrong number of arguments for 'echo' command"),
+                    None,
+                )
             } else {
                 match &items[1] {
                     Resp::BulkString(Some(b)) => (Resp::BulkString(Some(b.clone())), None),
@@ -1383,15 +1570,15 @@ async fn dispatch_command(
         Command::Append => (string::append(items, &db), None),
         Command::StrLen => (string::strlen(items, &db), None),
         Command::StrAlgo => (string::stralgo(items, &db), None),
-        Command::Lpush => (list::lpush(items, conn_ctx, server_ctx), None),
+        Command::Lpush => (list::lpush(items, &db, conn_ctx, server_ctx), None),
         Command::Lpushx => (list::lpushx(items, &db), None),
-        Command::Rpush => (list::rpush(items, conn_ctx, server_ctx), None),
+        Command::Rpush => (list::rpush(items, &db, conn_ctx, server_ctx), None),
         Command::Rpushx => (list::rpushx(items, &db), None),
         Command::Lpop => (list::lpop(items, &db), None),
         Command::Rpop => (list::rpop(items, &db), None),
-        Command::Blpop => (list::blpop(items, conn_ctx, server_ctx).await, None),
-        Command::Brpop => (list::brpop(items, conn_ctx, server_ctx).await, None),
-        Command::Blmove => (list::blmove(items, conn_ctx, server_ctx).await, None),
+        Command::Blpop => (list::blpop(items, &db, conn_ctx, server_ctx).await, None),
+        Command::Brpop => (list::brpop(items, &db, conn_ctx, server_ctx).await, None),
+        Command::Blmove => (list::blmove(items, &db, conn_ctx, server_ctx).await, None),
         Command::Lmove => (list::lmove(items, &db), None),
         Command::Linsert => (list::linsert(items, &db), None),
         Command::Lrem => (list::lrem(items, &db), None),
@@ -1497,10 +1684,16 @@ async fn dispatch_command(
         Command::Psync => (replication::psync(items, conn_ctx, server_ctx).await, None),
         Command::ReplConf => (replication::replconf(items, conn_ctx, server_ctx), None),
         Command::Time => {
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap();
             let mut res = Vec::new();
-            res.push(Resp::BulkString(Some(bytes::Bytes::from(now.as_secs().to_string()))));
-            res.push(Resp::BulkString(Some(bytes::Bytes::from(now.subsec_micros().to_string()))));
+            res.push(Resp::BulkString(Some(bytes::Bytes::from(
+                now.as_secs().to_string(),
+            ))));
+            res.push(Resp::BulkString(Some(bytes::Bytes::from(
+                now.subsec_micros().to_string(),
+            ))));
             (Resp::Array(Some(res)), None)
         }
         Command::Shutdown => {
@@ -1516,7 +1709,10 @@ async fn dispatch_command(
             if server_ctx.config.cluster_enabled {
                 (cluster::cluster(items, conn_ctx, server_ctx), None)
             } else {
-                (Resp::StaticError("ERR This instance has cluster support disabled"), None)
+                (
+                    Resp::StaticError("ERR This instance has cluster support disabled"),
+                    None,
+                )
             }
         }
         Command::Info => (info::info(items, server_ctx), None),
@@ -1526,14 +1722,22 @@ async fn dispatch_command(
         Command::Script => (scripting::script(items, &server_ctx.script_manager), None),
         Command::Select => {
             if items.len() != 2 {
-                (Resp::StaticError("ERR wrong number of arguments for 'select' command"), None)
+                (
+                    Resp::StaticError("ERR wrong number of arguments for 'select' command"),
+                    None,
+                )
             } else {
                 match as_bytes(&items[1]) {
                     Some(b) => match std::str::from_utf8(&b) {
                         Ok(s) => match s.parse::<usize>() {
                             Ok(idx) => {
                                 if server_ctx.config.cluster_enabled && idx != 0 {
-                                    (Resp::StaticError("ERR SELECT is not allowed in cluster mode"), None)
+                                    (
+                                        Resp::StaticError(
+                                            "ERR SELECT is not allowed in cluster mode",
+                                        ),
+                                        None,
+                                    )
                                 } else if idx < server_ctx.databases.len() {
                                     conn_ctx.db_index = idx;
                                     (Resp::SimpleString(bytes::Bytes::from_static(b"OK")), None)
@@ -1541,11 +1745,20 @@ async fn dispatch_command(
                                     (Resp::StaticError("ERR DB index is out of range"), None)
                                 }
                             }
-                            Err(_) => (Resp::StaticError("ERR value is not an integer or out of range"), None),
+                            Err(_) => (
+                                Resp::StaticError("ERR value is not an integer or out of range"),
+                                None,
+                            ),
                         },
-                        Err(_) => (Resp::StaticError("ERR value is not an integer or out of range"), None),
+                        Err(_) => (
+                            Resp::StaticError("ERR value is not an integer or out of range"),
+                            None,
+                        ),
                     },
-                    None => (Resp::StaticError("ERR value is not an integer or out of range"), None),
+                    None => (
+                        Resp::StaticError("ERR value is not an integer or out of range"),
+                        None,
+                    ),
                 }
             }
         }
@@ -1569,12 +1782,18 @@ async fn dispatch_command(
         Command::BitOp => bitmap::bitop(items, &db),
         Command::BitPos => (bitmap::bitpos(items, &db), None),
         Command::BitField => bitmap::bitfield(items, &db),
-        Command::Publish => (pubsub::publish(items.to_vec(), conn_ctx, server_ctx).await, None),
-        Command::Subscribe => (pubsub::subscribe(items.to_vec(), conn_ctx, server_ctx).await, None),
-        Command::Unsubscribe => (pubsub::unsubscribe(items.to_vec(), conn_ctx, server_ctx).await, None),
-        Command::Psubscribe => (pubsub::psubscribe(items.to_vec(), conn_ctx, server_ctx).await, None),
-        Command::Punsubscribe => (pubsub::punsubscribe(items.to_vec(), conn_ctx, server_ctx).await, None),
-        Command::PubSub => (pubsub::pubsub_command(items.to_vec(), conn_ctx, server_ctx).await, None),
+        Command::Publish => (pubsub::publish(items, conn_ctx, server_ctx).await, None),
+        Command::Subscribe => (pubsub::subscribe(items, conn_ctx, server_ctx).await, None),
+        Command::Unsubscribe => (pubsub::unsubscribe(items, conn_ctx, server_ctx).await, None),
+        Command::Psubscribe => (pubsub::psubscribe(items, conn_ctx, server_ctx).await, None),
+        Command::Punsubscribe => (
+            pubsub::punsubscribe(items, conn_ctx, server_ctx).await,
+            None,
+        ),
+        Command::PubSub => (
+            pubsub::pubsub_command(items, conn_ctx, server_ctx).await,
+            None,
+        ),
         Command::Client => client::client(items, conn_ctx, server_ctx),
         Command::Monitor => monitor::monitor(conn_ctx, server_ctx),
         Command::Slowlog => slowlog::slowlog(items, server_ctx).await,
@@ -1597,13 +1816,18 @@ async fn dispatch_command(
                         error!("Background AOF rewrite failed: {}", e);
                     }
                 });
-                (Resp::SimpleString(bytes::Bytes::from_static(b"Background append only file rewriting started")), None)
+                (
+                    Resp::SimpleString(bytes::Bytes::from_static(
+                        b"Background append only file rewriting started",
+                    )),
+                    None,
+                )
             } else {
                 (Resp::StaticError("ERR AOF is not enabled"), None)
             }
         }
         Command::Unknown => (Resp::StaticError("ERR unknown command"), None),
-    }//;
+    } //;
     // // 非 ASKING 命令执行完毕后重置 asking 标志
     // if cmd != Command::Asking {
     //     conn_ctx.asking = false;
@@ -1825,7 +2049,7 @@ pub fn start_expiration_task(ctx: ServerContext) {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
         loop {
             interval.tick().await;
-            
+
             // Check master role
             let is_master = {
                 if let Ok(role) = ctx_clone.replication_role.read() {
@@ -1834,7 +2058,7 @@ pub fn start_expiration_task(ctx: ServerContext) {
                     false
                 }
             };
-            
+
             if !is_master {
                 continue;
             }
@@ -1853,37 +2077,44 @@ pub fn start_expiration_task(ctx: ServerContext) {
                         });
                     }
                 }
-                
+
                 if !expired_keys.is_empty() {
-                      let select_cmd = Resp::Array(Some(vec![
-                          Resp::BulkString(Some(bytes::Bytes::from("SELECT"))),
-                          Resp::BulkString(Some(bytes::Bytes::from(db_idx.to_string()))),
-                      ]));
-                      
-                      // 1. Append SELECT to AOF
-                      if let Some(aof) = &ctx_clone.aof {
-                          aof.append(&select_cmd).await;
-                      }
- 
-                      // 2. Propagate SELECT to Replicas
-                      let next_off = ctx_clone.repl_offset.fetch_add(1, Ordering::Relaxed) + 1;
-                      {
-                          if let Ok(mut q) = ctx_clone.repl_backlog.lock() {
-                              q.push_back((next_off, select_cmd.clone()));
-                              let max = ctx_clone.repl_backlog_size.load(Ordering::Relaxed);
-                              while q.len() > max {
-                                  q.pop_front();
-                              }
-                          }
-                      }
-                      for entry in ctx_clone.replicas.iter() {
-                          let _ = entry.value().try_send(select_cmd.clone());
-                      }
+                    let select_cmd = Resp::Array(Some(vec![
+                        Resp::BulkString(Some(bytes::Bytes::from("SELECT"))),
+                        Resp::BulkString(Some(bytes::Bytes::from(db_idx.to_string()))),
+                    ]));
+
+                    // 1. Append SELECT to AOF
+                    if let Some(aof) = &ctx_clone.aof {
+                        aof.append(&select_cmd).await;
+                    }
+
+                    // 2. Propagate SELECT to Replicas
+                    let next_off = ctx_clone.repl_offset.fetch_add(1, Ordering::Relaxed) + 1;
+                    {
+                        if let Ok(mut q) = ctx_clone.repl_backlog.lock() {
+                            q.push_back((next_off, select_cmd.clone()));
+                            let max = ctx_clone.repl_backlog_size.load(Ordering::Relaxed);
+                            while q.len() > max {
+                                q.pop_front();
+                            }
+                        }
+                    }
+                    for entry in ctx_clone.replicas.iter() {
+                        let _ = entry.value().try_send(select_cmd.clone());
+                    }
                 }
 
                 for key in expired_keys {
-                    notify::notify_keyspace_event(&ctx_clone, notify::NOTIFY_EXPIRED, "expired", &key, db_idx).await;
-                    
+                    notify::notify_keyspace_event(
+                        &ctx_clone,
+                        notify::NOTIFY_EXPIRED,
+                        "expired",
+                        &key,
+                        db_idx,
+                    )
+                    .await;
+
                     // Propagate DEL command
                     let del_cmd = Resp::Array(Some(vec![
                         Resp::BulkString(Some(bytes::Bytes::from("DEL"))),
@@ -1906,7 +2137,7 @@ pub fn start_expiration_task(ctx: ServerContext) {
                             }
                         }
                     }
-                    
+
                     for entry in ctx_clone.replicas.iter() {
                         let _ = entry.value().try_send(del_cmd.clone());
                     }
@@ -1920,7 +2151,11 @@ fn resp_bulk(s: &str) -> Resp {
     Resp::BulkString(Some(bytes::Bytes::from(s.to_string())))
 }
 
-pub(crate) async fn send_resp_command(ip: &str, port: u16, req: Resp) -> std::io::Result<Option<Resp>> {
+pub(crate) async fn send_resp_command(
+    ip: &str,
+    port: u16,
+    req: Resp,
+) -> std::io::Result<Option<Resp>> {
     // This function is now a wrapper; the real implementation needs ServerContext.
     // Callers should use send_resp_command_ctx instead.
     let addr = format!("{}:{}", ip, port);
@@ -1955,7 +2190,7 @@ pub(crate) async fn send_resp_command_ctx(
         ctx.node_conns.insert(key, new_conn.clone());
         new_conn
     };
-    
+
     // Use the stored writer
     {
         let mut writer = conn.writer.lock().await;
@@ -1970,27 +2205,45 @@ pub(crate) async fn send_resp_command_ctx(
     } // Drop reader lock
 }
 
-pub(crate) async fn fetch_cluster_nodes_text(ctx: &ServerContext, ip: &str, port: u16) -> std::io::Result<Option<String>> {
+pub(crate) async fn fetch_cluster_nodes_text(
+    ctx: &ServerContext,
+    ip: &str,
+    port: u16,
+) -> std::io::Result<Option<String>> {
     let req = Resp::Array(Some(vec![resp_bulk("CLUSTER"), resp_bulk("NODES")]));
     let resp = send_resp_command_ctx(ctx, ip, port, req).await?;
     match resp {
-        Some(Resp::BulkString(Some(b))) => Ok(Some(String::from_utf8_lossy(b.as_ref()).to_string())),
+        Some(Resp::BulkString(Some(b))) => {
+            Ok(Some(String::from_utf8_lossy(b.as_ref()).to_string()))
+        }
         Some(Resp::SimpleString(b)) => Ok(Some(String::from_utf8_lossy(b.as_ref()).to_string())),
         _ => Ok(None),
     }
 }
 
-pub(crate) async fn fetch_cluster_myid(ctx: &ServerContext, ip: &str, port: u16) -> std::io::Result<Option<String>> {
+pub(crate) async fn fetch_cluster_myid(
+    ctx: &ServerContext,
+    ip: &str,
+    port: u16,
+) -> std::io::Result<Option<String>> {
     let req = Resp::Array(Some(vec![resp_bulk("CLUSTER"), resp_bulk("MYID")]));
     let resp = send_resp_command_ctx(ctx, ip, port, req).await?;
     match resp {
-        Some(Resp::BulkString(Some(b))) => Ok(Some(String::from_utf8_lossy(b.as_ref()).to_string())),
+        Some(Resp::BulkString(Some(b))) => {
+            Ok(Some(String::from_utf8_lossy(b.as_ref()).to_string()))
+        }
         Some(Resp::SimpleString(b)) => Ok(Some(String::from_utf8_lossy(b.as_ref()).to_string())),
         _ => Ok(None),
     }
 }
 
-pub(crate) async fn send_cluster_meet(ctx: &ServerContext, ip: &str, port: u16, my_ip: &str, my_port: u16) -> std::io::Result<()> {
+pub(crate) async fn send_cluster_meet(
+    ctx: &ServerContext,
+    ip: &str,
+    port: u16,
+    my_ip: &str,
+    my_port: u16,
+) -> std::io::Result<()> {
     let req = Resp::Array(Some(vec![
         resp_bulk("CLUSTER"),
         resp_bulk("MEET"),
@@ -2081,7 +2334,9 @@ pub fn start_cluster_topology_task(ctx: ServerContext) {
 async fn ping_node(ip: &str, port: u16) -> bool {
     let req = Resp::Array(Some(vec![resp_bulk("PING")]));
     match send_resp_command(ip, port, req).await {
-        Ok(Some(Resp::SimpleString(_))) | Ok(Some(Resp::BulkString(_))) | Ok(Some(Resp::Integer(_))) => true,
+        Ok(Some(Resp::SimpleString(_)))
+        | Ok(Some(Resp::BulkString(_)))
+        | Ok(Some(Resp::Integer(_))) => true,
         Ok(Some(Resp::Error(_))) | Ok(Some(Resp::StaticError(_))) => false,
         _ => false,
     }

@@ -2,8 +2,8 @@ use crate::rax::Rax;
 use bytes::Bytes;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::str::FromStr;
 use std::num::ParseIntError;
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StreamID {
@@ -32,10 +32,10 @@ impl FromStr for StreamID {
         if parts.len() != 2 {
             return Err("Invalid Stream ID format".to_string());
         }
-        
+
         let ms = parts[0].parse::<u64>().map_err(|e| e.to_string())?;
         let seq = parts[1].parse::<u64>().map_err(|e| e.to_string())?;
-        
+
         Ok(StreamID { ms, seq })
     }
 }
@@ -118,18 +118,21 @@ impl Stream {
         }
     }
 
-    pub fn insert(&mut self, id: StreamID, fields: Vec<(Bytes, Bytes)>) -> Result<StreamID, &'static str> {
+    pub fn insert(
+        &mut self,
+        id: StreamID,
+        fields: Vec<(Bytes, Bytes)>,
+    ) -> Result<StreamID, &'static str> {
         if id <= self.last_id {
             if id.ms == 0 && id.seq == 0 {
                 return Err("ERR The ID specified in XADD must be greater than 0-0");
             }
-            return Err("ERR The ID specified in XADD is equal or smaller than the target stream top item");
+            return Err(
+                "ERR The ID specified in XADD is equal or smaller than the target stream top item",
+            );
         }
 
-        let entry = StreamEntry {
-            id,
-            fields,
-        };
+        let entry = StreamEntry { id, fields };
 
         self.rax.insert(&id.to_be_bytes(), entry);
         self.last_id = id;
@@ -143,7 +146,7 @@ impl Stream {
     pub fn is_empty(&self) -> bool {
         self.rax.is_empty()
     }
-    
+
     pub fn get(&self, id: &StreamID) -> Option<&StreamEntry> {
         self.rax.get(&id.to_be_bytes())
     }
@@ -155,7 +158,7 @@ impl Stream {
     pub fn range(&self, start: &StreamID, end: &StreamID) -> Vec<StreamEntry> {
         let start_bytes = start.to_be_bytes();
         let end_bytes = end.to_be_bytes();
-        
+
         let entries = self.rax.range(&start_bytes, &end_bytes);
         entries.into_iter().map(|(_, entry)| entry).collect()
     }
@@ -163,7 +166,7 @@ impl Stream {
     pub fn rev_range(&self, start: &StreamID, end: &StreamID) -> Vec<StreamEntry> {
         let start_bytes = start.to_be_bytes();
         let end_bytes = end.to_be_bytes();
-        
+
         let entries = self.rax.rev_range(&start_bytes, &end_bytes);
         entries.into_iter().map(|(_, entry)| entry).collect()
     }
@@ -176,23 +179,28 @@ impl Stream {
 
         let to_remove = current_len - maxlen;
         let mut removed = 0;
-        
-        let entries = self.rax.range(&StreamID::new(0, 0).to_be_bytes(), &StreamID::new(u64::MAX, u64::MAX).to_be_bytes());
-        
+
+        let entries = self.rax.range(
+            &StreamID::new(0, 0).to_be_bytes(),
+            &StreamID::new(u64::MAX, u64::MAX).to_be_bytes(),
+        );
+
         for (id_bytes, _) in entries.iter().take(to_remove) {
             if self.rax.remove(id_bytes).is_some() {
                 removed += 1;
             }
         }
-        
+
         removed
     }
 
     pub fn trim_minid(&mut self, minid: StreamID) -> usize {
         let mut removed = 0;
-        
-        let entries = self.rax.range(&StreamID::new(0, 0).to_be_bytes(), &minid.to_be_bytes());
-        
+
+        let entries = self
+            .rax
+            .range(&StreamID::new(0, 0).to_be_bytes(), &minid.to_be_bytes());
+
         for (id_bytes, entry) in entries {
             if entry.id < minid {
                 if self.rax.remove(&id_bytes).is_some() {
@@ -200,7 +208,7 @@ impl Stream {
                 }
             }
         }
-        
+
         removed
     }
 }

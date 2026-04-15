@@ -1,12 +1,12 @@
+use crate::cmd::key::match_pattern;
+use crate::cmd::{ConnectionContext, ServerContext};
 use crate::db::{Db, Entry, SortedSet, TotalOrderF64, Value};
 use crate::resp::Resp;
-use crate::cmd::{ConnectionContext, ServerContext};
+use bytes::Bytes;
+use rand::seq::IteratorRandom;
 use std::collections::VecDeque;
 use std::time::Duration;
 use tokio::time::timeout;
-use crate::cmd::key::match_pattern;
-use bytes::Bytes;
-use rand::seq::IteratorRandom;
 
 use std::sync::atomic::Ordering;
 
@@ -47,7 +47,9 @@ enum LexBound {
 
 fn parse_lex_bound(b: &Bytes) -> Result<LexBound, Resp> {
     if b.is_empty() {
-        return Err(Resp::Error("ERR min or max not valid string range item".to_string()));
+        return Err(Resp::Error(
+            "ERR min or max not valid string range item".to_string(),
+        ));
     }
 
     match b[0] {
@@ -55,7 +57,9 @@ fn parse_lex_bound(b: &Bytes) -> Result<LexBound, Resp> {
         b'+' if b.len() == 1 => Ok(LexBound::Max),
         b'[' => Ok(LexBound::Inclusive(b.slice(1..))),
         b'(' => Ok(LexBound::Exclusive(b.slice(1..))),
-        _ => Err(Resp::Error("ERR min or max not valid string range item".to_string())),
+        _ => Err(Resp::Error(
+            "ERR min or max not valid string range item".to_string(),
+        )),
     }
 }
 
@@ -332,11 +336,11 @@ pub fn zadd(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCon
                 added_count += 1;
             }
         }
-        
+
         // Notify waiters if we have members
         if !zset.members.is_empty() {
             let map_key = (conn_ctx.db_index, key.to_vec());
-            
+
             // Loop to serve waiters while we have members
             loop {
                 if zset.members.is_empty() {
@@ -395,7 +399,7 @@ pub fn zadd(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCon
                                 // For now, let's try to serve next waiter with the SAME item.
                                 // But my loop structure pops a NEW item each time.
                                 // This logic is flawed if send fails.
-                                
+
                                 // Refined logic:
                                 // 1. Peek waiter.
                                 // 2. Pop item.
@@ -409,7 +413,7 @@ pub fn zadd(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCon
                 }
             }
         }
-        
+
         Resp::Integer(added_count)
     } else {
         Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string())
@@ -536,7 +540,9 @@ pub fn zmscore(items: &[Resp], db: &Db) -> Resp {
                 }
                 Resp::Array(Some(results))
             }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         for _ in 2..items.len() {
@@ -1241,8 +1247,6 @@ pub fn zrevrange(items: &[Resp], db: &Db) -> Resp {
     }
 }
 
-
-
 pub fn zpopmin(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 2 {
         return Resp::Error("ERR wrong number of arguments for 'ZPOPMIN'".to_string());
@@ -1257,11 +1261,15 @@ pub fn zpopmin(items: &[Resp], db: &Db) -> Resp {
         match &items[2] {
             Resp::BulkString(Some(b)) => match String::from_utf8_lossy(b).parse::<i64>() {
                 Ok(c) => c,
-                Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+                Err(_) => {
+                    return Resp::Error("ERR value is not an integer or out of range".to_string());
+                }
             },
             Resp::SimpleString(s) => match String::from_utf8_lossy(s).parse::<i64>() {
                 Ok(c) => c,
-                Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+                Err(_) => {
+                    return Resp::Error("ERR value is not an integer or out of range".to_string());
+                }
             },
             _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
         }
@@ -1283,7 +1291,9 @@ pub fn zpopmin(items: &[Resp], db: &Db) -> Resp {
                         let score = score_wrapper.0;
                         zset.members.remove(&member);
                         result.push(Resp::BulkString(Some(member)));
-                        result.push(Resp::BulkString(Some(bytes::Bytes::from(score.to_string()))));
+                        result.push(Resp::BulkString(Some(bytes::Bytes::from(
+                            score.to_string(),
+                        ))));
                     } else {
                         break;
                     }
@@ -1313,11 +1323,15 @@ pub fn zpopmax(items: &[Resp], db: &Db) -> Resp {
         match &items[2] {
             Resp::BulkString(Some(b)) => match String::from_utf8_lossy(b).parse::<i64>() {
                 Ok(c) => c,
-                Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+                Err(_) => {
+                    return Resp::Error("ERR value is not an integer or out of range".to_string());
+                }
             },
             Resp::SimpleString(s) => match String::from_utf8_lossy(s).parse::<i64>() {
                 Ok(c) => c,
-                Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+                Err(_) => {
+                    return Resp::Error("ERR value is not an integer or out of range".to_string());
+                }
             },
             _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
         }
@@ -1339,7 +1353,9 @@ pub fn zpopmax(items: &[Resp], db: &Db) -> Resp {
                         let score = score_wrapper.0;
                         zset.members.remove(&member);
                         result.push(Resp::BulkString(Some(member)));
-                        result.push(Resp::BulkString(Some(bytes::Bytes::from(score.to_string()))));
+                        result.push(Resp::BulkString(Some(bytes::Bytes::from(
+                            score.to_string(),
+                        ))));
                     } else {
                         break;
                     }
@@ -1355,11 +1371,19 @@ pub fn zpopmax(items: &[Resp], db: &Db) -> Resp {
     }
 }
 
-pub async fn bzpopmin(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerContext) -> Resp {
+pub async fn bzpopmin(
+    items: &[Resp],
+    conn_ctx: &ConnectionContext,
+    server_ctx: &ServerContext,
+) -> Resp {
     blocking_zpop_generic(items, conn_ctx, server_ctx, true).await
 }
 
-pub async fn bzpopmax(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerContext) -> Resp {
+pub async fn bzpopmax(
+    items: &[Resp],
+    conn_ctx: &ConnectionContext,
+    server_ctx: &ServerContext,
+) -> Resp {
     blocking_zpop_generic(items, conn_ctx, server_ctx, false).await
 }
 
@@ -1401,45 +1425,50 @@ async fn blocking_zpop_generic(
         keys.push(key.clone());
 
         if let Some(mut entry) = db.get_mut(&key) {
-             if entry.is_expired() {
-                 drop(entry);
-                 db.remove(&key);
-                 continue;
-             }
-             if let Value::ZSet(zset) = &mut entry.value {
-                 let popped = if is_min {
-                     zset.scores.pop_first()
-                 } else {
-                     zset.scores.pop_last()
-                 };
+            if entry.is_expired() {
+                drop(entry);
+                db.remove(&key);
+                continue;
+            }
+            if let Value::ZSet(zset) = &mut entry.value {
+                let popped = if is_min {
+                    zset.scores.pop_first()
+                } else {
+                    zset.scores.pop_last()
+                };
 
-                 if let Some((score_wrapper, member)) = popped {
-                     let score = score_wrapper.0;
-                     zset.members.remove(&member);
-                     
-                     return Resp::Array(Some(vec![
-                         Resp::BulkString(Some(key)),
-                         Resp::BulkString(Some(member)),
-                         Resp::BulkString(Some(bytes::Bytes::from(score.to_string()))),
-                     ]));
-                 }
-             }
+                if let Some((score_wrapper, member)) = popped {
+                    let score = score_wrapper.0;
+                    zset.members.remove(&member);
+
+                    return Resp::Array(Some(vec![
+                        Resp::BulkString(Some(key)),
+                        Resp::BulkString(Some(member)),
+                        Resp::BulkString(Some(bytes::Bytes::from(score.to_string()))),
+                    ]));
+                }
+            }
         }
     }
 
     // 2. If no data, block
     let (tx, mut rx) = tokio::sync::mpsc::channel::<(Vec<u8>, Vec<u8>, f64)>(1);
-    
+
     // Register waiter for all keys
     for key in &keys {
         let map_key = (conn_ctx.db_index, key.to_vec());
-        let mut queue = server_ctx.blocking_zset_waiters.entry(map_key).or_insert_with(VecDeque::new);
+        let mut queue = server_ctx
+            .blocking_zset_waiters
+            .entry(map_key)
+            .or_insert_with(VecDeque::new);
         queue.push_back((tx.clone(), is_min));
     }
 
     // Wait
-    server_ctx.blocked_client_count.fetch_add(1, Ordering::Relaxed);
-    
+    server_ctx
+        .blocked_client_count
+        .fetch_add(1, Ordering::Relaxed);
+
     let (_shutdown_tx, mut shutdown_rx) = if let Some(rx) = &conn_ctx.shutdown {
         (None, rx.clone())
     } else {
@@ -1472,7 +1501,9 @@ async fn blocking_zpop_generic(
             }
         }
     };
-    server_ctx.blocked_client_count.fetch_sub(1, Ordering::Relaxed);
+    server_ctx
+        .blocked_client_count
+        .fetch_sub(1, Ordering::Relaxed);
 
     match result {
         Some((key, val, score)) => Resp::Array(Some(vec![
@@ -1529,51 +1560,59 @@ pub fn zscan(items: &[Resp], db: &Db) -> Resp {
                 if idx + 1 >= items.len() {
                     return Resp::Error("ERR syntax error".to_string());
                 }
-                match_pattern_str = match &items[idx+1] {
+                match_pattern_str = match &items[idx + 1] {
                     Resp::BulkString(Some(b)) => Some(b.as_ref()),
                     Resp::SimpleString(s) => Some(s.as_ref()),
                     _ => return Resp::Error("ERR syntax error".to_string()),
                 };
                 idx += 2;
-            },
+            }
             "COUNT" => {
                 if idx + 1 >= items.len() {
                     return Resp::Error("ERR syntax error".to_string());
                 }
-                let count_bytes = match &items[idx+1] {
+                let count_bytes = match &items[idx + 1] {
                     Resp::BulkString(Some(b)) => b,
                     Resp::SimpleString(s) => s,
                     _ => return Resp::Error("ERR syntax error".to_string()),
                 };
                 let count_str = match std::str::from_utf8(count_bytes) {
                     Ok(s) => s,
-                    Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+                    Err(_) => {
+                        return Resp::Error(
+                            "ERR value is not an integer or out of range".to_string(),
+                        );
+                    }
                 };
                 count = match count_str.parse() {
                     Ok(i) => i,
-                    Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+                    Err(_) => {
+                        return Resp::Error(
+                            "ERR value is not an integer or out of range".to_string(),
+                        );
+                    }
                 };
                 idx += 2;
-            },
+            }
             _ => return Resp::Error("ERR syntax error".to_string()),
         }
     }
 
     if let Some(entry) = db.get(&key) {
         if entry.is_expired() {
-             return Resp::Array(Some(vec![
+            return Resp::Array(Some(vec![
                 Resp::BulkString(Some(Bytes::from("0"))),
                 Resp::Array(Some(vec![])),
             ]));
         }
-        
+
         if let Value::ZSet(zset) = &entry.value {
             let mut all_members: Vec<bytes::Bytes> = zset.members.keys().cloned().collect();
             all_members.sort();
 
             let total_len = all_members.len();
             if cursor >= total_len {
-                 return Resp::Array(Some(vec![
+                return Resp::Array(Some(vec![
                     Resp::BulkString(Some(Bytes::from("0"))),
                     Resp::Array(Some(vec![])),
                 ]));
@@ -1589,19 +1628,21 @@ pub fn zscan(items: &[Resp], db: &Db) -> Resp {
                         continue;
                     }
                 }
-                
+
                 if let Some(score) = zset.members.get(member) {
                     result_entries.push(Resp::BulkString(Some(member.clone())));
                     result_entries.push(Resp::BulkString(Some(Bytes::from(score.to_string()))));
                 }
             }
 
-             Resp::Array(Some(vec![
+            Resp::Array(Some(vec![
                 Resp::BulkString(Some(Bytes::from(next_cursor.to_string()))),
                 Resp::Array(Some(result_entries)),
             ]))
         } else {
-             Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string())
+            Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            )
         }
     } else {
         Resp::Array(Some(vec![
@@ -1632,11 +1673,15 @@ pub fn zrandmember(items: &[Resp], db: &Db) -> Resp {
             _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
         }) {
             Ok(s) => s,
-            Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+            Err(_) => {
+                return Resp::Error("ERR value is not an integer or out of range".to_string());
+            }
         };
         count = Some(match count_str.parse() {
             Ok(c) => c,
-            Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+            Err(_) => {
+                return Resp::Error("ERR value is not an integer or out of range".to_string());
+            }
         });
     }
 
@@ -1700,7 +1745,9 @@ pub fn zrandmember(items: &[Resp], db: &Db) -> Resp {
                             if let Some(&(member, score)) = members.iter().choose(&mut rng) {
                                 result.push(Resp::BulkString(Some(member.clone())));
                                 if withscores {
-                                    result.push(Resp::BulkString(Some(Bytes::from(score.to_string()))));
+                                    result.push(Resp::BulkString(Some(Bytes::from(
+                                        score.to_string(),
+                                    ))));
                                 }
                             }
                         }
@@ -1780,18 +1827,19 @@ pub fn zincrby(items: &[Resp], db: &Db) -> Resp {
             if s.is_nan() {
                 return Resp::Error("ERR resulting score is not a number (NaN)".to_string());
             }
-            zset.scores.remove(&(TotalOrderF64(old_score), member.clone()));
+            zset.scores
+                .remove(&(TotalOrderF64(old_score), member.clone()));
             s
         } else {
             if increment.is_nan() {
-                 return Resp::Error("ERR resulting score is not a number (NaN)".to_string());
+                return Resp::Error("ERR resulting score is not a number (NaN)".to_string());
             }
             increment
         };
 
         zset.members.insert(member.clone(), new_score);
         zset.scores.insert((TotalOrderF64(new_score), member));
-        
+
         Resp::BulkString(Some(Bytes::from(new_score.to_string())))
     } else {
         Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string())
@@ -1804,7 +1852,10 @@ pub fn zunion(items: &[Resp], db: &Db) -> Resp {
     }
 
     let numkeys = match &items[1] {
-        Resp::BulkString(Some(b)) => match std::str::from_utf8(b).ok().and_then(|s| s.parse::<usize>().ok()) {
+        Resp::BulkString(Some(b)) => match std::str::from_utf8(b)
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+        {
             Some(n) => n,
             None => return Resp::Error("ERR value is not an integer or out of range".to_string()),
         },
@@ -1849,7 +1900,10 @@ pub fn zunion(items: &[Resp], db: &Db) -> Resp {
                         Resp::SimpleString(s) => s,
                         _ => return Resp::Error("ERR weight value is not a float".to_string()),
                     };
-                    weights[i] = match std::str::from_utf8(w_bytes).ok().and_then(|s| s.parse::<f64>().ok()) {
+                    weights[i] = match std::str::from_utf8(w_bytes)
+                        .ok()
+                        .and_then(|s| s.parse::<f64>().ok())
+                    {
                         Some(w) => w,
                         None => return Resp::Error("ERR weight value is not a float".to_string()),
                     };
@@ -1890,7 +1944,11 @@ pub fn zunion(items: &[Resp], db: &Db) -> Resp {
                 .collect();
             scores.sort();
 
-            let mut res = Vec::with_capacity(if withscores { scores.len() * 2 } else { scores.len() });
+            let mut res = Vec::with_capacity(if withscores {
+                scores.len() * 2
+            } else {
+                scores.len()
+            });
             for (score, member) in scores {
                 res.push(Resp::BulkString(Some(member)));
                 if withscores {
@@ -1915,7 +1973,10 @@ pub fn zunionstore(items: &[Resp], db: &Db) -> Resp {
     };
 
     let numkeys = match &items[2] {
-        Resp::BulkString(Some(b)) => match std::str::from_utf8(b).ok().and_then(|s| s.parse::<usize>().ok()) {
+        Resp::BulkString(Some(b)) => match std::str::from_utf8(b)
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+        {
             Some(n) => n,
             None => return Resp::Error("ERR value is not an integer or out of range".to_string()),
         },
@@ -1959,7 +2020,10 @@ pub fn zunionstore(items: &[Resp], db: &Db) -> Resp {
                         Resp::SimpleString(s) => s,
                         _ => return Resp::Error("ERR weight value is not a float".to_string()),
                     };
-                    weights[i] = match std::str::from_utf8(w_bytes).ok().and_then(|s| s.parse::<f64>().ok()) {
+                    weights[i] = match std::str::from_utf8(w_bytes)
+                        .ok()
+                        .and_then(|s| s.parse::<f64>().ok())
+                    {
                         Some(w) => w,
                         None => return Resp::Error("ERR weight value is not a float".to_string()),
                     };
@@ -2009,7 +2073,10 @@ pub fn zinter(items: &[Resp], db: &Db) -> Resp {
     }
 
     let numkeys = match &items[1] {
-        Resp::BulkString(Some(b)) => match std::str::from_utf8(b).ok().and_then(|s| s.parse::<usize>().ok()) {
+        Resp::BulkString(Some(b)) => match std::str::from_utf8(b)
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+        {
             Some(n) => n,
             None => return Resp::Error("ERR value is not an integer or out of range".to_string()),
         },
@@ -2054,7 +2121,10 @@ pub fn zinter(items: &[Resp], db: &Db) -> Resp {
                         Resp::SimpleString(s) => s,
                         _ => return Resp::Error("ERR weight value is not a float".to_string()),
                     };
-                    weights[i] = match std::str::from_utf8(w_bytes).ok().and_then(|s| s.parse::<f64>().ok()) {
+                    weights[i] = match std::str::from_utf8(w_bytes)
+                        .ok()
+                        .and_then(|s| s.parse::<f64>().ok())
+                    {
                         Some(w) => w,
                         None => return Resp::Error("ERR weight value is not a float".to_string()),
                     };
@@ -2095,7 +2165,11 @@ pub fn zinter(items: &[Resp], db: &Db) -> Resp {
                 .collect();
             scores.sort();
 
-            let mut res = Vec::with_capacity(if withscores { scores.len() * 2 } else { scores.len() });
+            let mut res = Vec::with_capacity(if withscores {
+                scores.len() * 2
+            } else {
+                scores.len()
+            });
             for (score, member) in scores {
                 res.push(Resp::BulkString(Some(member)));
                 if withscores {
@@ -2120,7 +2194,10 @@ pub fn zinterstore(items: &[Resp], db: &Db) -> Resp {
     };
 
     let numkeys = match &items[2] {
-        Resp::BulkString(Some(b)) => match std::str::from_utf8(b).ok().and_then(|s| s.parse::<usize>().ok()) {
+        Resp::BulkString(Some(b)) => match std::str::from_utf8(b)
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+        {
             Some(n) => n,
             None => return Resp::Error("ERR value is not an integer or out of range".to_string()),
         },
@@ -2164,7 +2241,10 @@ pub fn zinterstore(items: &[Resp], db: &Db) -> Resp {
                         Resp::SimpleString(s) => s,
                         _ => return Resp::Error("ERR weight value is not a float".to_string()),
                     };
-                    weights[i] = match std::str::from_utf8(w_bytes).ok().and_then(|s| s.parse::<f64>().ok()) {
+                    weights[i] = match std::str::from_utf8(w_bytes)
+                        .ok()
+                        .and_then(|s| s.parse::<f64>().ok())
+                    {
                         Some(w) => w,
                         None => return Resp::Error("ERR weight value is not a float".to_string()),
                     };
@@ -2214,7 +2294,10 @@ pub fn zdiff(items: &[Resp], db: &Db) -> Resp {
     }
 
     let numkeys = match &items[1] {
-        Resp::BulkString(Some(b)) => match std::str::from_utf8(b).ok().and_then(|s| s.parse::<usize>().ok()) {
+        Resp::BulkString(Some(b)) => match std::str::from_utf8(b)
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+        {
             Some(n) => n,
             None => return Resp::Error("ERR value is not an integer or out of range".to_string()),
         },
@@ -2257,7 +2340,11 @@ pub fn zdiff(items: &[Resp], db: &Db) -> Resp {
                 .collect();
             scores.sort();
 
-            let mut res = Vec::with_capacity(if withscores { scores.len() * 2 } else { scores.len() });
+            let mut res = Vec::with_capacity(if withscores {
+                scores.len() * 2
+            } else {
+                scores.len()
+            });
             for (score, member) in scores {
                 res.push(Resp::BulkString(Some(member)));
                 if withscores {
@@ -2282,7 +2369,10 @@ pub fn zdiffstore(items: &[Resp], db: &Db) -> Resp {
     };
 
     let numkeys = match &items[2] {
-        Resp::BulkString(Some(b)) => match std::str::from_utf8(b).ok().and_then(|s| s.parse::<usize>().ok()) {
+        Resp::BulkString(Some(b)) => match std::str::from_utf8(b)
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+        {
             Some(n) => n,
             None => return Resp::Error("ERR value is not an integer or out of range".to_string()),
         },

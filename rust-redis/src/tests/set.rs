@@ -1,7 +1,7 @@
 use crate::resp::Resp;
+use crate::tests::helper::run_cmd;
 use bytes::Bytes;
 use std::collections::HashSet;
-use crate::tests::helper::run_cmd;
 
 #[tokio::test]
 async fn test_set_ops() {
@@ -63,7 +63,12 @@ async fn test_srandmember() {
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // SADD set m1 m2 m3
-    run_cmd(vec!["SADD", "set", "m1", "m2", "m3"], &mut conn_ctx, &server_ctx).await;
+    run_cmd(
+        vec!["SADD", "set", "m1", "m2", "m3"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
 
     // SRANDMEMBER set
     let res = run_cmd(vec!["SRANDMEMBER", "set"], &mut conn_ctx, &server_ctx).await;
@@ -71,7 +76,7 @@ async fn test_srandmember() {
         Resp::BulkString(Some(ref b)) => {
             let s = String::from_utf8_lossy(b);
             assert!(s == "m1" || s == "m2" || s == "m3");
-        },
+        }
         _ => panic!("expected BulkString"),
     }
 
@@ -93,12 +98,12 @@ async fn test_srandmember() {
                 match item {
                     Resp::BulkString(Some(ref b)) => {
                         s.insert(b.clone());
-                    },
+                    }
                     _ => panic!("expected BulkString"),
                 }
             }
             assert_eq!(s.len(), 2);
-        },
+        }
         _ => panic!("expected Array"),
     }
 
@@ -107,19 +112,24 @@ async fn test_srandmember() {
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 5);
-        },
+        }
         _ => panic!("expected Array"),
     }
-    
+
     // Non-existent key
     let res = run_cmd(vec!["SRANDMEMBER", "nonexist"], &mut conn_ctx, &server_ctx).await;
     match res {
-        Resp::BulkString(None) => {},
+        Resp::BulkString(None) => {}
         _ => panic!("expected BulkString(None)"),
     }
 
     // Non-existent key with count
-    let res = run_cmd(vec!["SRANDMEMBER", "nonexist", "2"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["SRANDMEMBER", "nonexist", "2"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Array(Some(items)) => assert_eq!(items.len(), 0),
         _ => panic!("expected empty Array"),
@@ -132,7 +142,12 @@ async fn test_spop() {
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // SADD set m1 m2 m3
-    run_cmd(vec!["SADD", "set", "m1", "m2", "m3"], &mut conn_ctx, &server_ctx).await;
+    run_cmd(
+        vec!["SADD", "set", "m1", "m2", "m3"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
 
     // SPOP set
     let res = run_cmd(vec!["SPOP", "set"], &mut conn_ctx, &server_ctx).await;
@@ -140,7 +155,7 @@ async fn test_spop() {
         Resp::BulkString(Some(ref b)) => {
             let s = String::from_utf8_lossy(b);
             assert!(s == "m1" || s == "m2" || s == "m3");
-        },
+        }
         _ => panic!("expected BulkString"),
     }
 
@@ -162,12 +177,12 @@ async fn test_spop() {
                 match item {
                     Resp::BulkString(Some(ref b)) => {
                         s.insert(b.clone());
-                    },
+                    }
                     _ => panic!("expected BulkString"),
                 }
             }
             assert_eq!(s.len(), 2);
-        },
+        }
         _ => panic!("expected Array"),
     }
 
@@ -181,14 +196,14 @@ async fn test_spop() {
     // SPOP empty set
     let res = run_cmd(vec!["SPOP", "set"], &mut conn_ctx, &server_ctx).await;
     match res {
-        Resp::BulkString(None) => {},
+        Resp::BulkString(None) => {}
         _ => panic!("expected BulkString(None)"),
     }
 
     // Non-existent key
     let res = run_cmd(vec!["SPOP", "nonexist"], &mut conn_ctx, &server_ctx).await;
     match res {
-        Resp::BulkString(None) => {},
+        Resp::BulkString(None) => {}
         _ => panic!("expected BulkString(None)"),
     }
 

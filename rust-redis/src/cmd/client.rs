@@ -6,9 +6,16 @@ fn to_bytes<S: AsRef<str>>(s: S) -> Bytes {
     Bytes::from(s.as_ref().to_string())
 }
 
-pub fn client(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) -> (Resp, Option<Resp>) {
+pub fn client(
+    items: &[Resp],
+    conn_ctx: &mut ConnectionContext,
+    server_ctx: &ServerContext,
+) -> (Resp, Option<Resp>) {
     if items.len() < 2 {
-        return (Resp::Error("ERR wrong number of arguments for 'client' command".to_string()), None);
+        return (
+            Resp::Error("ERR wrong number of arguments for 'client' command".to_string()),
+            None,
+        );
     }
     let sub = match &items[1] {
         Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_lowercase(),
@@ -39,14 +46,20 @@ pub fn client(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &Ser
         }
         "setname" => {
             if items.len() < 3 {
-                return (Resp::Error("ERR wrong number of arguments for 'client setname'".to_string()), None);
+                return (
+                    Resp::Error("ERR wrong number of arguments for 'client setname'".to_string()),
+                    None,
+                );
             }
             let new_name = match &items[2] {
                 Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_string(),
                 _ => return (Resp::Error("ERR invalid client name".to_string()), None),
             };
             if new_name.contains(' ') {
-                return (Resp::Error("ERR Client names cannot contain spaces".to_string()), None);
+                return (
+                    Resp::Error("ERR Client names cannot contain spaces".to_string()),
+                    None,
+                );
             }
             if let Some(mut ci) = server_ctx.clients.get_mut(&conn_ctx.id) {
                 ci.name = new_name;
@@ -98,7 +111,10 @@ pub fn client(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &Ser
                     }
                 }
             }
-            (Resp::Error("ERR wrong number of arguments for 'client kill'".to_string()), None)
+            (
+                Resp::Error("ERR wrong number of arguments for 'client kill'".to_string()),
+                None,
+            )
         }
         "pause" => (Resp::SimpleString(Bytes::from("OK")), None),
         "unpause" => (Resp::SimpleString(Bytes::from("OK")), None),
@@ -118,9 +134,18 @@ pub fn client(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &Ser
                     }
                 }
             }
-            (Resp::Error("ERR wrong number of arguments for 'client tracking'".to_string()), None)
+            (
+                Resp::Error("ERR wrong number of arguments for 'client tracking'".to_string()),
+                None,
+            )
         }
-        _ => (Resp::Error(format!("ERR unknown subcommand '{}'. Try CLIENT HELP.", sub)), None),
+        _ => (
+            Resp::Error(format!(
+                "ERR unknown subcommand '{}'. Try CLIENT HELP.",
+                sub
+            )),
+            None,
+        ),
     }
 }
 

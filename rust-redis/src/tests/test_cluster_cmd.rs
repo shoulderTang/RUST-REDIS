@@ -1,8 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use crate::tests::helper::{create_server_context, create_server_context_with_cluster, create_connection_context, run_cmd};
-    use crate::resp::Resp;
     use crate::cluster::{ClusterState, NodeId, NodeRole};
+    use crate::resp::Resp;
+    use crate::tests::helper::{
+        create_connection_context, create_server_context, create_server_context_with_cluster,
+        run_cmd,
+    };
     use bytes::Bytes;
 
     #[tokio::test]
@@ -30,7 +33,7 @@ mod tests {
 
         let res = run_cmd(vec!["CLUSTER", "NODES"], &mut conn_ctx, &server_ctx).await;
         match res {
-            Resp::BulkString(Some(_)) => {},
+            Resp::BulkString(Some(_)) => {}
             _ => panic!("Expected NODES BulkString, got {:?}", res),
         }
     }
@@ -40,7 +43,12 @@ mod tests {
         let server_ctx = create_server_context_with_cluster();
         let mut conn_ctx = create_connection_context();
 
-        let res = run_cmd(vec!["CLUSTER", "ADDSLOTS", "0", "1", "2"], &mut conn_ctx, &server_ctx).await;
+        let res = run_cmd(
+            vec!["CLUSTER", "ADDSLOTS", "0", "1", "2"],
+            &mut conn_ctx,
+            &server_ctx,
+        )
+        .await;
         assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
 
         let res = run_cmd(vec!["CLUSTER", "SLOTS"], &mut conn_ctx, &server_ctx).await;
@@ -61,22 +69,37 @@ mod tests {
             Resp::Integer(n) => n,
             _ => panic!("Expected Integer for KEYSLOT, got {:?}", res),
         };
-        run_cmd(vec!["CLUSTER", "ADDSLOTS", &slot.to_string()], &mut conn_ctx, &server_ctx).await;
+        run_cmd(
+            vec!["CLUSTER", "ADDSLOTS", &slot.to_string()],
+            &mut conn_ctx,
+            &server_ctx,
+        )
+        .await;
 
         // Insert key in the assigned slot
         run_cmd(vec!["SET", "k1", "v1"], &mut conn_ctx, &server_ctx).await;
 
         // Count keys in that slot should be >= 1
-        let res = run_cmd(vec!["CLUSTER", "COUNTKEYSINSLOT", &slot.to_string()], &mut conn_ctx, &server_ctx).await;
+        let res = run_cmd(
+            vec!["CLUSTER", "COUNTKEYSINSLOT", &slot.to_string()],
+            &mut conn_ctx,
+            &server_ctx,
+        )
+        .await;
         match res {
             Resp::Integer(n) => assert!(n >= 1),
             _ => panic!("Expected Integer for COUNTKEYSINSLOT, got {:?}", res),
         }
 
         // Get some keys in that slot
-        let res = run_cmd(vec!["CLUSTER", "GETKEYSINSLOT", &slot.to_string(), "10"], &mut conn_ctx, &server_ctx).await;
+        let res = run_cmd(
+            vec!["CLUSTER", "GETKEYSINSLOT", &slot.to_string(), "10"],
+            &mut conn_ctx,
+            &server_ctx,
+        )
+        .await;
         match res {
-            Resp::Array(Some(_)) => {},
+            Resp::Array(Some(_)) => {}
             _ => panic!("Expected Array for GETKEYSINSLOT, got {:?}", res),
         }
     }
@@ -87,15 +110,30 @@ mod tests {
         let mut conn_ctx = create_connection_context();
 
         // MEET a new node
-        let res = run_cmd(vec!["CLUSTER", "MEET", "1.2.3.4", "7000"], &mut conn_ctx, &server_ctx).await;
+        let res = run_cmd(
+            vec!["CLUSTER", "MEET", "1.2.3.4", "7000"],
+            &mut conn_ctx,
+            &server_ctx,
+        )
+        .await;
         assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
 
         // SETSLOT STABLE (arbitrary slot)
-        let res = run_cmd(vec!["CLUSTER", "SETSLOT", "123", "STABLE"], &mut conn_ctx, &server_ctx).await;
+        let res = run_cmd(
+            vec!["CLUSTER", "SETSLOT", "123", "STABLE"],
+            &mut conn_ctx,
+            &server_ctx,
+        )
+        .await;
         assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
 
         // FORGET the met node (has no slots so should be OK)
-        let res = run_cmd(vec!["CLUSTER", "FORGET", "1.2.3.4:7000"], &mut conn_ctx, &server_ctx).await;
+        let res = run_cmd(
+            vec!["CLUSTER", "FORGET", "1.2.3.4:7000"],
+            &mut conn_ctx,
+            &server_ctx,
+        )
+        .await;
         assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
     }
 
@@ -104,11 +142,20 @@ mod tests {
         let server_ctx = create_server_context_with_cluster();
         let mut conn_ctx = create_connection_context();
 
-        let res = run_cmd(vec!["CLUSTER", "MEET", "127.0.0.1", "7001"], &mut conn_ctx, &server_ctx).await;
+        let res = run_cmd(
+            vec!["CLUSTER", "MEET", "127.0.0.1", "7001"],
+            &mut conn_ctx,
+            &server_ctx,
+        )
+        .await;
         assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
 
         let remote_text = {
-            let mut remote = ClusterState::new(NodeId("remote-node-id".to_string()), "127.0.0.1".to_string(), 7001);
+            let mut remote = ClusterState::new(
+                NodeId("remote-node-id".to_string()),
+                "127.0.0.1".to_string(),
+                7001,
+            );
             let rid = remote.myself.clone();
             remote.add_slots(&rid, &[0, 1, 2]).unwrap();
             let mut s = remote.nodes_overview().join("\n");
@@ -132,7 +179,15 @@ mod tests {
         let remote_text = {
             let master_id = NodeId("master-1".to_string());
             let mut remote = ClusterState::new(master_id.clone(), "127.0.0.1".to_string(), 7001);
-            remote.add_node(NodeId("replica-1".to_string()), "127.0.0.1".to_string(), 7002, NodeRole::Replica, Some(master_id.clone())).unwrap();
+            remote
+                .add_node(
+                    NodeId("replica-1".to_string()),
+                    "127.0.0.1".to_string(),
+                    7002,
+                    NodeRole::Replica,
+                    Some(master_id.clone()),
+                )
+                .unwrap();
             let mut s = remote.nodes_overview().join("\n");
             s.push('\n');
             s
@@ -153,7 +208,14 @@ mod tests {
         {
             let mut st = server_ctx.cluster.write().unwrap();
             let master_id = NodeId("m-1".to_string());
-            st.add_node(master_id.clone(), "127.0.0.1".to_string(), 7001, NodeRole::Master, None).unwrap();
+            st.add_node(
+                master_id.clone(),
+                "127.0.0.1".to_string(),
+                7001,
+                NodeRole::Master,
+                None,
+            )
+            .unwrap();
             st.add_slots(&master_id, &[0, 1, 2]).unwrap();
             let my = st.myself.clone();
             if let Some(me) = st.nodes.get_mut(&my) {
@@ -179,7 +241,14 @@ mod tests {
         {
             let mut st = server_ctx.cluster.write().unwrap();
             let remote_id = NodeId("remote-1".to_string());
-            st.add_node(remote_id.clone(), "10.0.0.1".to_string(), 7001, NodeRole::Master, None).unwrap();
+            st.add_node(
+                remote_id.clone(),
+                "10.0.0.1".to_string(),
+                7001,
+                NodeRole::Master,
+                None,
+            )
+            .unwrap();
             let slot = ClusterState::key_slot("moved_key");
             st.add_slots(&remote_id, &[slot]).unwrap();
         }
@@ -198,7 +267,12 @@ mod tests {
     async fn test_cluster_crossslot_error_for_multi_key() {
         let server_ctx = create_server_context_with_cluster();
         let mut conn_ctx = create_connection_context();
-        let res = run_cmd(vec!["MSET", "k1", "v1", "k2", "v2"], &mut conn_ctx, &server_ctx).await;
+        let res = run_cmd(
+            vec!["MSET", "k1", "v1", "k2", "v2"],
+            &mut conn_ctx,
+            &server_ctx,
+        )
+        .await;
         match res {
             Resp::Error(e) => assert!(e.starts_with("CROSSSLOT")),
             _ => panic!("Expected CROSSSLOT error, got {:?}", res),
@@ -214,7 +288,14 @@ mod tests {
         {
             let mut st = server_ctx.cluster.write().unwrap();
             let remote_id = NodeId("1.1.1.1:7001".to_string());
-            st.add_node(remote_id.clone(), "1.1.1.1".to_string(), 7001, NodeRole::Master, None).unwrap();
+            st.add_node(
+                remote_id.clone(),
+                "1.1.1.1".to_string(),
+                7001,
+                NodeRole::Master,
+                None,
+            )
+            .unwrap();
             st.slot_state[slot as usize] = crate::cluster::SlotState::Migrating { to: remote_id };
         }
         let res = run_cmd(vec!["SET", key, "v"], &mut conn_ctx, &server_ctx).await;
@@ -236,7 +317,14 @@ mod tests {
         {
             let mut st = server_ctx.cluster.write().unwrap();
             let from_id = NodeId("2.2.2.2:7002".to_string());
-            st.add_node(from_id.clone(), "2.2.2.2".to_string(), 7002, NodeRole::Master, None).unwrap();
+            st.add_node(
+                from_id.clone(),
+                "2.2.2.2".to_string(),
+                7002,
+                NodeRole::Master,
+                None,
+            )
+            .unwrap();
             st.slot_state[slot as usize] = crate::cluster::SlotState::Importing { from: from_id };
         }
         let res = run_cmd(vec!["SET", key, "v"], &mut conn_ctx, &server_ctx).await;
@@ -258,7 +346,14 @@ mod tests {
         {
             let mut st = server_ctx.cluster.write().unwrap();
             let from_id = NodeId("3.3.3.3:7003".to_string());
-            st.add_node(from_id.clone(), "3.3.3.3".to_string(), 7003, NodeRole::Master, None).unwrap();
+            st.add_node(
+                from_id.clone(),
+                "3.3.3.3".to_string(),
+                7003,
+                NodeRole::Master,
+                None,
+            )
+            .unwrap();
             let my = st.myself.clone();
             st.add_slots(&my, &[slot]).unwrap();
             st.slot_state[slot as usize] = crate::cluster::SlotState::Importing { from: from_id };
@@ -274,7 +369,14 @@ mod tests {
         {
             let mut st = server_ctx.cluster.write().unwrap();
             let master_id = NodeId("ms-1".to_string());
-            st.add_node(master_id.clone(), "127.0.0.1".to_string(), 7001, NodeRole::Master, None).unwrap();
+            st.add_node(
+                master_id.clone(),
+                "127.0.0.1".to_string(),
+                7001,
+                NodeRole::Master,
+                None,
+            )
+            .unwrap();
             st.add_slots(&master_id, &[0]).unwrap();
             let my = st.myself.clone();
             if let Some(me) = st.nodes.get_mut(&my) {
@@ -314,11 +416,16 @@ mod tests {
     async fn test_cluster_flushslots_removes_all_slots() {
         let server_ctx = create_server_context_with_cluster();
         let mut conn_ctx = create_connection_context();
-        
+
         // Add some slots first
-        let res = run_cmd(vec!["CLUSTER", "ADDSLOTS", "0", "1", "2"], &mut conn_ctx, &server_ctx).await;
+        let res = run_cmd(
+            vec!["CLUSTER", "ADDSLOTS", "0", "1", "2"],
+            &mut conn_ctx,
+            &server_ctx,
+        )
+        .await;
         assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
-        
+
         // Verify slots are assigned (merged into 1 range)
         {
             let st = server_ctx.cluster.read().unwrap();
@@ -328,11 +435,11 @@ mod tests {
             assert_eq!(node.slots[0].start, 0);
             assert_eq!(node.slots[0].end, 2);
         }
-        
+
         // Flush all slots
         let res = run_cmd(vec!["CLUSTER", "FLUSHSLOTS"], &mut conn_ctx, &server_ctx).await;
         assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
-        
+
         // Verify slots are removed
         {
             let st = server_ctx.cluster.read().unwrap();
@@ -346,16 +453,16 @@ mod tests {
     async fn test_cluster_bumpepoch_increments_epoch() {
         let server_ctx = create_server_context_with_cluster();
         let mut conn_ctx = create_connection_context();
-        
+
         let initial_epoch = {
             let st = server_ctx.cluster.read().unwrap();
             st.current_epoch
         };
-        
+
         // Bump epoch
         let res = run_cmd(vec!["CLUSTER", "BUMPEPOCH"], &mut conn_ctx, &server_ctx).await;
         assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
-        
+
         // Verify epoch was incremented
         {
             let st = server_ctx.cluster.read().unwrap();
@@ -367,7 +474,7 @@ mod tests {
     async fn test_cluster_saveconfig_returns_ok() {
         let server_ctx = create_server_context_with_cluster();
         let mut conn_ctx = create_connection_context();
-        
+
         let res = run_cmd(vec!["CLUSTER", "SAVECONFIG"], &mut conn_ctx, &server_ctx).await;
         assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
     }
@@ -376,25 +483,35 @@ mod tests {
     async fn test_cluster_set_config_epoch_sets_initial_epoch() {
         let server_ctx = create_server_context_with_cluster();
         let mut conn_ctx = create_connection_context();
-        
+
         // Reset epoch to 0 first
         {
             let mut st = server_ctx.cluster.write().unwrap();
             st.current_epoch = 0;
         }
-        
+
         // Set config epoch
-        let res = run_cmd(vec!["CLUSTER", "SET-CONFIG-EPOCH", "123"], &mut conn_ctx, &server_ctx).await;
+        let res = run_cmd(
+            vec!["CLUSTER", "SET-CONFIG-EPOCH", "123"],
+            &mut conn_ctx,
+            &server_ctx,
+        )
+        .await;
         assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
-        
+
         // Verify epoch was set
         {
             let st = server_ctx.cluster.read().unwrap();
             assert_eq!(st.current_epoch, 123);
         }
-        
+
         // Try to set again - should fail
-        let res = run_cmd(vec!["CLUSTER", "SET-CONFIG-EPOCH", "456"], &mut conn_ctx, &server_ctx).await;
+        let res = run_cmd(
+            vec!["CLUSTER", "SET-CONFIG-EPOCH", "456"],
+            &mut conn_ctx,
+            &server_ctx,
+        )
+        .await;
         match res {
             Resp::Error(msg) => assert!(msg.contains("Node already has a config epoch")),
             _ => panic!("Expected error, got {:?}", res),
@@ -405,7 +522,7 @@ mod tests {
     async fn test_cluster_links_returns_empty_array() {
         let server_ctx = create_server_context_with_cluster();
         let mut conn_ctx = create_connection_context();
-        
+
         let res = run_cmd(vec!["CLUSTER", "LINKS"], &mut conn_ctx, &server_ctx).await;
         match res {
             Resp::Array(Some(links)) => assert_eq!(links.len(), 0),
@@ -417,12 +534,12 @@ mod tests {
     async fn test_cluster_myshardid_returns_node_id() {
         let server_ctx = create_server_context_with_cluster();
         let mut conn_ctx = create_connection_context();
-        
+
         let expected_id = {
             let st = server_ctx.cluster.read().unwrap();
             st.myself.0.clone()
         };
-        
+
         let res = run_cmd(vec!["CLUSTER", "MYSHARDID"], &mut conn_ctx, &server_ctx).await;
         match res {
             Resp::BulkString(Some(id)) => assert_eq!(id, Bytes::from(expected_id)),
@@ -434,20 +551,31 @@ mod tests {
     async fn test_cluster_saveconfig_persists_to_node_conf() {
         let server_ctx = create_server_context_with_cluster();
         let mut conn_ctx = create_connection_context();
-        let _ = run_cmd(vec!["CLUSTER", "ADDSLOTS", "0", "1", "2"], &mut conn_ctx, &server_ctx).await;
+        let _ = run_cmd(
+            vec!["CLUSTER", "ADDSLOTS", "0", "1", "2"],
+            &mut conn_ctx,
+            &server_ctx,
+        )
+        .await;
         let _ = run_cmd(vec!["CLUSTER", "BUMPEPOCH"], &mut conn_ctx, &server_ctx).await;
         let _ = run_cmd(vec!["CLUSTER", "BUMPEPOCH"], &mut conn_ctx, &server_ctx).await;
         let _ = run_cmd(vec!["CLUSTER", "BUMPEPOCH"], &mut conn_ctx, &server_ctx).await;
         let res = run_cmd(vec!["CLUSTER", "SAVECONFIG"], &mut conn_ctx, &server_ctx).await;
         assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
-        let path = std::path::Path::new(&server_ctx.config.dir).join(&server_ctx.config.cluster_config_file);
+        let path = std::path::Path::new(&server_ctx.config.dir)
+            .join(&server_ctx.config.cluster_config_file);
         assert!(path.exists());
         let text = std::fs::read_to_string(&path).unwrap();
         let mut tmp = {
             let st = server_ctx.cluster.read().unwrap();
-            crate::cluster::ClusterState::new(st.myself.clone(), server_ctx.config.bind.clone(), server_ctx.config.port)
+            crate::cluster::ClusterState::new(
+                st.myself.clone(),
+                server_ctx.config.bind.clone(),
+                server_ctx.config.port,
+            )
         };
-        tmp.load_config_text(&text, &server_ctx.config.bind, server_ctx.config.port).unwrap();
+        tmp.load_config_text(&text, &server_ctx.config.bind, server_ctx.config.port)
+            .unwrap();
         assert_eq!(tmp.current_epoch, 3);
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir_all(std::path::Path::new(&server_ctx.config.dir));
@@ -466,7 +594,8 @@ mod tests {
         };
         {
             let mut st = server_ctx.cluster.write().unwrap();
-            st.load_config_text(&text, &server_ctx.config.bind, server_ctx.config.port).unwrap();
+            st.load_config_text(&text, &server_ctx.config.bind, server_ctx.config.port)
+                .unwrap();
         }
         {
             let st = server_ctx.cluster.read().unwrap();

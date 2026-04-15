@@ -1,4 +1,7 @@
 use crate::aof::{Aof, AppendFsync, start_aof_task};
+use crate::cmd::ConnectionContext;
+use crate::cmd::ServerContext;
+use crate::cmd::process_frame;
 use crate::cmd::scripting;
 use crate::conf::Config;
 use crate::db::Db;
@@ -6,9 +9,6 @@ use crate::resp::Resp;
 use bytes::Bytes;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::cmd::ServerContext;
-use crate::cmd::ConnectionContext;
-use crate::cmd::process_frame;
 
 fn temp_file() -> String {
     let now = SystemTime::now()
@@ -30,17 +30,15 @@ async fn test_aof_hang_reproduction() {
 
     let databases = Arc::new(vec![RwLock::new(Db::default())]);
     let script_manager = scripting::create_script_manager();
-    
+
     // Initialize AOF exactly like server.rs: load first, then hand off to task.
     let aof = Aof::new(&path, config.appendfsync)
-            .await
-            .expect("failed to open AOF file");
-
-    let mut server_ctx : ServerContext = crate::tests::helper::create_server_context();
-    Arc::make_mut(&mut server_ctx.config).appendfilename = path.to_string();
-    aof.load(&server_ctx)
         .await
-        .expect("failed to load AOF");
+        .expect("failed to open AOF file");
+
+    let mut server_ctx: ServerContext = crate::tests::helper::create_server_context();
+    Arc::make_mut(&mut server_ctx.config).appendfilename = path.to_string();
+    aof.load(&server_ctx).await.expect("failed to load AOF");
 
     let aof_writer = start_aof_task(aof);
 
@@ -55,7 +53,9 @@ async fn test_aof_hang_reproduction() {
         pubsub_channels: Arc::new(dashmap::DashMap::new()),
         pubsub_patterns: Arc::new(dashmap::DashMap::new()),
         run_id: Arc::new(RwLock::new("test_run_id".to_string())),
-        replid2: Arc::new(RwLock::new("0000000000000000000000000000000000000000".to_string())),
+        replid2: Arc::new(RwLock::new(
+            "0000000000000000000000000000000000000000".to_string(),
+        )),
         second_repl_offset: Arc::new(std::sync::atomic::AtomicI64::new(-1)),
         start_time: std::time::Instant::now(),
         client_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -124,14 +124,15 @@ async fn test_aof_hang_reproduction() {
     // Wrap with timeout to detect hang
     let result = tokio::time::timeout(tokio::time::Duration::from_secs(5), async {
         let (res, cmd_to_log) = process_frame(req, &mut conn_ctx, &server_ctx).await;
-        
+
         if let Some(cmd) = cmd_to_log {
             if let Some(aof) = &server_ctx.aof {
                 aof.append(&cmd).await;
             }
         }
         res
-    }).await;
+    })
+    .await;
 
     // Cleanup
     let _ = tokio::fs::remove_file(&path).await;

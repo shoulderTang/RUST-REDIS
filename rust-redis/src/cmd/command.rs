@@ -1,6 +1,6 @@
+use crate::cmd::{command_name, get_command_keys};
 use crate::resp::Resp;
 use bytes::Bytes;
-use crate::cmd::{get_command_keys, command_name};
 
 struct CommandInfo {
     name: &'static str,
@@ -1587,7 +1587,9 @@ pub fn command(items: &[Resp]) -> Resp {
             }
             "GETKEYS" => {
                 if items.len() < 3 {
-                    return Resp::Error("ERR wrong number of arguments for 'command|getkeys' command".to_string());
+                    return Resp::Error(
+                        "ERR wrong number of arguments for 'command|getkeys' command".to_string(),
+                    );
                 }
                 let cmd_bytes = match &items[2] {
                     Resp::BulkString(Some(b)) => b,
@@ -1596,13 +1598,16 @@ pub fn command(items: &[Resp]) -> Resp {
                 };
                 let cmd_type = command_name(cmd_bytes);
                 if cmd_type == crate::cmd::Command::Unknown {
-                    return Resp::Error(format!("ERR Unknown command '{}'", String::from_utf8_lossy(cmd_bytes)));
+                    return Resp::Error(format!(
+                        "ERR Unknown command '{}'",
+                        String::from_utf8_lossy(cmd_bytes)
+                    ));
                 }
 
                 let keys = get_command_keys(cmd_type, &items[2..]);
                 let mut res = Vec::new();
                 for key in keys {
-                    res.push(Resp::BulkString(Some(Bytes::from(key))));
+                    res.push(Resp::BulkString(Some(Bytes::copy_from_slice(key))));
                 }
                 return Resp::Array(Some(res));
             }
@@ -1620,7 +1625,12 @@ pub fn command(items: &[Resp]) -> Resp {
                 }
                 return Resp::Array(Some(res));
             }
-            _ => return Resp::Error(format!("ERR unknown subcommand or wrong number of arguments for 'COMMAND {}'", subcommand)),
+            _ => {
+                return Resp::Error(format!(
+                    "ERR unknown subcommand or wrong number of arguments for 'COMMAND {}'",
+                    subcommand
+                ));
+            }
         }
     }
 
@@ -1636,7 +1646,7 @@ fn get_command_info(cmd: &CommandInfo) -> Resp {
     let mut info = Vec::new();
     info.push(Resp::SimpleString(Bytes::from(cmd.name)));
     info.push(Resp::Integer(cmd.arity));
-    
+
     let mut flags = Vec::new();
     for flag in cmd.flags {
         flags.push(Resp::SimpleString(Bytes::from(*flag)));

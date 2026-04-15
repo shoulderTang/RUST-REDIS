@@ -1,5 +1,5 @@
-use crate::tests::helper::{create_server_context, create_connection_context, run_cmd};
 use crate::resp::Resp;
+use crate::tests::helper::{create_connection_context, create_server_context, run_cmd};
 use bytes::Bytes;
 
 #[tokio::test]
@@ -10,19 +10,33 @@ async fn test_replicaof_and_role() {
     let res = run_cmd(vec!["ROLE"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(arr)) => {
-            assert_eq!(arr.get(0), Some(&Resp::BulkString(Some(Bytes::from("master")))));
+            assert_eq!(
+                arr.get(0),
+                Some(&Resp::BulkString(Some(Bytes::from("master"))))
+            );
         }
         _ => panic!("Expected ROLE array, got {:?}", res),
     }
 
-    let res = run_cmd(vec!["REPLICAOF", "127.0.0.1", "6379"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["REPLICAOF", "127.0.0.1", "6379"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
 
     let res = run_cmd(vec!["ROLE"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(arr)) => {
-            assert_eq!(arr.get(0), Some(&Resp::BulkString(Some(Bytes::from("slave")))));
-            assert_eq!(arr.get(1), Some(&Resp::BulkString(Some(Bytes::from("127.0.0.1")))));
+            assert_eq!(
+                arr.get(0),
+                Some(&Resp::BulkString(Some(Bytes::from("slave"))))
+            );
+            assert_eq!(
+                arr.get(1),
+                Some(&Resp::BulkString(Some(Bytes::from("127.0.0.1"))))
+            );
             assert_eq!(arr.get(2), Some(&Resp::Integer(6379)));
         }
         _ => panic!("Expected ROLE array as slave, got {:?}", res),
@@ -34,7 +48,10 @@ async fn test_replicaof_and_role() {
     let res = run_cmd(vec!["ROLE"], &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Array(Some(arr)) => {
-            assert_eq!(arr.get(0), Some(&Resp::BulkString(Some(Bytes::from("master")))));
+            assert_eq!(
+                arr.get(0),
+                Some(&Resp::BulkString(Some(Bytes::from("master"))))
+            );
         }
         _ => panic!("Expected ROLE array, got {:?}", res),
     }
@@ -65,8 +82,9 @@ async fn test_expire_propagation() {
         let expires_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_millis() as u64 + 100;
-        
+            .as_millis() as u64
+            + 100;
+
         let v = crate::db::Entry::new_with_expire(val, Some(expires_at));
         db.insert(bytes::Bytes::from(key), v);
     }
@@ -77,7 +95,7 @@ async fn test_expire_propagation() {
     // Check if we received DEL
     let mut received_del = false;
     let mut received_select = false;
-    
+
     while let Ok(frame) = rx.try_recv() {
         match frame {
             crate::resp::Resp::Array(Some(items)) => {
@@ -122,19 +140,24 @@ async fn test_wait_command() {
         Resp::Integer(i) => assert_eq!(i, 0),
         _ => panic!("Expected Integer 0, got {:?}", res),
     }
-    assert!(elapsed >= 100, "Should wait at least 100ms, waited {}ms", elapsed);
+    assert!(
+        elapsed >= 100,
+        "Should wait at least 100ms, waited {}ms",
+        elapsed
+    );
 
     // 3. Add a replica and simulate ACK
     // Update offset to 10
-    ctx.repl_offset.store(10, std::sync::atomic::Ordering::Relaxed);
-    
+    ctx.repl_offset
+        .store(10, std::sync::atomic::Ordering::Relaxed);
+
     // Add fake replica
     let (tx, _rx) = tokio::sync::mpsc::channel(100);
     ctx.replicas.insert(1, tx);
-    
+
     // Send ACK for offset 10
     ctx.replica_ack.insert(1, 10);
-    
+
     // WAIT 1 100 -> returns 1 immediately (because offset matched)
     let res = run_cmd(vec!["WAIT", "1", "100"], &mut conn_ctx, &ctx).await;
     match res {
@@ -143,8 +166,9 @@ async fn test_wait_command() {
     }
 
     // 4. Update offset to 20, replica still at 10
-    ctx.repl_offset.store(20, std::sync::atomic::Ordering::Relaxed);
-    
+    ctx.repl_offset
+        .store(20, std::sync::atomic::Ordering::Relaxed);
+
     // WAIT 1 500 -> blocks
     // We need to simulate ACK coming in asynchronously
     let ctx_clone = ctx.clone();
@@ -153,18 +177,27 @@ async fn test_wait_command() {
         // Simulate REPLCONF ACK 20
         let mut replica_conn_ctx = create_connection_context();
         replica_conn_ctx.id = 1; // Match the replica ID
-        
-        run_cmd(vec!["REPLCONF", "ACK", "20"], &mut replica_conn_ctx, &ctx_clone).await;
+
+        run_cmd(
+            vec!["REPLCONF", "ACK", "20"],
+            &mut replica_conn_ctx,
+            &ctx_clone,
+        )
+        .await;
     });
 
     let start = std::time::Instant::now();
     let res = run_cmd(vec!["WAIT", "1", "500"], &mut conn_ctx, &ctx).await;
     let elapsed = start.elapsed().as_millis();
-    
+
     match res {
         Resp::Integer(i) => assert_eq!(i, 1),
         _ => panic!("Expected Integer 1, got {:?}", res),
     }
     // It should wait at least ~100ms
-    assert!(elapsed >= 90, "Should wait at least ~100ms, waited {}ms", elapsed);
+    assert!(
+        elapsed >= 90,
+        "Should wait at least ~100ms, waited {}ms",
+        elapsed
+    );
 }

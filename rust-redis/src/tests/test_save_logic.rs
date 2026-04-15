@@ -1,4 +1,4 @@
-use crate::cmd::{process_frame, ConnectionContext, ServerContext};
+use crate::cmd::{ConnectionContext, ServerContext, process_frame};
 use crate::resp::Resp;
 use bytes::Bytes;
 use std::sync::Arc;
@@ -16,7 +16,7 @@ async fn test_auto_save() {
         params.clear();
         params.push((1, 1));
     }
-    
+
     // Set last save time to 2 seconds ago
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -31,14 +31,14 @@ async fn test_auto_save() {
         Resp::BulkString(Some(Bytes::from("bar"))),
     ]));
     process_frame(req, &mut conn_ctx, &server_ctx).await;
-    
+
     assert_eq!(server_ctx.dirty.load(Ordering::Relaxed), 1);
 
     // 3. Wait for the background save task to trigger (it runs every 1s)
     // In our test environment, we haven't started the background task yet because we are using create_server_context.
     // The background task is in run_server in main.rs.
     // For testing, we can manually run the check logic once.
-    
+
     let dirty = server_ctx.dirty.load(Ordering::Relaxed);
     let last_save = server_ctx.last_save_time.load(Ordering::Relaxed);
     let now = std::time::SystemTime::now()
@@ -56,7 +56,7 @@ async fn test_auto_save() {
     }
 
     assert!(trigger_save);
-    
+
     if trigger_save {
         crate::cmd::save::bgsave(&[], &server_ctx);
     }

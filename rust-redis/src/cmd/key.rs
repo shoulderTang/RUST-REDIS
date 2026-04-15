@@ -308,7 +308,7 @@ pub fn exists(items: &[Resp], db: &Db) -> Resp {
             Resp::SimpleString(s) => s,
             _ => continue,
         };
-        
+
         if let Some(entry) = db.get(key) {
             if !entry.is_expired() {
                 count += 1;
@@ -333,7 +333,7 @@ pub fn touch(items: &[Resp], db: &Db) -> Resp {
             Resp::SimpleString(s) => s,
             _ => continue,
         };
-        
+
         if let Some(entry) = db.get(key) {
             if !entry.is_expired() {
                 count += 1;
@@ -356,7 +356,7 @@ pub fn type_(items: &[Resp], db: &Db) -> Resp {
         Resp::SimpleString(s) => s,
         _ => return Resp::StaticError("ERR invalid key"),
     };
-    
+
     if let Some(entry) = db.get(key) {
         if entry.is_expired() {
             drop(entry);
@@ -381,9 +381,9 @@ pub fn type_(items: &[Resp], db: &Db) -> Resp {
 
 pub fn flushdb(items: &[Resp], db: &Db) -> Resp {
     if items.len() > 2 {
-         // Redis 6.2 supports FLUSHDB [ASYNC|SYNC]
+        // Redis 6.2 supports FLUSHDB [ASYNC|SYNC]
     }
-    
+
     db.clear();
     Resp::SimpleString(Bytes::from("OK"))
 }
@@ -394,7 +394,7 @@ pub fn flushall(items: &[Resp], databases: &Arc<Vec<RwLock<Db>>>) -> Resp {
     if items.len() > 2 {
         // Just warning or handling if needed. For now simple clear.
     }
-    
+
     for db_lock in databases.iter() {
         db_lock.read().unwrap().clear();
     }
@@ -403,7 +403,7 @@ pub fn flushall(items: &[Resp], databases: &Arc<Vec<RwLock<Db>>>) -> Resp {
 
 pub fn dbsize(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 1 {
-         return Resp::StaticError("ERR wrong number of arguments for 'DBSIZE'");
+        return Resp::StaticError("ERR wrong number of arguments for 'DBSIZE'");
     }
     Resp::Integer(db.len() as i64)
 }
@@ -459,7 +459,10 @@ pub fn copy(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &Serve
         }
     }
 
-    let src_db = server_ctx.databases[conn_ctx.db_index].read().unwrap().clone();
+    let src_db = server_ctx.databases[conn_ctx.db_index]
+        .read()
+        .unwrap()
+        .clone();
     let dst_db = server_ctx.databases[db_idx].read().unwrap().clone();
 
     if let Some(entry) = src_db.get(&source) {
@@ -527,12 +530,8 @@ pub fn object(items: &[Resp], db: &Db) -> Resp {
                 let idle = crate::clock::now_secs().saturating_sub(entry.lru);
                 Resp::Integer(idle as i64)
             }
-            "FREQ" => {
-                Resp::Integer(entry.lfu as i64)
-            }
-            "REFCOUNT" => {
-                Resp::Integer(1)
-            }
+            "FREQ" => Resp::Integer(entry.lfu as i64),
+            "REFCOUNT" => Resp::Integer(1),
             "HELP" => {
                 let help = vec![
                     "OBJECT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:",
@@ -548,23 +547,26 @@ pub fn object(items: &[Resp], db: &Db) -> Resp {
                 }
                 Resp::Array(Some(res))
             }
-            _ => Resp::Error(format!("ERR Unknown subcommand or wrong number of arguments for 'OBJECT {}'", subcommand)),
+            _ => Resp::Error(format!(
+                "ERR Unknown subcommand or wrong number of arguments for 'OBJECT {}'",
+                subcommand
+            )),
         }
     } else {
         if subcommand == "HELP" {
-             let help = vec![
-                    "OBJECT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:",
-                    "ENCODING <key> - Return the internal encoding of the object.",
-                    "FREQ <key> - Return the LFU access frequency of the object.",
-                    "IDLETIME <key> - Return the seconds since the last access to the object.",
-                    "REFCOUNT <key> - Return the number of references of the object.",
-                    "HELP - Prints this help message.",
-                ];
-                let mut res = Vec::new();
-                for line in help {
-                    res.push(Resp::SimpleString(Bytes::from(line)));
-                }
-                return Resp::Array(Some(res));
+            let help = vec![
+                "OBJECT <subcommand> [<arg> [value] [opt] ...]. Subcommands are:",
+                "ENCODING <key> - Return the internal encoding of the object.",
+                "FREQ <key> - Return the LFU access frequency of the object.",
+                "IDLETIME <key> - Return the seconds since the last access to the object.",
+                "REFCOUNT <key> - Return the number of references of the object.",
+                "HELP - Prints this help message.",
+            ];
+            let mut res = Vec::new();
+            for line in help {
+                res.push(Resp::SimpleString(Bytes::from(line)));
+            }
+            return Resp::Array(Some(res));
         }
         Resp::BulkString(None)
     }
@@ -574,24 +576,24 @@ pub fn keys(items: &[Resp], db: &Db) -> Resp {
     if items.len() != 2 {
         return Resp::StaticError("ERR wrong number of arguments for 'KEYS'");
     }
-    
+
     let pattern = match &items[1] {
         Resp::BulkString(Some(b)) => b,
         Resp::SimpleString(s) => s,
         _ => return Resp::StaticError("ERR invalid pattern"),
     };
-    
+
     let mut matched_keys = Vec::new();
     for r in db.iter() {
         let key = r.key();
         if match_pattern(pattern, key) {
-             // Check expiration
-             if !r.value().is_expired() {
-                 matched_keys.push(Resp::BulkString(Some(key.clone())));
-             }
+            // Check expiration
+            if !r.value().is_expired() {
+                matched_keys.push(Resp::BulkString(Some(key.clone())));
+            }
         }
     }
-    
+
     Resp::Array(Some(matched_keys))
 }
 
@@ -601,7 +603,7 @@ pub fn match_pattern(pattern: &[u8], key: &[u8]) -> bool {
         Err(_) => return false,
     };
     let key_str = String::from_utf8_lossy(key);
-    
+
     match glob::Pattern::new(pattern_str) {
         Ok(p) => p.matches(&key_str),
         Err(_) => false,
@@ -638,7 +640,7 @@ pub fn rename(items: &[Resp], db: &Db) -> Resp {
 
     if let Some((_, entry)) = db.remove(&old_key) {
         if entry.is_expired() {
-             return Resp::StaticError("ERR no such key");
+            return Resp::StaticError("ERR no such key");
         }
         db.insert(new_key, entry);
         Resp::SimpleString(Bytes::from("OK"))
@@ -674,21 +676,21 @@ pub fn renamenx(items: &[Resp], db: &Db) -> Resp {
         }
         return Resp::Integer(0);
     }
-    
+
     if let Some(entry) = db.get(&new_key) {
-         if !entry.is_expired() {
-             return Resp::Integer(0);
-         }
-         drop(entry);
-         db.remove(&new_key);
+        if !entry.is_expired() {
+            return Resp::Integer(0);
+        }
+        drop(entry);
+        db.remove(&new_key);
     }
 
     if let Some((_, entry)) = db.remove(&old_key) {
-         if entry.is_expired() {
-             return Resp::StaticError("ERR no such key");
-         }
-         db.insert(new_key, entry);
-         Resp::Integer(1)
+        if entry.is_expired() {
+            return Resp::StaticError("ERR no such key");
+        }
+        db.insert(new_key, entry);
+        Resp::Integer(1)
     } else {
         Resp::StaticError("ERR no such key")
     }
@@ -710,7 +712,7 @@ pub fn persist(items: &[Resp], db: &Db) -> Resp {
             db.remove(&key);
             return Resp::Integer(0);
         }
-        
+
         if entry.expires_at.is_some() {
             entry.expires_at = None;
             return Resp::Integer(1);
@@ -719,7 +721,7 @@ pub fn persist(items: &[Resp], db: &Db) -> Resp {
     Resp::Integer(0)
 }
 
-use crate::cmd::{as_bytes, ConnectionContext, ServerContext};
+use crate::cmd::{ConnectionContext, ServerContext, as_bytes};
 
 pub fn move_(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) -> Resp {
     if items.len() != 3 {
@@ -756,7 +758,10 @@ pub fn move_(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &Serv
         return Resp::StaticError("ERR DB index is out of range");
     }
 
-    let src_db = server_ctx.databases[conn_ctx.db_index].read().unwrap().clone();
+    let src_db = server_ctx.databases[conn_ctx.db_index]
+        .read()
+        .unwrap()
+        .clone();
     let dst_db = server_ctx.databases[dst_idx].read().unwrap().clone();
 
     if let Some(entry) = src_db.get(&key) {
@@ -870,37 +875,41 @@ pub fn scan(items: &[Resp], db: &Db) -> Resp {
                 if idx + 1 >= items.len() {
                     return Resp::StaticError("ERR syntax error");
                 }
-                match_pattern_str = match &items[idx+1] {
+                match_pattern_str = match &items[idx + 1] {
                     Resp::BulkString(Some(b)) => Some(b.as_ref()),
                     Resp::SimpleString(s) => Some(s.as_ref()),
                     _ => return Resp::StaticError("ERR syntax error"),
                 };
                 idx += 2;
-            },
+            }
             "COUNT" => {
                 if idx + 1 >= items.len() {
                     return Resp::StaticError("ERR syntax error");
                 }
-                let count_bytes = match &items[idx+1] {
+                let count_bytes = match &items[idx + 1] {
                     Resp::BulkString(Some(b)) => b,
                     Resp::SimpleString(s) => s,
                     _ => return Resp::StaticError("ERR syntax error"),
                 };
                 let count_str = match std::str::from_utf8(count_bytes) {
                     Ok(s) => s,
-                    Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
+                    Err(_) => {
+                        return Resp::StaticError("ERR value is not an integer or out of range");
+                    }
                 };
                 count = match count_str.parse() {
                     Ok(i) => i,
-                    Err(_) => return Resp::StaticError("ERR value is not an integer or out of range"),
+                    Err(_) => {
+                        return Resp::StaticError("ERR value is not an integer or out of range");
+                    }
                 };
                 idx += 2;
-            },
+            }
             "TYPE" => {
                 if idx + 1 >= items.len() {
                     return Resp::StaticError("ERR syntax error");
                 }
-                let type_bytes = match &items[idx+1] {
+                let type_bytes = match &items[idx + 1] {
                     Resp::BulkString(Some(b)) => b,
                     Resp::SimpleString(s) => s,
                     _ => return Resp::StaticError("ERR syntax error"),
@@ -910,7 +919,7 @@ pub fn scan(items: &[Resp], db: &Db) -> Resp {
                     Err(_) => return Resp::StaticError("ERR syntax error"),
                 };
                 idx += 2;
-            },
+            }
             _ => return Resp::StaticError("ERR syntax error"),
         }
     }

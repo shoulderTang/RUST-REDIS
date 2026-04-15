@@ -1,4 +1,4 @@
-use crate::cmd::{process_frame, ConnectionContext, ServerContext};
+use crate::cmd::{ConnectionContext, ServerContext, process_frame};
 use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
@@ -35,16 +35,16 @@ async fn test_xadd() {
 #[tokio::test]
 async fn test_xread_block_cancellation() {
     let server_ctx = crate::tests::helper::create_server_context();
-    
+
     // Create shutdown channel
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    
+
     // 1. Start blocking XREAD
     let server_ctx_clone = server_ctx.clone();
     let handle = tokio::spawn(async move {
         // Create connection context with shutdown receiver
         let mut conn_ctx = crate::cmd::ConnectionContext::new(1, None, None, Some(shutdown_rx));
-        
+
         let args = vec![
             Resp::BulkString(Some(Bytes::from("XREAD"))),
             Resp::BulkString(Some(Bytes::from("BLOCK"))),
@@ -60,13 +60,18 @@ async fn test_xread_block_cancellation() {
 
     // Wait a bit to ensure blocking and count update
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    
+
     // Verify blocked client count is 1
-    assert_eq!(server_ctx.blocked_client_count.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(
+        server_ctx
+            .blocked_client_count
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
 
     // 2. Send shutdown signal
     let _ = shutdown_tx.send(true);
-    
+
     // 3. Verify XREAD returns nil
     let resp = handle.await.unwrap();
     if let Resp::BulkString(None) = resp {
@@ -74,9 +79,14 @@ async fn test_xread_block_cancellation() {
     } else {
         panic!("Expected Nil on cancellation, got {:?}", resp);
     }
-    
+
     // Verify blocked client count is 0
-    assert_eq!(server_ctx.blocked_client_count.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert_eq!(
+        server_ctx
+            .blocked_client_count
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
 }
 
 #[tokio::test]
@@ -134,7 +144,11 @@ async fn test_xlen_bug_repro() {
     ];
     let frame = Resp::Array(Some(args));
     let (resp, _) = process_frame(frame, &mut conn_ctx, &server_ctx).await;
-    assert_eq!(resp, Resp::Integer(1), "Single XADD with multiple fields should result in len 1");
+    assert_eq!(
+        resp,
+        Resp::Integer(1),
+        "Single XADD with multiple fields should result in len 1"
+    );
 
     // Scenario 2: Three XADDs with auto ID
     // XADD mystream2 * f1 v1
@@ -174,16 +188,20 @@ async fn test_xlen_bug_repro() {
     ];
     let frame = Resp::Array(Some(args));
     let (resp, _) = process_frame(frame, &mut conn_ctx, &server_ctx).await;
-    
+
     // If this assertion fails with 1, then the bug is reproduced.
-    assert_eq!(resp, Resp::Integer(3), "Three separate XADDs should result in len 3");
+    assert_eq!(
+        resp,
+        Resp::Integer(3),
+        "Three separate XADDs should result in len 3"
+    );
 }
 
 #[tokio::test]
 async fn test_xrevrange() {
     let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-    
+
     // XADD key 100-1 field value
     let args = vec![
         Resp::BulkString(Some(Bytes::from("XADD"))),
@@ -376,28 +394,28 @@ async fn test_xread() {
     if let Resp::Array(Some(arr)) = resp {
         assert_eq!(arr.len(), 1);
         if let Resp::Array(Some(stream_res)) = &arr[0] {
-             // [key, [entries]]
-             assert_eq!(stream_res.len(), 2);
-             if let Resp::BulkString(Some(key)) = &stream_res[0] {
-                 assert_eq!(key, &Bytes::from("mystream"));
-             } else {
-                 panic!("Expected key");
-             }
-             if let Resp::Array(Some(entries)) = &stream_res[1] {
-                 assert_eq!(entries.len(), 2);
-                 if let Resp::Array(Some(entry)) = &entries[0] {
-                     if let Resp::BulkString(Some(id)) = &entry[0] {
-                         assert_eq!(id, &Bytes::from("100-1"));
-                     }
-                 }
-                 if let Resp::Array(Some(entry)) = &entries[1] {
-                     if let Resp::BulkString(Some(id)) = &entry[0] {
-                         assert_eq!(id, &Bytes::from("100-2"));
-                     }
-                 }
-             } else {
-                 panic!("Expected entries array");
-             }
+            // [key, [entries]]
+            assert_eq!(stream_res.len(), 2);
+            if let Resp::BulkString(Some(key)) = &stream_res[0] {
+                assert_eq!(key, &Bytes::from("mystream"));
+            } else {
+                panic!("Expected key");
+            }
+            if let Resp::Array(Some(entries)) = &stream_res[1] {
+                assert_eq!(entries.len(), 2);
+                if let Resp::Array(Some(entry)) = &entries[0] {
+                    if let Resp::BulkString(Some(id)) = &entry[0] {
+                        assert_eq!(id, &Bytes::from("100-1"));
+                    }
+                }
+                if let Resp::Array(Some(entry)) = &entries[1] {
+                    if let Resp::BulkString(Some(id)) = &entry[0] {
+                        assert_eq!(id, &Bytes::from("100-2"));
+                    }
+                }
+            } else {
+                panic!("Expected entries array");
+            }
         }
     } else {
         panic!("Expected Array, got {:?}", resp);
@@ -414,17 +432,17 @@ async fn test_xread() {
     ];
     let frame = Resp::Array(Some(args));
     let (resp, _) = process_frame(frame, &mut conn_ctx, &server_ctx).await;
-    
+
     if let Resp::Array(Some(arr)) = resp {
         if let Resp::Array(Some(stream_res)) = &arr[0] {
-             if let Resp::Array(Some(entries)) = &stream_res[1] {
-                 assert_eq!(entries.len(), 1);
-                 if let Resp::Array(Some(entry)) = &entries[0] {
-                     if let Resp::BulkString(Some(id)) = &entry[0] {
-                         assert_eq!(id, &Bytes::from("100-1"));
-                     }
-                 }
-             }
+            if let Resp::Array(Some(entries)) = &stream_res[1] {
+                assert_eq!(entries.len(), 1);
+                if let Resp::Array(Some(entry)) = &entries[0] {
+                    if let Resp::BulkString(Some(id)) = &entry[0] {
+                        assert_eq!(id, &Bytes::from("100-1"));
+                    }
+                }
+            }
         }
     }
 
@@ -437,17 +455,17 @@ async fn test_xread() {
     ];
     let frame = Resp::Array(Some(args));
     let (resp, _) = process_frame(frame, &mut conn_ctx, &server_ctx).await;
-    
+
     if let Resp::Array(Some(arr)) = resp {
         if let Resp::Array(Some(stream_res)) = &arr[0] {
-             if let Resp::Array(Some(entries)) = &stream_res[1] {
-                 assert_eq!(entries.len(), 1);
-                 if let Resp::Array(Some(entry)) = &entries[0] {
-                     if let Resp::BulkString(Some(id)) = &entry[0] {
-                         assert_eq!(id, &Bytes::from("100-2"));
-                     }
-                 }
-             }
+            if let Resp::Array(Some(entries)) = &stream_res[1] {
+                assert_eq!(entries.len(), 1);
+                if let Resp::Array(Some(entry)) = &entries[0] {
+                    if let Resp::BulkString(Some(id)) = &entry[0] {
+                        assert_eq!(id, &Bytes::from("100-2"));
+                    }
+                }
+            }
         }
     }
 
@@ -460,7 +478,7 @@ async fn test_xread() {
     ];
     let frame = Resp::Array(Some(args));
     let (resp, _) = process_frame(frame, &mut conn_ctx, &server_ctx).await;
-    
+
     // Should be nil because no new items
     if let Resp::BulkString(None) = resp {
         // ok

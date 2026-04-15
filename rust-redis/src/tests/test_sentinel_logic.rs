@@ -1,6 +1,5 @@
-
-use std::sync::{Arc, RwLock};
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[path = "../sentinel.rs"]
@@ -9,7 +8,7 @@ mod sentinel;
 #[path = "../resp.rs"]
 mod resp;
 
-use sentinel::{MasterInstance, SentinelState, SentinelInstance};
+use sentinel::{MasterInstance, SentinelInstance, SentinelState};
 
 #[test]
 fn test_sdown_detection() {
@@ -20,7 +19,11 @@ fn test_sdown_detection() {
     let master_name = "mymaster".to_string();
     let mut master = MasterInstance::new(master_name.clone(), "127.0.0.1".to_string(), 6379, 2);
     master.down_after_period = 1000; // 1 second
-    master.last_pong_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64 - 2000; // 2 seconds ago
+    master.last_pong_time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+        - 2000; // 2 seconds ago
 
     {
         let mut masters = state.masters.write().unwrap();
@@ -31,8 +34,13 @@ fn test_sdown_detection() {
     if let Ok(masters) = state.masters.read() {
         if let Some(master_lock) = masters.get(&master_name) {
             if let Ok(mut master) = master_lock.write() {
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
-                if master.last_pong_time > 0 && now > master.last_pong_time + master.down_after_period {
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64;
+                if master.last_pong_time > 0
+                    && now > master.last_pong_time + master.down_after_period
+                {
                     if master.s_down_since_time == 0 {
                         master.s_down_since_time = now;
                     }
@@ -50,7 +58,7 @@ fn test_quorum_check() {
     let state = SentinelState::new(sentinel_ip, sentinel_port);
     let master_name = "mymaster".to_string();
     let mut master = MasterInstance::new(master_name.clone(), "127.0.0.1".to_string(), 6379, 2);
-    
+
     // Add known sentinels
     let s1 = SentinelInstance {
         ip: "127.0.0.1".to_string(),
@@ -81,11 +89,14 @@ fn test_connection_failure_triggers_sdown() {
     let sentinel_ip = "127.0.0.1".to_string();
     let sentinel_port = 26379;
     let state = SentinelState::new(sentinel_ip, sentinel_port);
-    
+
     let master_name = "mymaster".to_string();
     let mut master = MasterInstance::new(master_name.clone(), "127.0.0.1".to_string(), 6379, 2);
     master.down_after_period = 1000; // 1 second
-    master.last_pong_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64; // Current time
+    master.last_pong_time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64; // Current time
 
     {
         let mut masters = state.masters.write().unwrap();
@@ -104,7 +115,10 @@ fn test_connection_failure_triggers_sdown() {
     if let Ok(masters) = state.masters.read() {
         if let Some(master_lock) = masters.get(&master_name) {
             if let Ok(master) = master_lock.read() {
-                assert_eq!(master.last_pong_time, 0, "Connection failure should set last_pong_time to 0");
+                assert_eq!(
+                    master.last_pong_time, 0,
+                    "Connection failure should set last_pong_time to 0"
+                );
             }
         }
     }

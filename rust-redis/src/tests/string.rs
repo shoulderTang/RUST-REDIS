@@ -4,8 +4,8 @@ use crate::conf::Config;
 use crate::db::{Db, Value};
 use crate::resp::Resp;
 use bytes::Bytes;
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tokio::test]
 async fn test_set_get() {

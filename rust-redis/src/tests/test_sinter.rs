@@ -1,7 +1,7 @@
 use crate::resp::Resp;
+use crate::tests::helper::run_cmd;
 use bytes::Bytes;
 use std::collections::HashSet;
-use crate::tests::helper::run_cmd;
 
 #[tokio::test]
 async fn test_sinter() {
@@ -10,11 +10,21 @@ async fn test_sinter() {
 
     // Setup
     // s1: {a, b, c, d}
-    run_cmd(vec!["SADD", "s1", "a", "b", "c", "d"], &mut conn_ctx, &server_ctx).await;
+    run_cmd(
+        vec!["SADD", "s1", "a", "b", "c", "d"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     // s2: {c}
     run_cmd(vec!["SADD", "s2", "c"], &mut conn_ctx, &server_ctx).await;
     // s3: {a, c, e}
-    run_cmd(vec!["SADD", "s3", "a", "c", "e"], &mut conn_ctx, &server_ctx).await;
+    run_cmd(
+        vec!["SADD", "s3", "a", "c", "e"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
 
     // 1. SINTER s1 (should be same as SMEMBERS)
     let res = run_cmd(vec!["SINTER", "s1"], &mut conn_ctx, &server_ctx).await;
@@ -72,7 +82,9 @@ async fn test_sinter() {
             let mut members = HashSet::new();
             for item in items {
                 match item {
-                    Resp::BulkString(Some(b)) => { members.insert(b); },
+                    Resp::BulkString(Some(b)) => {
+                        members.insert(b);
+                    }
                     _ => panic!("Expected BulkString"),
                 }
             }
@@ -98,14 +110,24 @@ async fn test_sinter() {
 
     // 8. WRONGTYPE
     run_cmd(vec!["SET", "string_key", "val"], &mut conn_ctx, &server_ctx).await;
-    let res = run_cmd(vec!["SINTER", "string_key", "s1"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["SINTER", "string_key", "s1"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Error(msg) => assert!(msg.contains("WRONGTYPE")),
         _ => panic!("Expected Error"),
     }
-    
+
     // 9. WRONGTYPE second key
-    let res = run_cmd(vec!["SINTER", "s1", "string_key"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["SINTER", "s1", "string_key"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Error(msg) => assert!(msg.contains("WRONGTYPE")),
         _ => panic!("Expected Error"),

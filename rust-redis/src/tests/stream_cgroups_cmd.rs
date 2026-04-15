@@ -1,4 +1,4 @@
-use crate::cmd::{process_frame, ConnectionContext, ServerContext};
+use crate::cmd::{ConnectionContext, ServerContext, process_frame};
 use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
@@ -64,14 +64,14 @@ async fn test_xgroup_create_and_xreadgroup() {
     if let Resp::Array(Some(arr)) = resp {
         assert_eq!(arr.len(), 1);
         if let Resp::Array(Some(stream_res)) = &arr[0] {
-             if let Resp::Array(Some(entries)) = &stream_res[1] {
-                 assert_eq!(entries.len(), 1);
-                 if let Resp::Array(Some(entry)) = &entries[0] {
-                     if let Resp::BulkString(Some(id)) = &entry[0] {
-                         assert_eq!(id, &Bytes::from("100-1"));
-                     }
-                 }
-             }
+            if let Resp::Array(Some(entries)) = &stream_res[1] {
+                assert_eq!(entries.len(), 1);
+                if let Resp::Array(Some(entry)) = &entries[0] {
+                    if let Resp::BulkString(Some(id)) = &entry[0] {
+                        assert_eq!(id, &Bytes::from("100-1"));
+                    }
+                }
+            }
         }
     } else {
         panic!("Expected array response");
@@ -90,19 +90,19 @@ async fn test_xgroup_create_and_xreadgroup() {
         Resp::BulkString(Some(Bytes::from(">"))),
     ];
     let (resp, _) = process_frame(Resp::Array(Some(args)), &mut conn_ctx, &server_ctx).await;
-    
+
     // Expecting 100-2
     if let Resp::Array(Some(arr)) = resp {
         assert_eq!(arr.len(), 1);
         if let Resp::Array(Some(stream_res)) = &arr[0] {
-             if let Resp::Array(Some(entries)) = &stream_res[1] {
-                 assert_eq!(entries.len(), 1);
-                 if let Resp::Array(Some(entry)) = &entries[0] {
-                     if let Resp::BulkString(Some(id)) = &entry[0] {
-                         assert_eq!(id, &Bytes::from("100-2"));
-                     }
-                 }
-             }
+            if let Resp::Array(Some(entries)) = &stream_res[1] {
+                assert_eq!(entries.len(), 1);
+                if let Resp::Array(Some(entry)) = &entries[0] {
+                    if let Resp::BulkString(Some(id)) = &entry[0] {
+                        assert_eq!(id, &Bytes::from("100-2"));
+                    }
+                }
+            }
         }
     }
 
@@ -121,10 +121,10 @@ async fn test_xgroup_create_and_xreadgroup() {
 
     // Expecting 2 entries (100-1 and 100-2) in PEL
     if let Resp::Array(Some(arr)) = resp {
-         if let Resp::Array(Some(stream_res)) = &arr[0] {
-             if let Resp::Array(Some(entries)) = &stream_res[1] {
-                 assert_eq!(entries.len(), 2);
-             }
+        if let Resp::Array(Some(stream_res)) = &arr[0] {
+            if let Resp::Array(Some(entries)) = &stream_res[1] {
+                assert_eq!(entries.len(), 2);
+            }
         }
     }
 
@@ -156,15 +156,15 @@ async fn test_xgroup_create_and_xreadgroup() {
     let (resp, _) = process_frame(Resp::Array(Some(args)), &mut conn_ctx, &server_ctx).await;
 
     if let Resp::Array(Some(arr)) = resp {
-         if let Resp::Array(Some(stream_res)) = &arr[0] {
-             if let Resp::Array(Some(entries)) = &stream_res[1] {
-                 assert_eq!(entries.len(), 1);
-                 if let Resp::Array(Some(entry)) = &entries[0] {
-                     if let Resp::BulkString(Some(id)) = &entry[0] {
-                         assert_eq!(id, &Bytes::from("100-2"));
-                     }
-                 }
-             }
+        if let Resp::Array(Some(stream_res)) = &arr[0] {
+            if let Resp::Array(Some(entries)) = &stream_res[1] {
+                assert_eq!(entries.len(), 1);
+                if let Resp::Array(Some(entry)) = &entries[0] {
+                    if let Resp::BulkString(Some(id)) = &entry[0] {
+                        assert_eq!(id, &Bytes::from("100-2"));
+                    }
+                }
+            }
         }
     }
 }
@@ -204,7 +204,8 @@ async fn test_xreadgroup_block() {
             Resp::BulkString(Some(Bytes::from("mystream_block"))),
             Resp::BulkString(Some(Bytes::from(">"))),
         ];
-        let (resp, _) = process_frame(Resp::Array(Some(args)), &mut conn_ctx, &server_ctx_clone).await;
+        let (resp, _) =
+            process_frame(Resp::Array(Some(args)), &mut conn_ctx, &server_ctx_clone).await;
         resp
     });
 

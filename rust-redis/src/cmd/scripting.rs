@@ -1,16 +1,16 @@
 use super::{ConnectionContext, ServerContext};
+use crate::acl::Acl;
 use crate::aof::Aof;
 use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
-use crate::acl::Acl;
 use bytes::Bytes;
 use dashmap::DashMap;
 use mlua::prelude::*;
 use sha1::{Digest, Sha1};
 use std::sync::Arc;
-use tokio::task::block_in_place;
 use tokio::runtime::Handle;
+use tokio::task::block_in_place;
 
 pub struct ScriptManager {
     /// SHA1 → script source cache, shared across all connections.
@@ -94,7 +94,7 @@ fn lua_to_resp(value: LuaValue) -> Resp {
     }
 }
 
-async  fn redis_call_handler<'lua>(
+async fn redis_call_handler<'lua>(
     lua: &'lua Lua,
     args: LuaMultiValue<'lua>,
     raise_error: bool,
@@ -123,12 +123,17 @@ async  fn redis_call_handler<'lua>(
 
     let frame = Resp::Array(Some(resp_args));
     // Use a local db_index to ensure SELECT in Lua doesn't affect the client connection
-    let mut local_conn_ctx = ConnectionContext::new(conn_ctx.id, conn_ctx.client_fd, conn_ctx.msg_sender.clone(), conn_ctx.shutdown.clone());
+    let mut local_conn_ctx = ConnectionContext::new(
+        conn_ctx.id,
+        conn_ctx.client_fd,
+        conn_ctx.msg_sender.clone(),
+        conn_ctx.shutdown.clone(),
+    );
     local_conn_ctx.db_index = conn_ctx.db_index;
     local_conn_ctx.authenticated = conn_ctx.authenticated;
     local_conn_ctx.current_username = conn_ctx.current_username.clone();
     local_conn_ctx.is_lua = true;
-    
+
     let (res, _) = super::process_frame(frame, &mut local_conn_ctx, server_ctx).await;
 
     if raise_error {
@@ -194,9 +199,7 @@ async fn eval_script(
                 .create_async_function(move |lua, args| {
                     let server_ctx = server_ctx_clone.clone();
                     let conn_ctx = conn_ctx_clone.clone();
-                    async move {
-                        redis_call_handler(lua, args, true, &server_ctx, &conn_ctx).await
-                    }
+                    async move { redis_call_handler(lua, args, true, &server_ctx, &conn_ctx).await }
                 })
                 .unwrap();
 
@@ -235,7 +238,10 @@ pub async fn eval(
     server_ctx: &ServerContext,
 ) -> (Resp, Option<Resp>) {
     if items.len() < 3 {
-        return (Resp::Error("ERR wrong number of arguments for 'eval' command".to_string()), None);
+        return (
+            Resp::Error("ERR wrong number of arguments for 'eval' command".to_string()),
+            None,
+        );
     }
 
     let script = match &items[1] {
@@ -254,20 +260,18 @@ pub async fn eval(
     let keys_start = 3;
     let keys_end = keys_start + numkeys;
     if items.len() < keys_end {
-        return (Resp::Error("ERR wrong number of arguments for 'eval' command".to_string()), None);
+        return (
+            Resp::Error("ERR wrong number of arguments for 'eval' command".to_string()),
+            None,
+        );
     }
 
     let args_start = keys_end;
 
     let res = eval_script(
-        script,
-        items,
-        keys_start,
-        keys_end,
-        args_start,
-        conn_ctx,
-        server_ctx,
-    ).await;
+        script, items, keys_start, keys_end, args_start, conn_ctx, server_ctx,
+    )
+    .await;
     (res, None)
 }
 
@@ -277,7 +281,10 @@ pub async fn evalsha(
     server_ctx: &ServerContext,
 ) -> (Resp, Option<Resp>) {
     if items.len() < 3 {
-        return (Resp::Error("ERR wrong number of arguments for 'evalsha' command".to_string()), None);
+        return (
+            Resp::Error("ERR wrong number of arguments for 'evalsha' command".to_string()),
+            None,
+        );
     }
 
     let sha1 = match &items[1] {
@@ -288,7 +295,10 @@ pub async fn evalsha(
     let script = if let Some(s) = server_ctx.script_manager.cache.get(sha1) {
         s.clone()
     } else {
-        return (Resp::Error("NOSCRIPT No matching script. Please use EVAL.".to_string()), None);
+        return (
+            Resp::Error("NOSCRIPT No matching script. Please use EVAL.".to_string()),
+            None,
+        );
     };
 
     let numkeys = match &items[2] {
@@ -302,20 +312,18 @@ pub async fn evalsha(
     let keys_start = 3;
     let keys_end = keys_start + numkeys;
     if items.len() < keys_end {
-        return (Resp::Error("ERR wrong number of arguments for 'evalsha' command".to_string()), None);
+        return (
+            Resp::Error("ERR wrong number of arguments for 'evalsha' command".to_string()),
+            None,
+        );
     }
 
     let args_start = keys_end;
 
     let res = eval_script(
-        &script,
-        items,
-        keys_start,
-        keys_end,
-        args_start,
-        conn_ctx,
-        server_ctx,
-    ).await;
+        &script, items, keys_start, keys_end, args_start, conn_ctx, server_ctx,
+    )
+    .await;
     (res, None)
 }
 

@@ -192,7 +192,7 @@ async fn test_zpopmin_ops() {
 #[tokio::test]
 async fn test_bzpopmin_ops() {
     let server_ctx = crate::tests::helper::create_server_context();
-    
+
     // 1. Blocking wait
     let server_ctx_clone = server_ctx.clone();
     let handle = tokio::spawn(async move {
@@ -480,7 +480,7 @@ async fn test_zrevrange_ops() {
         }
         _ => panic!("expected Array"),
     }
-    
+
     // ZREVRANGE zset 0 -1 -> [m3, m2, m1]
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("ZREVRANGE"))),
@@ -595,7 +595,7 @@ async fn test_zrevrank_ops() {
     ]));
     let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
-        Resp::BulkString(None) => {},
+        Resp::BulkString(None) => {}
         _ => panic!("expected BulkString(None)"),
     }
 }

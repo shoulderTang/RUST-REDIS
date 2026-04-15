@@ -1,5 +1,5 @@
-use crate::cmd::{process_frame, ConnectionContext, ServerContext};
 use crate::cmd::scripting;
+use crate::cmd::{ConnectionContext, ServerContext, process_frame};
 use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
@@ -38,17 +38,17 @@ async fn test_sscan_basic() {
             assert_eq!(items.len(), 2);
             // Check cursor
             match &items[0] {
-                Resp::BulkString(Some(_)) => {},
+                Resp::BulkString(Some(_)) => {}
                 _ => panic!("expected BulkString cursor"),
             }
             // Check elements
             match &items[1] {
                 Resp::Array(Some(elements)) => {
                     assert!(elements.len() > 0);
-                },
+                }
                 _ => panic!("expected Array elements"),
             }
-        },
+        }
         _ => panic!("expected Array response"),
     }
 }
@@ -84,10 +84,10 @@ async fn test_sscan_match() {
                 Resp::Array(Some(elements)) => {
                     // Should find aa, ab, ac
                     assert_eq!(elements.len(), 3);
-                },
+                }
                 _ => panic!("expected Array elements"),
             }
-        },
+        }
         _ => panic!("expected Array response"),
     }
 }

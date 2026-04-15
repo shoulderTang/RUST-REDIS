@@ -1,6 +1,6 @@
 use crate::resp::Resp;
-use bytes::Bytes;
 use crate::tests::helper::run_cmd;
+use bytes::Bytes;
 
 #[tokio::test]
 async fn test_pushx() {
@@ -39,13 +39,27 @@ async fn test_pushx() {
     }
 
     // Verify content
-    let res = run_cmd(vec!["LRANGE", "mylist", "0", "-1"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["LRANGE", "mylist", "0", "-1"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 3);
-            match &items[0] { Resp::BulkString(Some(b)) => assert_eq!(b, &Bytes::from("b")), _ => panic!() }
-            match &items[1] { Resp::BulkString(Some(b)) => assert_eq!(b, &Bytes::from("a")), _ => panic!() }
-            match &items[2] { Resp::BulkString(Some(b)) => assert_eq!(b, &Bytes::from("c")), _ => panic!() }
+            match &items[0] {
+                Resp::BulkString(Some(b)) => assert_eq!(b, &Bytes::from("b")),
+                _ => panic!(),
+            }
+            match &items[1] {
+                Resp::BulkString(Some(b)) => assert_eq!(b, &Bytes::from("a")),
+                _ => panic!(),
+            }
+            match &items[2] {
+                Resp::BulkString(Some(b)) => assert_eq!(b, &Bytes::from("c")),
+                _ => panic!(),
+            }
         }
         _ => panic!("Expected Array"),
     }

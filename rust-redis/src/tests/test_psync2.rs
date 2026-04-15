@@ -1,5 +1,5 @@
-use crate::tests::helper::{create_server_context, create_connection_context, run_cmd};
 use crate::resp::Resp;
+use crate::tests::helper::{create_connection_context, create_server_context, run_cmd};
 use bytes::Bytes;
 use std::sync::atomic::Ordering;
 
@@ -13,7 +13,7 @@ async fn test_psync2_transition() {
         let mut run_id = ctx.run_id.write().unwrap();
         *run_id = "1111111111111111111111111111111111111111".to_string();
         ctx.repl_offset.store(100, Ordering::Relaxed);
-        
+
         // Populate backlog
         if let Ok(mut q) = ctx.repl_backlog.lock() {
             // Add some dummy frames from offset 50 to 100
@@ -42,12 +42,12 @@ async fn test_psync2_transition() {
     // Case A: Valid PSYNC2 request (offset inside backlog and <= second_off)
     // Offset 80 is in backlog (50..100) and <= 101.
     let res = run_cmd(vec!["PSYNC", &old_id, "80"], &mut conn_ctx, &ctx).await;
-    
+
     match res {
         Resp::SimpleString(s) => {
-             let s_str = String::from_utf8_lossy(&s);
-             assert!(s_str.starts_with("CONTINUE"));
-             assert!(s_str.contains(&new_id));
+            let s_str = String::from_utf8_lossy(&s);
+            assert!(s_str.starts_with("CONTINUE"));
+            assert!(s_str.contains(&new_id));
         }
         _ => panic!("Expected SimpleString CONTINUE, got {:?}", res),
     }
@@ -55,14 +55,17 @@ async fn test_psync2_transition() {
     // Case B: Invalid PSYNC2 request (offset > second_off)
     // Offset 102 is > 101. Should trigger FULLRESYNC.
     let res = run_cmd(vec!["PSYNC", &old_id, "102"], &mut conn_ctx, &ctx).await;
-     match res {
+    match res {
         Resp::Multiple(resps) => {
-             if let Resp::SimpleString(s) = &resps[0] {
-                 let s_str = String::from_utf8_lossy(&s);
-                 assert!(s_str.starts_with("FULLRESYNC"));
-             } else {
-                 panic!("Expected SimpleString FULLRESYNC header, got {:?}", resps[0]);
-             }
+            if let Resp::SimpleString(s) = &resps[0] {
+                let s_str = String::from_utf8_lossy(&s);
+                assert!(s_str.starts_with("FULLRESYNC"));
+            } else {
+                panic!(
+                    "Expected SimpleString FULLRESYNC header, got {:?}",
+                    resps[0]
+                );
+            }
         }
         _ => panic!("Expected Multiple (FULLRESYNC + RDB), got {:?}", res),
     }

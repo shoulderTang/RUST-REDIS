@@ -69,7 +69,12 @@ pub fn role(_items: &[Resp], ctx: &ServerContext) -> Resp {
             Resp::Array(Some(role_info))
         }
         crate::cmd::ReplicationRole::Slave => {
-            let mh = ctx.master_host.read().unwrap().clone().unwrap_or_else(|| "unknown".to_string());
+            let mh = ctx
+                .master_host
+                .read()
+                .unwrap()
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
             let mp = ctx.master_port.read().unwrap().unwrap_or(0) as i64;
             let mut role_info = Vec::new();
             role_info.push(Resp::BulkString(Some(Bytes::from("slave"))));
@@ -102,10 +107,10 @@ fn get_clients_info(ctx: &ServerContext) -> String {
     s.push_str("# Clients\r\n");
     let connected = ctx.client_count.load(Ordering::Relaxed);
     s.push_str(&format!("connected_clients:{}\r\n", connected));
-    
+
     let blocked = ctx.blocked_client_count.load(Ordering::Relaxed);
     s.push_str(&format!("blocked_clients:{}\r\n", blocked));
-    
+
     s.push_str(&format!("maxclients:{}\r\n", ctx.config.maxclients));
     s
 }
@@ -129,16 +134,31 @@ fn get_memory_info(ctx: &ServerContext) -> String {
     let mut s = String::new();
     s.push_str("# Memory\r\n");
     s.push_str(&format!("used_memory:{}\r\n", used_memory));
-    s.push_str(&format!("used_memory_human:{}\r\n", bytes_to_human(used_memory)));
+    s.push_str(&format!(
+        "used_memory_human:{}\r\n",
+        bytes_to_human(used_memory)
+    ));
     s.push_str(&format!("used_memory_rss:{}\r\n", rss));
-    s.push_str(&format!("used_memory_rss_human:{}\r\n", bytes_to_human(rss)));
+    s.push_str(&format!(
+        "used_memory_rss_human:{}\r\n",
+        bytes_to_human(rss)
+    ));
     s.push_str(&format!("used_memory_peak:{}\r\n", new_peak));
-    s.push_str(&format!("used_memory_peak_human:{}\r\n", bytes_to_human(new_peak)));
+    s.push_str(&format!(
+        "used_memory_peak_human:{}\r\n",
+        bytes_to_human(new_peak)
+    ));
     s.push_str(&format!("used_memory_lua:{}\r\n", lua_mem));
-    s.push_str(&format!("used_memory_lua_human:{}\r\n", bytes_to_human(lua_mem)));
+    s.push_str(&format!(
+        "used_memory_lua_human:{}\r\n",
+        bytes_to_human(lua_mem)
+    ));
     let maxmemory = ctx.maxmemory.load(Ordering::Relaxed);
     s.push_str(&format!("maxmemory:{}\r\n", maxmemory));
-    s.push_str(&format!("maxmemory_human:{}\r\n", bytes_to_human(maxmemory)));
+    s.push_str(&format!(
+        "maxmemory_human:{}\r\n",
+        bytes_to_human(maxmemory)
+    ));
     let policy = *ctx.maxmemory_policy.read().unwrap();
     s.push_str(&format!("maxmemory_policy:{}\r\n", policy.as_str()));
     s
@@ -188,7 +208,10 @@ fn get_replication_info(ctx: &ServerContext) -> String {
             s.push_str("role:master\r\n");
             let connected_slaves = ctx.replicas.len();
             s.push_str(&format!("connected_slaves:{}\r\n", connected_slaves));
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as u64;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as u64;
             let mut idx = 0;
             for entry in ctx.replicas.iter() {
                 let id = *entry.key();
@@ -217,7 +240,10 @@ fn get_replication_info(ctx: &ServerContext) -> String {
                     now
                 };
                 let lag = now.saturating_sub(ack_time);
-                s.push_str(&format!("slave{}:ip={},port={},state=online,offset={},lag={}\r\n", idx, ip, port, offset, lag));
+                s.push_str(&format!(
+                    "slave{}:ip={},port={},state=online,offset={},lag={}\r\n",
+                    idx, ip, port, offset, lag
+                ));
                 idx += 1;
             }
             let master_offset = ctx.repl_offset.load(Ordering::Relaxed);
@@ -236,18 +262,36 @@ fn get_replication_info(ctx: &ServerContext) -> String {
                 }
             };
             s.push_str(&format!("master_replid:{}\r\n", ctx.run_id.read().unwrap()));
-            s.push_str(&format!("master_replid2:{}\r\n", ctx.replid2.read().unwrap()));
-            s.push_str(&format!("master_repl_offset:{}\r\n", ctx.repl_offset.load(std::sync::atomic::Ordering::Relaxed)));
-            s.push_str(&format!("second_repl_offset:{}\r\n", ctx.second_repl_offset.load(std::sync::atomic::Ordering::Relaxed)));
+            s.push_str(&format!(
+                "master_replid2:{}\r\n",
+                ctx.replid2.read().unwrap()
+            ));
+            s.push_str(&format!(
+                "master_repl_offset:{}\r\n",
+                ctx.repl_offset.load(std::sync::atomic::Ordering::Relaxed)
+            ));
+            s.push_str(&format!(
+                "second_repl_offset:{}\r\n",
+                ctx.second_repl_offset
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            ));
             let backlog_active = if repl_backlog_size > 0 { 1 } else { 0 };
             s.push_str(&format!("repl_backlog_active:{}\r\n", backlog_active));
             s.push_str(&format!("repl_backlog_size:{}\r\n", repl_backlog_size));
-            s.push_str(&format!("repl_backlog_first_byte_offset:{}\r\n", first_offset));
+            s.push_str(&format!(
+                "repl_backlog_first_byte_offset:{}\r\n",
+                first_offset
+            ));
             s.push_str(&format!("repl_backlog_histlen:{}\r\n", histlen));
         }
         crate::cmd::ReplicationRole::Slave => {
             s.push_str("role:slave\r\n");
-            let mh = ctx.master_host.read().unwrap().clone().unwrap_or_else(|| "unknown".to_string());
+            let mh = ctx
+                .master_host
+                .read()
+                .unwrap()
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string());
             let mp = ctx.master_port.read().unwrap().unwrap_or(0);
             s.push_str(&format!("master_host:{}\r\n", mh));
             s.push_str(&format!("master_port:{}\r\n", mp));
@@ -271,7 +315,7 @@ fn bytes_to_human(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = 1024 * KB;
     const GB: u64 = 1024 * MB;
-    
+
     if bytes >= GB {
         format!("{:.2}G", bytes as f64 / GB as f64)
     } else if bytes >= MB {
@@ -292,7 +336,10 @@ fn get_keyspace_info(ctx: &ServerContext) -> String {
         if keys > 0 {
             let mut expires = 0;
             let mut total_ttl = 0;
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("Time went backwards").as_millis() as u64;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("Time went backwards")
+                .as_millis() as u64;
 
             for r in db.iter() {
                 if let Some(expires_at) = r.value().expires_at {
@@ -303,7 +350,10 @@ fn get_keyspace_info(ctx: &ServerContext) -> String {
                 }
             }
             let avg_ttl = if expires > 0 { total_ttl / expires } else { 0 };
-            s.push_str(&format!("db{}:keys={},expires={},avg_ttl={}\r\n", i, keys, expires, avg_ttl));
+            s.push_str(&format!(
+                "db{}:keys={},expires={},avg_ttl={}\r\n",
+                i, keys, expires, avg_ttl
+            ));
         }
     }
     s
@@ -312,13 +362,19 @@ fn get_keyspace_info(ctx: &ServerContext) -> String {
 fn get_cluster_info(ctx: &ServerContext) -> String {
     let mut s = String::new();
     s.push_str("# Cluster\r\n");
-    s.push_str(&format!("cluster_enabled:{}\r\n", if ctx.config.cluster_enabled { "1" } else { "0" }));
+    s.push_str(&format!(
+        "cluster_enabled:{}\r\n",
+        if ctx.config.cluster_enabled { "1" } else { "0" }
+    ));
     if ctx.config.cluster_enabled {
         if let Ok(cluster) = ctx.cluster.read() {
             let (assigned, full) = cluster.coverage_ok();
             let cluster_state = if full { "ok" } else { "fail" };
             s.push_str(&format!("cluster_state:{}\r\n", cluster_state));
-            s.push_str(&format!("cluster_current_epoch:{}\r\n", cluster.current_epoch));
+            s.push_str(&format!(
+                "cluster_current_epoch:{}\r\n",
+                cluster.current_epoch
+            ));
             s.push_str(&format!("cluster_slots_assigned:{}\r\n", assigned));
             s.push_str(&format!("cluster_slots_ok:{}\r\n", assigned));
             s.push_str("cluster_slots_pfail:0\r\n");
@@ -332,7 +388,11 @@ fn get_cluster_info(ctx: &ServerContext) -> String {
                 }
             }
             s.push_str(&format!("cluster_size:{}\r\n", masters));
-            let my_epoch = cluster.nodes.get(&cluster.myself).map(|n| n.epoch).unwrap_or(0);
+            let my_epoch = cluster
+                .nodes
+                .get(&cluster.myself)
+                .map(|n| n.epoch)
+                .unwrap_or(0);
             s.push_str(&format!("cluster_my_epoch:{}\r\n", my_epoch));
         } else {
             s.push_str("cluster_state:fail\r\n");

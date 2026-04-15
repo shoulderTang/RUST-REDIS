@@ -1,9 +1,9 @@
+use crate::cmd::key::match_pattern;
 use crate::db::{Db, Entry, Value};
 use crate::resp::Resp;
-use std::collections::HashSet;
 use bytes::Bytes;
-use crate::cmd::key::match_pattern;
-use rand::seq::{IteratorRandom, IndexedRandom};
+use rand::seq::{IndexedRandom, IteratorRandom};
+use std::collections::HashSet;
 
 pub fn sadd(items: &[Resp], db: &Db) -> Resp {
     if items.len() < 3 {
@@ -150,7 +150,9 @@ pub fn smismember(items: &[Resp], db: &Db) -> Resp {
                 }
                 Resp::Array(Some(results))
             }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         for _ in 2..items.len() {
@@ -199,13 +201,13 @@ fn compute_sintersection(keys: &[Bytes], db: &Db) -> Result<HashSet<Bytes>, Resp
     // Get the smallest set's members
     let smallest_idx = key_sizes[0].0;
     let smallest_key = &keys[smallest_idx];
-    
+
     let mut result_members: HashSet<Bytes>;
 
     // Scope for read lock
     {
         if let Some(entry) = db.get(smallest_key) {
-             if entry.is_expired() {
+            if entry.is_expired() {
                 return Ok(HashSet::new());
             }
             match &entry.value {
@@ -215,7 +217,7 @@ fn compute_sintersection(keys: &[Bytes], db: &Db) -> Result<HashSet<Bytes>, Resp
                 _ => return Err(Resp::Error("WRONGTYPE".to_string())),
             }
         } else {
-             return Ok(HashSet::new());
+            return Ok(HashSet::new());
         }
     }
 
@@ -223,7 +225,7 @@ fn compute_sintersection(keys: &[Bytes], db: &Db) -> Result<HashSet<Bytes>, Resp
     for (idx, _) in key_sizes.iter().skip(1) {
         let key = &keys[*idx];
         if let Some(entry) = db.get(key) {
-             if entry.is_expired() {
+            if entry.is_expired() {
                 return Ok(HashSet::new());
             }
             match &entry.value {
@@ -236,10 +238,10 @@ fn compute_sintersection(keys: &[Bytes], db: &Db) -> Result<HashSet<Bytes>, Resp
                 _ => return Err(Resp::Error("WRONGTYPE".to_string())),
             }
         } else {
-             return Ok(HashSet::new());
+            return Ok(HashSet::new());
         }
     }
-    
+
     Ok(result_members)
 }
 
@@ -304,7 +306,7 @@ fn compute_sunion(keys: &[Bytes], db: &Db) -> Result<HashSet<Bytes>, Resp> {
 
     for key in keys {
         if let Some(entry) = db.get(key) {
-             if entry.is_expired() {
+            if entry.is_expired() {
                 continue;
             }
             match &entry.value {
@@ -313,11 +315,16 @@ fn compute_sunion(keys: &[Bytes], db: &Db) -> Result<HashSet<Bytes>, Resp> {
                         result_members.insert(member.clone());
                     }
                 }
-                _ => return Err(Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string())),
+                _ => {
+                    return Err(Resp::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    ));
+                }
             }
         }
     }
-    
+
     Ok(result_members)
 }
 
@@ -390,7 +397,11 @@ fn compute_sdiff(keys: &[Bytes], db: &Db) -> Result<HashSet<Bytes>, Resp> {
             Value::Set(set) => {
                 result_members = set.clone();
             }
-            _ => return Err(Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string())),
+            _ => {
+                return Err(Resp::Error(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+                ));
+            }
         }
     } else {
         // If first key is missing, diff is empty
@@ -400,7 +411,7 @@ fn compute_sdiff(keys: &[Bytes], db: &Db) -> Result<HashSet<Bytes>, Resp> {
     // 2. Remove members present in subsequent sets
     for key in &keys[1..] {
         if let Some(entry) = db.get(key) {
-             if entry.is_expired() {
+            if entry.is_expired() {
                 continue;
             }
             match &entry.value {
@@ -409,11 +420,16 @@ fn compute_sdiff(keys: &[Bytes], db: &Db) -> Result<HashSet<Bytes>, Resp> {
                         result_members.remove(member);
                     }
                 }
-                _ => return Err(Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string())),
+                _ => {
+                    return Err(Resp::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    ));
+                }
             }
         }
     }
-    
+
     Ok(result_members)
 }
 
@@ -542,7 +558,7 @@ pub fn sscan(items: &[Resp], db: &Db) -> Resp {
         Resp::SimpleString(s) => s.clone(),
         _ => return Resp::Error("ERR invalid key".to_string()),
     };
-    
+
     let cursor = match &items[2] {
         Resp::BulkString(Some(b)) => match String::from_utf8_lossy(b).parse::<usize>() {
             Ok(n) => n,
@@ -570,7 +586,7 @@ pub fn sscan(items: &[Resp], db: &Db) -> Resp {
             if i + 1 >= items.len() {
                 return Resp::Error("ERR syntax error".to_string());
             }
-            match_pattern_str = match &items[i+1] {
+            match_pattern_str = match &items[i + 1] {
                 Resp::BulkString(Some(b)) => Some(String::from_utf8_lossy(b).to_string()),
                 Resp::SimpleString(s) => Some(String::from_utf8_lossy(s).to_string()),
                 _ => return Resp::Error("ERR syntax error".to_string()),
@@ -580,14 +596,22 @@ pub fn sscan(items: &[Resp], db: &Db) -> Resp {
             if i + 1 >= items.len() {
                 return Resp::Error("ERR syntax error".to_string());
             }
-            count = match &items[i+1] {
+            count = match &items[i + 1] {
                 Resp::BulkString(Some(b)) => match String::from_utf8_lossy(b).parse::<usize>() {
                     Ok(n) => n,
-                    Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+                    Err(_) => {
+                        return Resp::Error(
+                            "ERR value is not an integer or out of range".to_string(),
+                        );
+                    }
                 },
                 Resp::SimpleString(s) => match String::from_utf8_lossy(s).parse::<usize>() {
                     Ok(n) => n,
-                    Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+                    Err(_) => {
+                        return Resp::Error(
+                            "ERR value is not an integer or out of range".to_string(),
+                        );
+                    }
                 },
                 _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
             };
@@ -599,19 +623,19 @@ pub fn sscan(items: &[Resp], db: &Db) -> Resp {
 
     if let Some(entry) = db.get(&key) {
         if entry.is_expired() {
-             return Resp::Array(Some(vec![
+            return Resp::Array(Some(vec![
                 Resp::BulkString(Some(Bytes::from("0"))),
                 Resp::Array(Some(vec![])),
             ]));
         }
-        
+
         if let Value::Set(set) = &entry.value {
             let mut all_members: Vec<bytes::Bytes> = set.iter().cloned().collect();
             all_members.sort();
 
             let total_len = all_members.len();
             if cursor >= total_len {
-                 return Resp::Array(Some(vec![
+                return Resp::Array(Some(vec![
                     Resp::BulkString(Some(Bytes::from("0"))),
                     Resp::Array(Some(vec![])),
                 ]));
@@ -630,12 +654,14 @@ pub fn sscan(items: &[Resp], db: &Db) -> Resp {
                 result_entries.push(Resp::BulkString(Some(member.clone())));
             }
 
-             Resp::Array(Some(vec![
+            Resp::Array(Some(vec![
                 Resp::BulkString(Some(Bytes::from(next_cursor.to_string()))),
                 Resp::Array(Some(result_entries)),
             ]))
         } else {
-             Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string())
+            Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            )
         }
     } else {
         Resp::Array(Some(vec![
@@ -657,15 +683,19 @@ pub fn spop(items: &[Resp], db: &Db) -> Resp {
 
     let count = if items.len() > 2 {
         match &items[2] {
-             Resp::BulkString(Some(b)) => match String::from_utf8_lossy(b).parse::<i64>() {
-                 Ok(n) => Some(n),
-                 Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
-             },
-             Resp::SimpleString(s) => match String::from_utf8_lossy(s).parse::<i64>() {
-                 Ok(n) => Some(n),
-                 Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
-             },
-             _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+            Resp::BulkString(Some(b)) => match String::from_utf8_lossy(b).parse::<i64>() {
+                Ok(n) => Some(n),
+                Err(_) => {
+                    return Resp::Error("ERR value is not an integer or out of range".to_string());
+                }
+            },
+            Resp::SimpleString(s) => match String::from_utf8_lossy(s).parse::<i64>() {
+                Ok(n) => Some(n),
+                Err(_) => {
+                    return Resp::Error("ERR value is not an integer or out of range".to_string());
+                }
+            },
+            _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
         }
     } else {
         None
@@ -678,7 +708,7 @@ pub fn spop(items: &[Resp], db: &Db) -> Resp {
     }
 
     if let Some(mut entry) = db.get_mut(&key) {
-         if entry.is_expired() {
+        if entry.is_expired() {
             drop(entry);
             db.remove(&key);
             if count.is_some() {
@@ -686,47 +716,54 @@ pub fn spop(items: &[Resp], db: &Db) -> Resp {
             } else {
                 return Resp::BulkString(None);
             }
-         }
-         
-         if let Value::Set(set) = &mut entry.value {
-             if set.is_empty() {
-                  if count.is_some() {
-                      return Resp::Array(Some(Vec::new()));
-                  } else {
-                      return Resp::BulkString(None);
-                  }
-             }
+        }
 
-             let mut rng = rand::rng();
-             
-             match count {
-                 None => {
-                     if let Some(member) = set.iter().choose(&mut rng).cloned() {
-                         set.remove(&member);
-                         return Resp::BulkString(Some(member));
-                     } else {
-                         return Resp::BulkString(None);
-                     }
-                 },
-                 Some(c) => {
-                     if c == 0 {
-                         return Resp::Array(Some(Vec::new()));
-                     }
-                     
-                     let count_val = c as usize;
-                     let members: Vec<_> = set.iter().choose_multiple(&mut rng, count_val).into_iter().cloned().collect();
-                     
-                     let mut result = Vec::new();
-                     for member in members {
-                         set.remove(&member);
-                         result.push(Resp::BulkString(Some(member)));
-                     }
-                     return Resp::Array(Some(result));
-                 }
-             }
-         } else {
-             return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
-         }
+        if let Value::Set(set) = &mut entry.value {
+            if set.is_empty() {
+                if count.is_some() {
+                    return Resp::Array(Some(Vec::new()));
+                } else {
+                    return Resp::BulkString(None);
+                }
+            }
+
+            let mut rng = rand::rng();
+
+            match count {
+                None => {
+                    if let Some(member) = set.iter().choose(&mut rng).cloned() {
+                        set.remove(&member);
+                        return Resp::BulkString(Some(member));
+                    } else {
+                        return Resp::BulkString(None);
+                    }
+                }
+                Some(c) => {
+                    if c == 0 {
+                        return Resp::Array(Some(Vec::new()));
+                    }
+
+                    let count_val = c as usize;
+                    let members: Vec<_> = set
+                        .iter()
+                        .choose_multiple(&mut rng, count_val)
+                        .into_iter()
+                        .cloned()
+                        .collect();
+
+                    let mut result = Vec::new();
+                    for member in members {
+                        set.remove(&member);
+                        result.push(Resp::BulkString(Some(member)));
+                    }
+                    return Resp::Array(Some(result));
+                }
+            }
+        } else {
+            return Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            );
+        }
     } else {
         if count.is_some() {
             return Resp::Array(Some(Vec::new()));
@@ -763,7 +800,12 @@ pub fn smove(items: &[Resp], db: &Db) -> Resp {
             }
             match &entry.value {
                 Value::Set(set) => return Resp::Integer(if set.contains(&member) { 1 } else { 0 }),
-                _ => return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                _ => {
+                    return Resp::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    );
+                }
             }
         } else {
             return Resp::Integer(0);
@@ -774,7 +816,9 @@ pub fn smove(items: &[Resp], db: &Db) -> Resp {
     if let Some(entry) = db.get(&destination) {
         if !entry.is_expired() {
             if !matches!(entry.value, Value::Set(_)) {
-                return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
+                return Resp::Error(
+                    "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+                );
             }
         }
     }
@@ -795,7 +839,12 @@ pub fn smove(items: &[Resp], db: &Db) -> Resp {
                     }
                     res
                 }
-                _ => return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+                _ => {
+                    return Resp::Error(
+                        "WRONGTYPE Operation against a key holding the wrong kind of value"
+                            .to_string(),
+                    );
+                }
             }
         }
     } else {
@@ -810,7 +859,7 @@ pub fn smove(items: &[Resp], db: &Db) -> Resp {
     let mut entry = db
         .entry(destination)
         .or_insert_with(|| Entry::new(Value::Set(HashSet::new()), None));
-    
+
     if entry.is_expired() {
         entry.value = Value::Set(HashSet::new());
         entry.expires_at = None;
@@ -822,11 +871,13 @@ pub fn smove(items: &[Resp], db: &Db) -> Resp {
             Resp::Integer(1)
         }
         _ => {
-            // This should theoretically not happen due to the check above, 
+            // This should theoretically not happen due to the check above,
             // but if it does (race condition), we already removed from source.
             // In a robust implementation, we might try to add back to source,
             // but for now we'll just return the error.
-             Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string())
+            Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            )
         }
     }
 }
@@ -843,22 +894,26 @@ pub fn srandmember(items: &[Resp], db: &Db) -> Resp {
 
     let count = if items.len() > 2 {
         match &items[2] {
-             Resp::BulkString(Some(b)) => match String::from_utf8_lossy(b).parse::<i64>() {
-                 Ok(n) => Some(n),
-                 Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
-             },
-             Resp::SimpleString(s) => match String::from_utf8_lossy(s).parse::<i64>() {
-                 Ok(n) => Some(n),
-                 Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
-             },
-             _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
+            Resp::BulkString(Some(b)) => match String::from_utf8_lossy(b).parse::<i64>() {
+                Ok(n) => Some(n),
+                Err(_) => {
+                    return Resp::Error("ERR value is not an integer or out of range".to_string());
+                }
+            },
+            Resp::SimpleString(s) => match String::from_utf8_lossy(s).parse::<i64>() {
+                Ok(n) => Some(n),
+                Err(_) => {
+                    return Resp::Error("ERR value is not an integer or out of range".to_string());
+                }
+            },
+            _ => return Resp::Error("ERR value is not an integer or out of range".to_string()),
         }
     } else {
         None
     };
 
     if let Some(entry) = db.get(&key) {
-         if entry.is_expired() {
+        if entry.is_expired() {
             drop(entry);
             db.remove(&key);
             if count.is_some() {
@@ -866,55 +921,65 @@ pub fn srandmember(items: &[Resp], db: &Db) -> Resp {
             } else {
                 return Resp::BulkString(None);
             }
-         }
-         
-         if let Value::Set(set) = &entry.value {
-             if set.is_empty() {
-                  if count.is_some() {
-                      return Resp::Array(Some(Vec::new()));
-                  } else {
-                      return Resp::BulkString(None);
-                  }
-             }
+        }
 
-             let mut rng = rand::rng();
+        if let Value::Set(set) = &entry.value {
+            if set.is_empty() {
+                if count.is_some() {
+                    return Resp::Array(Some(Vec::new()));
+                } else {
+                    return Resp::BulkString(None);
+                }
+            }
 
-             match count {
-                 None => {
-                     if let Some(member) = set.iter().choose(&mut rng).cloned() {
-                         return Resp::BulkString(Some(member));
-                     } else {
-                         return Resp::BulkString(None);
-                     }
-                 },
-                 Some(c) => {
-                     if c == 0 {
-                         return Resp::Array(Some(Vec::new()));
-                     }
-                     
-                     let count_val = c.abs() as usize;
-                     
-                     if c > 0 {
-                         // Distinct elements
-                         let members: Vec<_> = set.iter().choose_multiple(&mut rng, count_val).into_iter().cloned().collect();
-                         let result = members.into_iter().map(|m| Resp::BulkString(Some(m))).collect();
-                         return Resp::Array(Some(result));
-                     } else {
-                         // Allow duplicates (negative count)
-                         let members_vec: Vec<_> = set.iter().collect();
-                         let mut result = Vec::with_capacity(count_val);
-                         for _ in 0..count_val {
-                             if let Some(member) = members_vec.choose(&mut rng) {
-                                 result.push(Resp::BulkString(Some((**member).clone())));
-                             }
-                         }
-                         return Resp::Array(Some(result));
-                     }
-                 }
-             }
-         } else {
-             return Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string());
-         }
+            let mut rng = rand::rng();
+
+            match count {
+                None => {
+                    if let Some(member) = set.iter().choose(&mut rng).cloned() {
+                        return Resp::BulkString(Some(member));
+                    } else {
+                        return Resp::BulkString(None);
+                    }
+                }
+                Some(c) => {
+                    if c == 0 {
+                        return Resp::Array(Some(Vec::new()));
+                    }
+
+                    let count_val = c.abs() as usize;
+
+                    if c > 0 {
+                        // Distinct elements
+                        let members: Vec<_> = set
+                            .iter()
+                            .choose_multiple(&mut rng, count_val)
+                            .into_iter()
+                            .cloned()
+                            .collect();
+                        let result = members
+                            .into_iter()
+                            .map(|m| Resp::BulkString(Some(m)))
+                            .collect();
+                        return Resp::Array(Some(result));
+                    } else {
+                        // Allow duplicates (negative count)
+                        let members_vec: Vec<_> = set.iter().collect();
+                        let mut result = Vec::with_capacity(count_val);
+                        for _ in 0..count_val {
+                            if let Some(member) = members_vec.choose(&mut rng) {
+                                result.push(Resp::BulkString(Some((**member).clone())));
+                            }
+                        }
+                        return Resp::Array(Some(result));
+                    }
+                }
+            }
+        } else {
+            return Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            );
+        }
     } else {
         if count.is_some() {
             return Resp::Array(Some(Vec::new()));
@@ -923,5 +988,3 @@ pub fn srandmember(items: &[Resp], db: &Db) -> Resp {
         }
     }
 }
-
-

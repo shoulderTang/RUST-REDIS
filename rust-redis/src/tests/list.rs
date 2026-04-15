@@ -1,5 +1,5 @@
-use crate::cmd::{process_frame, ConnectionContext, ServerContext};
 use crate::cmd::scripting;
+use crate::cmd::{ConnectionContext, ServerContext, process_frame};
 use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
@@ -115,12 +115,12 @@ async fn test_list_ops() {
         Resp::Array(Some(items)) => {
             assert_eq!(items.len(), 2);
             // key
-             match &items[0] {
+            match &items[0] {
                 Resp::BulkString(Some(b)) => assert_eq!(*b, Bytes::from("list")),
                 _ => panic!("expected BulkString(list)"),
             }
             // value
-             match &items[1] {
+            match &items[1] {
                 Resp::BulkString(Some(b)) => assert_eq!(*b, Bytes::from("1")),
                 _ => panic!("expected BulkString(1)"),
             }
@@ -140,14 +140,14 @@ async fn test_list_ops() {
     let elapsed = start.elapsed();
     assert!(elapsed.as_millis() >= 100);
     match res {
-        Resp::BulkString(None) => {}, // timeout
+        Resp::BulkString(None) => {} // timeout
         _ => panic!("expected BulkString(None)"),
     }
 }
 
 #[tokio::test]
 async fn test_brpop_ops() {
-     let server_ctx = crate::tests::helper::create_server_context();
+    let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // LPUSH list a b c -> ["c", "b", "a"]
@@ -179,7 +179,7 @@ async fn test_brpop_ops() {
     }
 
     // Remaining: ["c", "b"]
-    
+
     // BLPOP list 0 -> "c" (from left)
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("BLPOP"))),
@@ -212,7 +212,7 @@ async fn test_brpop_ops() {
     let elapsed = start.elapsed();
     assert!(elapsed.as_millis() >= 100);
     match res {
-        Resp::BulkString(None) => {}, // timeout
+        Resp::BulkString(None) => {} // timeout
         _ => panic!("expected BulkString(None)"),
     }
 }

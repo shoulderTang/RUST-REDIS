@@ -1,6 +1,6 @@
 use crate::resp::Resp;
-use bytes::Bytes;
 use crate::tests::helper::run_cmd;
+use bytes::Bytes;
 
 #[tokio::test]
 async fn test_sinterstore() {
@@ -9,14 +9,29 @@ async fn test_sinterstore() {
 
     // Setup
     // s1: {a, b, c, d}
-    run_cmd(vec!["SADD", "s1", "a", "b", "c", "d"], &mut conn_ctx, &server_ctx).await;
+    run_cmd(
+        vec!["SADD", "s1", "a", "b", "c", "d"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     // s2: {c}
     run_cmd(vec!["SADD", "s2", "c"], &mut conn_ctx, &server_ctx).await;
     // s3: {a, c, e}
-    run_cmd(vec!["SADD", "s3", "a", "c", "e"], &mut conn_ctx, &server_ctx).await;
+    run_cmd(
+        vec!["SADD", "s3", "a", "c", "e"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
 
     // 1. SINTERSTORE dest s1 s2 s3 -> {c}
-    let res = run_cmd(vec!["SINTERSTORE", "dest", "s1", "s2", "s3"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["SINTERSTORE", "dest", "s1", "s2", "s3"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Integer(n) => assert_eq!(n, 1),
         _ => panic!("Expected Integer"),
@@ -35,7 +50,12 @@ async fn test_sinterstore() {
     }
 
     // 2. SINTERSTORE dest s1 s2 (overwrite) -> {c}
-    let res = run_cmd(vec!["SINTERSTORE", "dest", "s1", "s2"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["SINTERSTORE", "dest", "s1", "s2"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Integer(n) => assert_eq!(n, 1),
         _ => panic!("Expected Integer"),
@@ -54,7 +74,12 @@ async fn test_sinterstore() {
     }
 
     // 3. SINTERSTORE with missing key -> empty
-    let res = run_cmd(vec!["SINTERSTORE", "dest_empty", "s1", "missing"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["SINTERSTORE", "dest_empty", "s1", "missing"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Integer(n) => assert_eq!(n, 0),
         _ => panic!("Expected Integer"),
@@ -68,7 +93,12 @@ async fn test_sinterstore() {
 
     // 4. SINTERSTORE overwrites existing non-set key
     run_cmd(vec!["SET", "dest_str", "value"], &mut conn_ctx, &server_ctx).await;
-    let res = run_cmd(vec!["SINTERSTORE", "dest_str", "s1", "s2"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["SINTERSTORE", "dest_str", "s1", "s2"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Integer(n) => assert_eq!(n, 1),
         _ => panic!("Expected Integer"),
@@ -81,7 +111,12 @@ async fn test_sinterstore() {
 
     // 5. WRONGTYPE in source key
     run_cmd(vec!["SET", "string_key", "val"], &mut conn_ctx, &server_ctx).await;
-    let res = run_cmd(vec!["SINTERSTORE", "dest", "s1", "string_key"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["SINTERSTORE", "dest", "s1", "string_key"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Error(msg) => assert!(msg.contains("WRONGTYPE")),
         _ => panic!("Expected Error"),

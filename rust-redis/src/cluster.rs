@@ -60,7 +60,12 @@ impl ClusterState {
         lines.join("\n") + "\n"
     }
 
-    pub fn load_config_text(&mut self, text: &str, my_ip: &str, my_port: u16) -> Result<(), String> {
+    pub fn load_config_text(
+        &mut self,
+        text: &str,
+        my_ip: &str,
+        my_port: u16,
+    ) -> Result<(), String> {
         let mut current_epoch = None;
         let mut myself_id: Option<NodeId> = None;
         let mut nodes: Vec<ClusterNode> = Vec::new();
@@ -131,7 +136,7 @@ impl ClusterState {
         }
         Ok(())
     }
-    
+
     pub fn new(myself: NodeId, ip: String, port: u16) -> Self {
         let mut nodes = HashMap::new();
         let epoch = 0u64;
@@ -203,7 +208,14 @@ impl ClusterState {
         info.join("\r\n")
     }
 
-    pub fn add_node(&mut self, id: NodeId, ip: String, port: u16, role: NodeRole, master_id: Option<NodeId>) -> Result<(), String> {
+    pub fn add_node(
+        &mut self,
+        id: NodeId,
+        ip: String,
+        port: u16,
+        role: NodeRole,
+        master_id: Option<NodeId>,
+    ) -> Result<(), String> {
         if self.nodes.contains_key(&id) {
             return Err("node exists".into());
         }
@@ -221,7 +233,10 @@ impl ClusterState {
     }
 
     pub fn add_slots(&mut self, node_id: &NodeId, slots: &[u16]) -> Result<(), String> {
-        let node = self.nodes.get_mut(node_id).ok_or_else(|| "no such node".to_string())?;
+        let node = self
+            .nodes
+            .get_mut(node_id)
+            .ok_or_else(|| "no such node".to_string())?;
         for s in slots {
             if (*s as usize) >= CLUSTER_SLOTS {
                 return Err("invalid slot".into());
@@ -239,7 +254,10 @@ impl ClusterState {
     }
 
     pub fn del_slots(&mut self, node_id: &NodeId, slots: &[u16]) -> Result<(), String> {
-        let node = self.nodes.get_mut(node_id).ok_or_else(|| "no such node".to_string())?;
+        let node = self
+            .nodes
+            .get_mut(node_id)
+            .ok_or_else(|| "no such node".to_string())?;
         for s in slots {
             if (*s as usize) >= CLUSTER_SLOTS {
                 return Err("invalid slot".into());
@@ -324,10 +342,7 @@ impl ClusterState {
 
     pub fn nodes_overview_redis(&self) -> Vec<String> {
         let mut lines = Vec::new();
-        let my_addr = self
-            .nodes
-            .get(&self.myself)
-            .map(|m| (m.ip.clone(), m.port));
+        let my_addr = self.nodes.get(&self.myself).map(|m| (m.ip.clone(), m.port));
         for n in self.nodes.values() {
             let mut flags = Vec::new();
             let is_myself = n.id == self.myself
@@ -454,7 +469,11 @@ impl ClusterState {
             // Cleanup: remove any leftover placeholder entries for same address
             let canonical_id_clone = canonical_id.clone();
             self.nodes.retain(|id, n| {
-                if n.ip == addr_ip && n.port == addr_port && *id != canonical_id_clone && id.0.contains(':') {
+                if n.ip == addr_ip
+                    && n.port == addr_port
+                    && *id != canonical_id_clone
+                    && id.0.contains(':')
+                {
                     false
                 } else {
                     true
@@ -462,7 +481,10 @@ impl ClusterState {
             });
             self.last_ok_ms.retain(|id, _| {
                 if let Some(n) = self.nodes.get(id) {
-                    !(n.ip == addr_ip && n.port == addr_port && *id != canonical_id_clone && id.0.contains(':'))
+                    !(n.ip == addr_ip
+                        && n.port == addr_port
+                        && *id != canonical_id_clone
+                        && id.0.contains(':'))
                 } else {
                     id == &canonical_id_clone
                 }
@@ -537,7 +559,11 @@ impl ClusterState {
         }
     }
 
-    pub fn promote_replica_to_master(&mut self, old_master: &NodeId, replica: &NodeId) -> Result<(), String> {
+    pub fn promote_replica_to_master(
+        &mut self,
+        old_master: &NodeId,
+        replica: &NodeId,
+    ) -> Result<(), String> {
         // Snapshot master's slots
         let master_slots = if let Some(m) = self.nodes.get(old_master) {
             m.slots.clone()
@@ -552,10 +578,7 @@ impl ClusterState {
             return Err("replica not found".to_string());
         }
         // Move slots to replica
-        let to_assign: Vec<u16> = master_slots
-            .iter()
-            .flat_map(|r| r.start..=r.end)
-            .collect();
+        let to_assign: Vec<u16> = master_slots.iter().flat_map(|r| r.start..=r.end).collect();
         if let Some(_) = self.nodes.get(old_master) {
             let _ = self.del_slots(old_master, &to_assign);
         }
@@ -594,7 +617,9 @@ impl ClusterState {
             } else {
                 Some(NodeId(tokens[3].to_string()))
             };
-            let epoch = tokens[6].parse::<u64>().map_err(|_| "invalid epoch".to_string())?;
+            let epoch = tokens[6]
+                .parse::<u64>()
+                .map_err(|_| "invalid epoch".to_string())?;
             // Parse slots starting from index 8, each token is a range or single slot
             let mut slots: Vec<SlotRange> = Vec::new();
             for p in tokens.iter().skip(8) {
@@ -603,8 +628,12 @@ impl ClusterState {
                     continue;
                 }
                 if let Some((a, b)) = p.split_once('-') {
-                    let start = a.parse::<u16>().map_err(|_| "invalid slot range".to_string())?;
-                    let end = b.parse::<u16>().map_err(|_| "invalid slot range".to_string())?;
+                    let start = a
+                        .parse::<u16>()
+                        .map_err(|_| "invalid slot range".to_string())?;
+                    let end = b
+                        .parse::<u16>()
+                        .map_err(|_| "invalid slot range".to_string())?;
                     slots.push(SlotRange { start, end });
                 } else {
                     let x = p.parse::<u16>().map_err(|_| "invalid slot".to_string())?;
@@ -629,13 +658,19 @@ impl ClusterState {
             "slave" | "replica" => NodeRole::Replica,
             _ => return Err("invalid role".to_string()),
         };
-        let epoch = tokens[3].parse::<u64>().map_err(|_| "invalid epoch".to_string())?;
+        let epoch = tokens[3]
+            .parse::<u64>()
+            .map_err(|_| "invalid epoch".to_string())?;
 
         let (master_id, slots_str) = match role {
             NodeRole::Master => (None, tokens.get(4).copied().unwrap_or("")),
             NodeRole::Replica => {
                 let mid = tokens.get(4).copied().unwrap_or("");
-                let mid = if mid.is_empty() { None } else { Some(NodeId(mid.to_string())) };
+                let mid = if mid.is_empty() {
+                    None
+                } else {
+                    Some(NodeId(mid.to_string()))
+                };
                 (mid, tokens.get(5).copied().unwrap_or(""))
             }
         };
@@ -677,8 +712,12 @@ impl ClusterState {
                 continue;
             }
             if let Some((a, b)) = p.split_once('-') {
-                let start = a.parse::<u16>().map_err(|_| "invalid slot range".to_string())?;
-                let end = b.parse::<u16>().map_err(|_| "invalid slot range".to_string())?;
+                let start = a
+                    .parse::<u16>()
+                    .map_err(|_| "invalid slot range".to_string())?;
+                let end = b
+                    .parse::<u16>()
+                    .map_err(|_| "invalid slot range".to_string())?;
                 ranges.push(SlotRange { start, end });
             } else {
                 let x = p.parse::<u16>().map_err(|_| "invalid slot".to_string())?;
@@ -790,7 +829,10 @@ impl ClusterState {
             while j + 1 < s.len() && s[j + 1] == s[j] + 1 {
                 j += 1;
             }
-            ranges.push(SlotRange { start: s[i], end: s[j] });
+            ranges.push(SlotRange {
+                start: s[i],
+                end: s[j],
+            });
             i = j + 1;
         }
         ranges.sort_by_key(|r| (r.start, r.end));
@@ -815,7 +857,10 @@ impl ClusterState {
             while j + 1 < v.len() && v[j + 1] == v[j] + 1 {
                 j += 1;
             }
-            res.push(SlotRange { start: v[i], end: v[j] });
+            res.push(SlotRange {
+                start: v[i],
+                end: v[j],
+            });
             i = j + 1;
         }
         res

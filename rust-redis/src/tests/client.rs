@@ -1,4 +1,4 @@
-use crate::cmd::{process_frame, ConnectionContext, ServerContext, ClientInfo};
+use crate::cmd::{ClientInfo, ConnectionContext, ServerContext, process_frame};
 use crate::resp::Resp;
 use bytes::Bytes;
 
@@ -93,8 +93,13 @@ async fn test_client_list_multiple() {
             // Each client should be on its own line
             let lines: Vec<&str> = s.split('\n').filter(|l| !l.is_empty()).collect();
             assert_eq!(lines.len(), 2);
-            assert!(lines.iter().any(|l| l.contains("id=2") && l.contains("addr=10.0.0.1:1234") && l.contains("cmd=SUBSCRIBE")));
-            assert!(lines.iter().any(|l| l.contains("id=3") && l.contains("addr=10.0.0.2:2345") && l.contains("name=worker") && l.contains("cmd=PSUBSCRIBE")));
+            assert!(lines.iter().any(|l| l.contains("id=2")
+                && l.contains("addr=10.0.0.1:1234")
+                && l.contains("cmd=SUBSCRIBE")));
+            assert!(lines.iter().any(|l| l.contains("id=3")
+                && l.contains("addr=10.0.0.2:2345")
+                && l.contains("name=worker")
+                && l.contains("cmd=PSUBSCRIBE")));
         }
         _ => panic!("expected BulkString response"),
     }
@@ -104,7 +109,7 @@ async fn test_client_list_multiple() {
 async fn test_client_kill_id() {
     let server_ctx = crate::tests::helper::create_server_context();
     let (tx, rx) = tokio::sync::watch::channel(false);
-    
+
     let ci = ClientInfo {
         id: 10,
         addr: "1.2.3.4:5678".to_string(),
@@ -120,9 +125,9 @@ async fn test_client_kill_id() {
         msg_sender: None,
     };
     server_ctx.clients.insert(ci.id, ci);
-    
+
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-    
+
     // Test KILL ID
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("CLIENT"))),
@@ -130,7 +135,7 @@ async fn test_client_kill_id() {
         Resp::BulkString(Some(Bytes::from("ID"))),
         Resp::BulkString(Some(Bytes::from("10"))),
     ]));
-    
+
     let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     assert_eq!(res, Resp::Integer(1));
     assert_eq!(*rx.borrow(), true);
@@ -140,7 +145,7 @@ async fn test_client_kill_id() {
 async fn test_client_kill_addr() {
     let server_ctx = crate::tests::helper::create_server_context();
     let (tx, rx) = tokio::sync::watch::channel(false);
-    
+
     let ci = ClientInfo {
         id: 11,
         addr: "5.6.7.8:9999".to_string(),
@@ -156,9 +161,9 @@ async fn test_client_kill_addr() {
         msg_sender: None,
     };
     server_ctx.clients.insert(ci.id, ci);
-    
+
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-    
+
     // Test KILL ADDR
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("CLIENT"))),
@@ -166,7 +171,7 @@ async fn test_client_kill_addr() {
         Resp::BulkString(Some(Bytes::from("ADDR"))),
         Resp::BulkString(Some(Bytes::from("5.6.7.8:9999"))),
     ]));
-    
+
     let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     assert_eq!(res, Resp::Integer(1));
     assert_eq!(*rx.borrow(), true);
@@ -176,7 +181,7 @@ async fn test_client_kill_addr() {
 async fn test_client_kill_legacy() {
     let server_ctx = crate::tests::helper::create_server_context();
     let (tx, rx) = tokio::sync::watch::channel(false);
-    
+
     let ci = ClientInfo {
         id: 12,
         addr: "9.9.9.9:1111".to_string(),
@@ -192,16 +197,16 @@ async fn test_client_kill_legacy() {
         msg_sender: None,
     };
     server_ctx.clients.insert(ci.id, ci);
-    
+
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-    
+
     // Test KILL ip:port
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("CLIENT"))),
         Resp::BulkString(Some(Bytes::from("KILL"))),
         Resp::BulkString(Some(Bytes::from("9.9.9.9:1111"))),
     ]));
-    
+
     let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::SimpleString(b) => assert_eq!(b, Bytes::from("OK")),
@@ -230,7 +235,7 @@ async fn test_client_setname() {
     server_ctx.clients.insert(ci.id, ci);
 
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-    conn_ctx.id = 13; 
+    conn_ctx.id = 13;
 
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("CLIENT"))),
@@ -268,7 +273,7 @@ async fn test_client_setname_invalid() {
     server_ctx.clients.insert(ci.id, ci);
 
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-    conn_ctx.id = 14; 
+    conn_ctx.id = 14;
 
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("CLIENT"))),

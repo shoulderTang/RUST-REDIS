@@ -16,7 +16,9 @@ pub fn setbit(items: &[Resp], db: &Db) -> Resp {
     let offset = match as_bytes(&items[2]) {
         Some(b) => match String::from_utf8_lossy(&b).parse::<u64>() {
             Ok(v) => v,
-            Err(_) => return Resp::Error("ERR bit offset is not an integer or out of range".to_string()),
+            Err(_) => {
+                return Resp::Error("ERR bit offset is not an integer or out of range".to_string());
+            }
         },
         None => return Resp::Error("ERR bit offset is not an integer or out of range".to_string()),
     };
@@ -68,7 +70,9 @@ pub fn setbit(items: &[Resp], db: &Db) -> Resp {
                 *s = Bytes::from(vec);
                 Resp::Integer(old_bit as i64)
             }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         // Create new
@@ -95,7 +99,9 @@ pub fn getbit(items: &[Resp], db: &Db) -> Resp {
     let offset = match as_bytes(&items[2]) {
         Some(b) => match String::from_utf8_lossy(&b).parse::<u64>() {
             Ok(v) => v,
-            Err(_) => return Resp::Error("ERR bit offset is not an integer or out of range".to_string()),
+            Err(_) => {
+                return Resp::Error("ERR bit offset is not an integer or out of range".to_string());
+            }
         },
         None => return Resp::Error("ERR bit offset is not an integer or out of range".to_string()),
     };
@@ -118,7 +124,9 @@ pub fn getbit(items: &[Resp], db: &Db) -> Resp {
                 let bit = (byte >> bit_in_byte) & 1;
                 Resp::Integer(bit as i64)
             }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::Integer(0)
@@ -178,14 +186,28 @@ pub fn bitcount(items: &[Resp], db: &Db) -> Resp {
                 let (s_idx, e_idx) = if is_bit {
                     // Bit-based range
                     let bit_len = len * 8;
-                    if start < 0 { start += bit_len; }
-                    if end < 0 { end += bit_len; }
-                    if start < 0 { start = 0; }
-                    if end < 0 { end = -1; }
-                    if start >= bit_len { return Resp::Integer(0); }
-                    if end >= bit_len { end = bit_len - 1; }
-                    if start > end { return Resp::Integer(0); }
-                    
+                    if start < 0 {
+                        start += bit_len;
+                    }
+                    if end < 0 {
+                        end += bit_len;
+                    }
+                    if start < 0 {
+                        start = 0;
+                    }
+                    if end < 0 {
+                        end = -1;
+                    }
+                    if start >= bit_len {
+                        return Resp::Integer(0);
+                    }
+                    if end >= bit_len {
+                        end = bit_len - 1;
+                    }
+                    if start > end {
+                        return Resp::Integer(0);
+                    }
+
                     // This is a simplified bit-based count for now
                     // Redis standard says if it's BIT, start/end are bit offsets
                     let mut count = 0;
@@ -199,13 +221,27 @@ pub fn bitcount(items: &[Resp], db: &Db) -> Resp {
                     return Resp::Integer(count);
                 } else {
                     // Byte-based range
-                    if start < 0 { start += len; }
-                    if end < 0 { end += len; }
-                    if start < 0 { start = 0; }
-                    if end < 0 { end = -1; }
-                    if start >= len { return Resp::Integer(0); }
-                    if end >= len { end = len - 1; }
-                    if start > end { return Resp::Integer(0); }
+                    if start < 0 {
+                        start += len;
+                    }
+                    if end < 0 {
+                        end += len;
+                    }
+                    if start < 0 {
+                        start = 0;
+                    }
+                    if end < 0 {
+                        end = -1;
+                    }
+                    if start >= len {
+                        return Resp::Integer(0);
+                    }
+                    if end >= len {
+                        end = len - 1;
+                    }
+                    if start > end {
+                        return Resp::Integer(0);
+                    }
                     (start as usize, end as usize)
                 };
 
@@ -215,7 +251,9 @@ pub fn bitcount(items: &[Resp], db: &Db) -> Resp {
                 }
                 Resp::Integer(count)
             }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
         Resp::Integer(0)
@@ -243,7 +281,11 @@ pub fn bitpos(items: &[Resp], db: &Db) -> Resp {
 
     if let Some(entry) = db.get(&key) {
         if entry.is_expired() {
-            return if bit == 0 { Resp::Integer(0) } else { Resp::Integer(-1) };
+            return if bit == 0 {
+                Resp::Integer(0)
+            } else {
+                Resp::Integer(-1)
+            };
         }
 
         match &entry.value {
@@ -251,7 +293,11 @@ pub fn bitpos(items: &[Resp], db: &Db) -> Resp {
                 let data = s.as_ref();
                 let len = data.len() as i64;
                 if len == 0 {
-                    return if bit == 0 { Resp::Integer(0) } else { Resp::Integer(-1) };
+                    return if bit == 0 {
+                        Resp::Integer(0)
+                    } else {
+                        Resp::Integer(-1)
+                    };
                 }
 
                 let mut start = 0;
@@ -266,7 +312,10 @@ pub fn bitpos(items: &[Resp], db: &Db) -> Resp {
                     };
                     if items.len() >= 5 {
                         end = match as_bytes(&items[4]) {
-                            Some(b) => { has_end = true; String::from_utf8_lossy(b).parse::<i64>().unwrap_or(len - 1) },
+                            Some(b) => {
+                                has_end = true;
+                                String::from_utf8_lossy(b).parse::<i64>().unwrap_or(len - 1)
+                            }
                             None => len - 1,
                         };
                     }
@@ -284,14 +333,26 @@ pub fn bitpos(items: &[Resp], db: &Db) -> Resp {
 
                 if is_bit {
                     let bit_len = len * 8;
-                    if start < 0 { start += bit_len; }
-                    if end < 0 { end += bit_len; }
-                    if start < 0 { start = 0; }
-                    if start >= bit_len { 
-                        return if bit == 0 { Resp::Integer(start) } else { Resp::Integer(-1) };
+                    if start < 0 {
+                        start += bit_len;
                     }
-                    if end >= bit_len { end = bit_len - 1; }
-                    
+                    if end < 0 {
+                        end += bit_len;
+                    }
+                    if start < 0 {
+                        start = 0;
+                    }
+                    if start >= bit_len {
+                        return if bit == 0 {
+                            Resp::Integer(start)
+                        } else {
+                            Resp::Integer(-1)
+                        };
+                    }
+                    if end >= bit_len {
+                        end = bit_len - 1;
+                    }
+
                     for bit_idx in start..=end {
                         let byte_idx = (bit_idx / 8) as usize;
                         let bit_in_byte = (7 - (bit_idx % 8)) as u8;
@@ -300,14 +361,26 @@ pub fn bitpos(items: &[Resp], db: &Db) -> Resp {
                         }
                     }
                 } else {
-                    if start < 0 { start += len; }
-                    if end < 0 { end += len; }
-                    if start < 0 { start = 0; }
-                    if start >= len {
-                        return if bit == 0 { Resp::Integer(start * 8) } else { Resp::Integer(-1) };
+                    if start < 0 {
+                        start += len;
                     }
-                    if end >= len { end = len - 1; }
-                    
+                    if end < 0 {
+                        end += len;
+                    }
+                    if start < 0 {
+                        start = 0;
+                    }
+                    if start >= len {
+                        return if bit == 0 {
+                            Resp::Integer(start * 8)
+                        } else {
+                            Resp::Integer(-1)
+                        };
+                    }
+                    if end >= len {
+                        end = len - 1;
+                    }
+
                     for byte_idx in (start as usize)..=(end as usize) {
                         let byte = data[byte_idx];
                         if bit == 1 {
@@ -336,16 +409,25 @@ pub fn bitpos(items: &[Resp], db: &Db) -> Resp {
                 }
                 Resp::Integer(-1)
             }
-            _ => Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()),
+            _ => Resp::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".to_string(),
+            ),
         }
     } else {
-        if bit == 0 { Resp::Integer(0) } else { Resp::Integer(-1) }
+        if bit == 0 {
+            Resp::Integer(0)
+        } else {
+            Resp::Integer(-1)
+        }
     }
 }
 
 pub fn bitop(items: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
     if items.len() < 4 {
-        return (Resp::Error("ERR wrong number of arguments for 'bitop' command".to_string()), None);
+        return (
+            Resp::Error("ERR wrong number of arguments for 'bitop' command".to_string()),
+            None,
+        );
     }
 
     let op = match as_bytes(&items[1]) {
@@ -372,11 +454,19 @@ pub fn bitop(items: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
             if !entry.is_expired() {
                 if let Value::String(s) = &entry.value {
                     let d = s.as_ref().to_vec();
-                    if d.len() > max_len { max_len = d.len(); }
+                    if d.len() > max_len {
+                        max_len = d.len();
+                    }
                     src_data.push(d);
                     continue;
                 } else {
-                    return (Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()), None);
+                    return (
+                        Resp::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        ),
+                        None,
+                    );
                 }
             }
         }
@@ -384,7 +474,10 @@ pub fn bitop(items: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
     }
 
     if op == "NOT" && src_data.len() != 1 {
-        return (Resp::Error("ERR BITOP NOT must be called with a single source key.".to_string()), None);
+        return (
+            Resp::Error("ERR BITOP NOT must be called with a single source key.".to_string()),
+            None,
+        );
     }
 
     let mut res = vec![0u8; max_len];
@@ -422,15 +515,23 @@ pub fn bitop(items: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
     }
 
     db.insert(dest_key, Entry::new(Value::String(Bytes::from(res)), None));
-    
+
     let mut log_args = Vec::new();
-    for item in items { log_args.push(item.clone()); }
-    (Resp::Integer(max_len as i64), Some(Resp::Array(Some(log_args))))
+    for item in items {
+        log_args.push(item.clone());
+    }
+    (
+        Resp::Integer(max_len as i64),
+        Some(Resp::Array(Some(log_args))),
+    )
 }
 
 pub fn bitfield(items: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
     if items.len() < 2 {
-        return (Resp::Error("ERR wrong number of arguments for 'bitfield' command".to_string()), None);
+        return (
+            Resp::Error("ERR wrong number of arguments for 'bitfield' command".to_string()),
+            None,
+        );
     }
 
     let key = match &items[1] {
@@ -451,7 +552,15 @@ pub fn bitfield(items: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
         } else {
             match &mut entry.value {
                 Value::String(s) => s.to_vec(),
-                _ => return (Resp::Error("WRONGTYPE Operation against a key holding the wrong kind of value".to_string()), None),
+                _ => {
+                    return (
+                        Resp::Error(
+                            "WRONGTYPE Operation against a key holding the wrong kind of value"
+                                .to_string(),
+                        ),
+                        None,
+                    );
+                }
             }
         }
     } else {
@@ -467,14 +576,22 @@ pub fn bitfield(items: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
 
         match sub.as_str() {
             "OVERFLOW" => {
-                if i + 1 >= items.len() { break; }
-                overflow = match as_bytes(&items[i+1]) {
+                if i + 1 >= items.len() {
+                    break;
+                }
+                overflow = match as_bytes(&items[i + 1]) {
                     Some(b) => {
                         let s = String::from_utf8_lossy(b).to_uppercase();
                         if s == "WRAP" || s == "SAT" || s == "FAIL" {
                             // We'll store it in a local variable that survives the loop
                             // but for now let's just use a &str
-                            if s == "WRAP" { "WRAP" } else if s == "SAT" { "SAT" } else { "FAIL" }
+                            if s == "WRAP" {
+                                "WRAP"
+                            } else if s == "SAT" {
+                                "SAT"
+                            } else {
+                                "FAIL"
+                            }
                         } else {
                             return (Resp::Error("ERR syntax error".to_string()), None);
                         }
@@ -484,12 +601,14 @@ pub fn bitfield(items: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
                 i += 2;
             }
             "GET" | "SET" | "INCRBY" => {
-                if i + 2 >= items.len() { break; }
-                let type_str = match as_bytes(&items[i+1]) {
+                if i + 2 >= items.len() {
+                    break;
+                }
+                let type_str = match as_bytes(&items[i + 1]) {
                     Some(b) => String::from_utf8_lossy(b).to_string(),
                     None => break,
                 };
-                let offset_str = match as_bytes(&items[i+2]) {
+                let offset_str = match as_bytes(&items[i + 2]) {
                     Some(b) => String::from_utf8_lossy(b).to_string(),
                     None => break,
                 };
@@ -503,7 +622,7 @@ pub fn bitfield(items: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
                 };
 
                 if bits == 0 || bits > 64 || (is_signed && bits > 64) || (!is_signed && bits > 63) {
-                     return (Resp::Error("ERR invalid bitfield type".to_string()), None);
+                    return (Resp::Error("ERR invalid bitfield type".to_string()), None);
                 }
 
                 let bit_offset = if offset_str.starts_with('#') {
@@ -516,8 +635,10 @@ pub fn bitfield(items: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
                     results.push(Resp::Integer(get_bits(&data, bit_offset, bits, is_signed)));
                     i += 3;
                 } else if sub == "SET" {
-                    if i + 3 >= items.len() { break; }
-                    let val = match as_bytes(&items[i+3]) {
+                    if i + 3 >= items.len() {
+                        break;
+                    }
+                    let val = match as_bytes(&items[i + 3]) {
                         Some(b) => String::from_utf8_lossy(b).parse::<i64>().unwrap_or(0),
                         None => 0,
                     };
@@ -527,8 +648,10 @@ pub fn bitfield(items: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
                     needs_log = true;
                     i += 4;
                 } else if sub == "INCRBY" {
-                    if i + 3 >= items.len() { break; }
-                    let incr = match as_bytes(&items[i+3]) {
+                    if i + 3 >= items.len() {
+                        break;
+                    }
+                    let incr = match as_bytes(&items[i + 3]) {
                         Some(b) => String::from_utf8_lossy(b).parse::<i64>().unwrap_or(0),
                         None => 0,
                     };
@@ -551,8 +674,13 @@ pub fn bitfield(items: &[Resp], db: &Db) -> (Resp, Option<Resp>) {
     if needs_log {
         db.insert(key, Entry::new(Value::String(Bytes::from(data)), None));
         let mut log_args = Vec::new();
-        for item in items { log_args.push(item.clone()); }
-        (Resp::Array(Some(results)), Some(Resp::Array(Some(log_args))))
+        for item in items {
+            log_args.push(item.clone());
+        }
+        (
+            Resp::Array(Some(results)),
+            Some(Resp::Array(Some(log_args))),
+        )
     } else {
         (Resp::Array(Some(results)), None)
     }
@@ -563,7 +691,9 @@ fn get_bits(data: &[u8], offset: u64, bits: u32, is_signed: bool) -> i64 {
     for i in 0..bits {
         let bit_idx = offset + i as u64;
         let byte_idx = (bit_idx / 8) as usize;
-        if byte_idx >= data.len() { break; }
+        if byte_idx >= data.len() {
+            break;
+        }
         let bit_in_byte = (7 - (bit_idx % 8)) as u8;
         if (data[byte_idx] >> bit_in_byte) & 1 == 1 {
             val |= 1 << (bits - 1 - i);
@@ -612,12 +742,20 @@ fn set_bits(data: &mut Vec<u8>, offset: u64, bits: u32, val: i64, _is_signed: bo
 
 fn incr_bits(old: i64, incr: i64, bits: u32, is_signed: bool, overflow: &str) -> (i64, bool) {
     if is_signed {
-        let min = if bits == 64 { i64::MIN } else { -(1 << (bits - 1)) };
-        let max = if bits == 64 { i64::MAX } else { (1 << (bits - 1)) - 1 };
-        
+        let min = if bits == 64 {
+            i64::MIN
+        } else {
+            -(1 << (bits - 1))
+        };
+        let max = if bits == 64 {
+            i64::MAX
+        } else {
+            (1 << (bits - 1)) - 1
+        };
+
         let (new_val, over) = old.overflowing_add(incr);
         let mut final_val = new_val;
-        
+
         // Manual range check for sub-64 bit types
         if bits < 64 {
             if final_val > max || (over && incr > 0) {
@@ -625,8 +763,12 @@ fn incr_bits(old: i64, incr: i64, bits: u32, is_signed: bool, overflow: &str) ->
                     "WRAP" => {
                         let range = 1i128 << bits;
                         let mut v = final_val as i128;
-                        while v > max as i128 { v -= range; }
-                        while v < min as i128 { v += range; }
+                        while v > max as i128 {
+                            v -= range;
+                        }
+                        while v < min as i128 {
+                            v += range;
+                        }
                         final_val = v as i64;
                     }
                     "SAT" => final_val = max,
@@ -638,8 +780,12 @@ fn incr_bits(old: i64, incr: i64, bits: u32, is_signed: bool, overflow: &str) ->
                     "WRAP" => {
                         let range = 1i128 << bits;
                         let mut v = final_val as i128;
-                        while v > max as i128 { v -= range; }
-                        while v < min as i128 { v += range; }
+                        while v > max as i128 {
+                            v -= range;
+                        }
+                        while v < min as i128 {
+                            v += range;
+                        }
                         final_val = v as i64;
                     }
                     "SAT" => final_val = min,
@@ -648,8 +794,8 @@ fn incr_bits(old: i64, incr: i64, bits: u32, is_signed: bool, overflow: &str) ->
                 }
             }
         } else if over {
-             match overflow {
-                "WRAP" => {}, // already wrapped by overflowing_add
+            match overflow {
+                "WRAP" => {} // already wrapped by overflowing_add
                 "SAT" => final_val = if incr > 0 { max } else { min },
                 "FAIL" => return (0, false),
                 _ => {}
@@ -660,12 +806,12 @@ fn incr_bits(old: i64, incr: i64, bits: u32, is_signed: bool, overflow: &str) ->
         let max = (1u64 << bits) - 1;
         let uold = old as u64;
         let uincr = incr as u64;
-        
+
         let (new_val, over) = uold.overflowing_add(uincr);
         let mut final_val = new_val;
 
         if bits < 64 {
-             if final_val > max || over {
+            if final_val > max || over {
                 match overflow {
                     "WRAP" => final_val &= max,
                     "SAT" => final_val = max,
@@ -675,7 +821,7 @@ fn incr_bits(old: i64, incr: i64, bits: u32, is_signed: bool, overflow: &str) ->
             }
         } else if over {
             match overflow {
-                "WRAP" => {},
+                "WRAP" => {}
                 "SAT" => final_val = max,
                 "FAIL" => return (0, false),
                 _ => {}

@@ -2,8 +2,8 @@ use crate::cmd::{ServerContext, as_bytes};
 use crate::db::{Db, Value};
 use crate::resp::Resp;
 use bytes::Bytes;
-use std::sync::atomic::Ordering;
 use memory_stats::memory_stats;
+use std::sync::atomic::Ordering;
 
 pub async fn memory(items: &[Resp], db: &Db, ctx: &ServerContext) -> Resp {
     if items.len() < 2 {
@@ -20,7 +20,10 @@ pub async fn memory(items: &[Resp], db: &Db, ctx: &ServerContext) -> Resp {
         "USAGE" => memory_usage(items, db).await,
         "STATS" => memory_stats_cmd(ctx).await,
         "HELP" => memory_help().await,
-        _ => Resp::Error(format!("ERR unknown subcommand '{}'. Try USAGE, STATS, HELP.", subcommand)),
+        _ => Resp::Error(format!(
+            "ERR unknown subcommand '{}'. Try USAGE, STATS, HELP.",
+            subcommand
+        )),
     }
 }
 
@@ -101,26 +104,38 @@ async fn memory_stats_cmd(ctx: &ServerContext) -> Resp {
     };
 
     if let Some(usage) = memory_stats() {
-        add_stat("peak.allocated", Resp::Integer(ctx.mem_peak_rss.load(Ordering::Relaxed) as i64));
+        add_stat(
+            "peak.allocated",
+            Resp::Integer(ctx.mem_peak_rss.load(Ordering::Relaxed) as i64),
+        );
         add_stat("total.allocated", Resp::Integer(usage.physical_mem as i64));
         add_stat("startup.allocated", Resp::Integer(0)); // We don't track this yet
         add_stat("replication.backlog", Resp::Integer(0));
         add_stat("clients.slaves", Resp::Integer(0));
-        add_stat("clients.normal", Resp::Integer(ctx.client_count.load(Ordering::Relaxed) as i64));
+        add_stat(
+            "clients.normal",
+            Resp::Integer(ctx.client_count.load(Ordering::Relaxed) as i64),
+        );
         add_stat("aof.buffer", Resp::Integer(0));
-        
+
         let mut db_total_keys = 0;
         for db_lock in ctx.databases.iter() {
             db_total_keys += db_lock.read().unwrap().len();
         }
         add_stat("keys.count", Resp::Integer(db_total_keys as i64));
-        
+
         let dataset_bytes = usage.physical_mem as i64; // Simplified
         add_stat("dataset.bytes", Resp::Integer(dataset_bytes));
-        
+
         if ctx.maxmemory.load(Ordering::Relaxed) > 0 {
             let maxmemory = ctx.maxmemory.load(Ordering::Relaxed) as i64;
-            add_stat("dataset.percentage", Resp::BulkString(Some(Bytes::from(format!("{:.2}", (dataset_bytes as f64 / maxmemory as f64) * 100.0)))));
+            add_stat(
+                "dataset.percentage",
+                Resp::BulkString(Some(Bytes::from(format!(
+                    "{:.2}",
+                    (dataset_bytes as f64 / maxmemory as f64) * 100.0
+                )))),
+            );
         }
     } else {
         return Resp::Error("ERR could not retrieve memory stats".to_string());

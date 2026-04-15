@@ -1,16 +1,16 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::{Arc, RwLock};
-use std::io::{self, BufRead, Write};
 use std::fs::File;
+use std::io::{self, BufRead, Write};
+use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone)]
 pub struct User {
     pub name: String,
     pub passwords: HashSet<String>, // Stores plain text passwords for now. Redis uses SHA256 hashes.
-    pub allowed_commands: HashSet<String>, 
+    pub allowed_commands: HashSet<String>,
     pub all_commands: bool,
     pub disallowed_commands: HashSet<String>,
-    
+
     pub enabled: bool,
     pub all_keys: bool,
     pub allowed_key_patterns: Vec<String>,
@@ -119,15 +119,15 @@ impl User {
             s.push_str(&format!(" >{}", pass));
         }
         if self.passwords.is_empty() {
-             s.push_str(" nopass");
+            s.push_str(" nopass");
         }
-        
+
         if self.all_keys {
             s.push_str(" ~*");
         } else if self.allowed_key_patterns.is_empty() {
-             // Maybe explicitly deny all keys? Redis default is no keys access if not specified.
-             // But if we want to represent it:
-             // s.push_str(" resetkeys");
+            // Maybe explicitly deny all keys? Redis default is no keys access if not specified.
+            // But if we want to represent it:
+            // s.push_str(" resetkeys");
         } else {
             for pattern in &self.allowed_key_patterns {
                 s.push_str(&format!(" ~{}", pattern));
@@ -145,11 +145,11 @@ impl User {
             // Redis `ACL SAVE` output is normalized.
             // If all_commands is false, we list allowed commands.
             if self.allowed_commands.is_empty() {
-                 s.push_str(" -@all");
+                s.push_str(" -@all");
             } else {
-                 for cmd in &self.allowed_commands {
-                     s.push_str(&format!(" +{}", cmd));
-                 }
+                for cmd in &self.allowed_commands {
+                    s.push_str(&format!(" +{}", cmd));
+                }
             }
         }
         s
@@ -175,14 +175,14 @@ impl Acl {
     pub fn set_user(&mut self, user: User) {
         self.users.insert(user.name.clone(), Arc::new(user));
     }
-    
+
     pub fn del_user(&mut self, name: &str) -> bool {
         if name == "default" {
             return false; // Cannot delete default user
         }
         self.users.remove(name).is_some()
     }
-    
+
     // Authenticate: returns the User if success
     pub fn authenticate(&self, username: &str, password: &str) -> Option<Arc<User>> {
         if let Some(user) = self.users.get(username) {
@@ -203,7 +203,7 @@ impl Acl {
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
-            
+
             let parts: Vec<String> = line.split_whitespace().map(|s| s.to_string()).collect();
             if parts.is_empty() || parts[0] != "user" {
                 continue;
@@ -213,11 +213,11 @@ impl Acl {
             }
             let username = &parts[1];
             let mut user = if let Some(u) = self.users.get(username) {
-                 (**u).clone()
+                (**u).clone()
             } else {
-                 User::new(username)
+                User::new(username)
             };
-            
+
             if parts.len() > 2 {
                 user.parse_rules(&parts[2..]);
             }

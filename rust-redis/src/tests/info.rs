@@ -1,4 +1,4 @@
-use crate::cmd::{process_frame, ConnectionContext, ServerContext};
+use crate::cmd::{ConnectionContext, ServerContext, process_frame};
 use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
@@ -41,7 +41,13 @@ async fn test_info_keyspace() {
         Resp::BulkString(Some(Bytes::from("key1"))),
         Resp::BulkString(Some(Bytes::from("value1"))),
     ]));
-    crate::cmd::string::set(match req1 { Resp::Array(Some(ref items)) => items, _ => unreachable!() }, &server_ctx.databases[0].read().unwrap());
+    crate::cmd::string::set(
+        match req1 {
+            Resp::Array(Some(ref items)) => items,
+            _ => unreachable!(),
+        },
+        &server_ctx.databases[0].read().unwrap(),
+    );
 
     let req2 = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("SET"))),
@@ -50,7 +56,13 @@ async fn test_info_keyspace() {
         Resp::BulkString(Some(Bytes::from("EX"))),
         Resp::BulkString(Some(Bytes::from("100"))),
     ]));
-    crate::cmd::string::set(match req2 { Resp::Array(Some(ref items)) => items, _ => unreachable!() }, &server_ctx.databases[0].read().unwrap());
+    crate::cmd::string::set(
+        match req2 {
+            Resp::Array(Some(ref items)) => items,
+            _ => unreachable!(),
+        },
+        &server_ctx.databases[0].read().unwrap(),
+    );
 
     // INFO KEYSPACE
     let req = Resp::Array(Some(vec![
@@ -78,7 +90,9 @@ async fn test_info_clients() {
     // Simulate 1 connected client (ourselves + maybe others if we tracked properly)
     // Since create_server_context initializes client_count to 0, and we are not going through accept loop,
     // we manually increment it to simulate a connection.
-    server_ctx.client_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    server_ctx
+        .client_count
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     // INFO CLIENTS
     let req = Resp::Array(Some(vec![
@@ -135,8 +149,10 @@ async fn test_info_memory() {
 async fn test_info_memory_with_config() {
     let server_ctx = crate::tests::helper::create_server_context();
     // Set maxmemory to 1GB
-    server_ctx.maxmemory.store(1024 * 1024 * 1024, std::sync::atomic::Ordering::Relaxed);
-    
+    server_ctx
+        .maxmemory
+        .store(1024 * 1024 * 1024, std::sync::atomic::Ordering::Relaxed);
+
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // INFO MEMORY
@@ -190,7 +206,7 @@ async fn test_info_clients_with_config() {
     let mut config = crate::conf::Config::default();
     config.maxclients = 5000;
     server_ctx.config = Arc::new(config);
-    
+
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
     // INFO CLIENTS
@@ -207,7 +223,6 @@ async fn test_info_clients_with_config() {
         _ => panic!("expected BulkString response"),
     }
 }
-
 
 #[tokio::test]
 async fn test_info_blocked_clients() {

@@ -1,9 +1,13 @@
-use crate::tests::helper::{create_connection_context, create_server_context};
-use crate::resp::Resp;
 use crate::cmd::{ConnectionContext, ServerContext, process_frame};
+use crate::resp::Resp;
+use crate::tests::helper::{create_connection_context, create_server_context};
 use bytes::Bytes;
 
-async fn run_cmd_bytes(args: Vec<Bytes>, conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) -> Resp {
+async fn run_cmd_bytes(
+    args: Vec<Bytes>,
+    conn_ctx: &mut ConnectionContext,
+    server_ctx: &ServerContext,
+) -> Resp {
     let mut resp_args = Vec::new();
     for arg in args {
         resp_args.push(Resp::BulkString(Some(arg)));
@@ -22,14 +26,24 @@ async fn test_echo() {
     let mut conn_ctx = create_connection_context();
 
     // ECHO hello
-    let resp = run_cmd_bytes(vec![Bytes::from("ECHO"), Bytes::from("hello")], &mut conn_ctx, &server_ctx).await;
+    let resp = run_cmd_bytes(
+        vec![Bytes::from("ECHO"), Bytes::from("hello")],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match resp {
         Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("hello")),
         _ => panic!("Expected BulkString('hello'), got {:?}", resp),
     }
 
     // ECHO with spaces
-    let resp = run_cmd_bytes(vec![Bytes::from("ECHO"), Bytes::from("hello world")], &mut conn_ctx, &server_ctx).await;
+    let resp = run_cmd_bytes(
+        vec![Bytes::from("ECHO"), Bytes::from("hello world")],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match resp {
         Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("hello world")),
         _ => panic!("Expected BulkString('hello world'), got {:?}", resp),
@@ -42,7 +56,12 @@ async fn test_echo() {
         _ => panic!("Expected Error, got {:?}", resp),
     }
 
-    let resp = run_cmd_bytes(vec![Bytes::from("ECHO"), Bytes::from("a"), Bytes::from("b")], &mut conn_ctx, &server_ctx).await;
+    let resp = run_cmd_bytes(
+        vec![Bytes::from("ECHO"), Bytes::from("a"), Bytes::from("b")],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match resp {
         Resp::Error(e) => assert!(e.contains("wrong number of arguments")),
         _ => panic!("Expected Error, got {:?}", resp),

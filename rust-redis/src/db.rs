@@ -3,11 +3,11 @@ use dashmap::DashMap;
 // RehashMap struct and implementation are removed for simplicity
 // and replaced by DashMap as the default implementation.
 
+use crate::hll::HyperLogLog;
+use crate::stream::Stream;
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use crate::stream::Stream;
-use crate::hll::HyperLogLog;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TotalOrderF64(pub f64);
@@ -56,8 +56,8 @@ pub enum Value {
 pub struct Entry {
     pub value: Value,
     pub expires_at: Option<u64>, // absolute timestamp in milliseconds
-    pub lru: u64,               // last access time in seconds (simplified Redis LRU)
-    pub lfu: u32,               // access counter (simplified Redis LFU)
+    pub lru: u64,                // last access time in seconds (simplified Redis LRU)
+    pub lfu: u32,                // access counter (simplified Redis LFU)
 }
 
 impl Entry {

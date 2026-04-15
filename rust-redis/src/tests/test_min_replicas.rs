@@ -1,5 +1,5 @@
-use crate::tests::helper::{create_server_context, create_connection_context, run_cmd};
 use crate::resp::Resp;
+use crate::tests::helper::{create_connection_context, create_server_context, run_cmd};
 use bytes::Bytes;
 use std::sync::atomic::Ordering;
 
@@ -20,7 +20,10 @@ async fn test_min_replicas_to_write() {
     }
 
     // 3. Add a replica and simulate ACK
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
     ctx.replica_ack_time.insert(1, now); // Just acknowledged
 
     // 4. Try write -> should succeed

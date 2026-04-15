@@ -1,7 +1,7 @@
 use crate::resp::Resp;
+use crate::tests::helper::run_cmd;
 use bytes::Bytes;
 use std::collections::HashSet;
-use crate::tests::helper::run_cmd;
 
 #[tokio::test]
 async fn test_sunion() {
@@ -10,11 +10,26 @@ async fn test_sunion() {
 
     // Setup
     // s1: {a, b, c}
-    run_cmd(vec!["SADD", "s1", "a", "b", "c"], &mut conn_ctx, &server_ctx).await;
+    run_cmd(
+        vec!["SADD", "s1", "a", "b", "c"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     // s2: {c, d, e}
-    run_cmd(vec!["SADD", "s2", "c", "d", "e"], &mut conn_ctx, &server_ctx).await;
+    run_cmd(
+        vec!["SADD", "s2", "c", "d", "e"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     // s3: {a, e, f}
-    run_cmd(vec!["SADD", "s3", "a", "e", "f"], &mut conn_ctx, &server_ctx).await;
+    run_cmd(
+        vec!["SADD", "s3", "a", "e", "f"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
 
     // 1. SUNION s1 (same as SMEMBERS)
     let res = run_cmd(vec!["SUNION", "s1"], &mut conn_ctx, &server_ctx).await;
@@ -24,7 +39,9 @@ async fn test_sunion() {
             let mut members = HashSet::new();
             for item in items {
                 match item {
-                    Resp::BulkString(Some(b)) => { members.insert(b); },
+                    Resp::BulkString(Some(b)) => {
+                        members.insert(b);
+                    }
                     _ => panic!("Expected BulkString"),
                 }
             }
@@ -43,7 +60,9 @@ async fn test_sunion() {
             let mut members = HashSet::new();
             for item in items {
                 match item {
-                    Resp::BulkString(Some(b)) => { members.insert(b); },
+                    Resp::BulkString(Some(b)) => {
+                        members.insert(b);
+                    }
                     _ => panic!("Expected BulkString"),
                 }
             }
@@ -64,7 +83,9 @@ async fn test_sunion() {
             let mut members = HashSet::new();
             for item in items {
                 match item {
-                    Resp::BulkString(Some(b)) => { members.insert(b); },
+                    Resp::BulkString(Some(b)) => {
+                        members.insert(b);
+                    }
                     _ => panic!("Expected BulkString"),
                 }
             }
@@ -86,7 +107,9 @@ async fn test_sunion() {
             let mut members = HashSet::new();
             for item in items {
                 match item {
-                    Resp::BulkString(Some(b)) => { members.insert(b); },
+                    Resp::BulkString(Some(b)) => {
+                        members.insert(b);
+                    }
                     _ => panic!("Expected BulkString"),
                 }
             }
@@ -105,7 +128,9 @@ async fn test_sunion() {
             let mut members = HashSet::new();
             for item in items {
                 match item {
-                    Resp::BulkString(Some(b)) => { members.insert(b); },
+                    Resp::BulkString(Some(b)) => {
+                        members.insert(b);
+                    }
                     _ => panic!("Expected BulkString"),
                 }
             }
@@ -118,7 +143,12 @@ async fn test_sunion() {
 
     // 6. WRONGTYPE
     run_cmd(vec!["SET", "string_key", "val"], &mut conn_ctx, &server_ctx).await;
-    let res = run_cmd(vec!["SUNION", "string_key", "s1"], &mut conn_ctx, &server_ctx).await;
+    let res = run_cmd(
+        vec!["SUNION", "string_key", "s1"],
+        &mut conn_ctx,
+        &server_ctx,
+    )
+    .await;
     match res {
         Resp::Error(msg) => assert!(msg.contains("WRONGTYPE")),
         _ => panic!("Expected Error"),

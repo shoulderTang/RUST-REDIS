@@ -1,6 +1,6 @@
 #[path = "../resp.rs"]
 mod resp;
-use resp::{read_frame, write_frame, Resp};
+use resp::{Resp, read_frame, write_frame};
 use std::collections::HashMap;
 use std::io;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
@@ -26,7 +26,11 @@ fn print_resp(r: &Resp) {
         Resp::SimpleString(s) => match std::str::from_utf8(s.as_ref()) {
             Ok(text) => println!("{}", text),
             Err(_) => {
-                let hex = s.as_ref().iter().map(|x| format!("{:02x}", x)).collect::<String>();
+                let hex = s
+                    .as_ref()
+                    .iter()
+                    .map(|x| format!("{:02x}", x))
+                    .collect::<String>();
                 println!("0x{}", hex);
             }
         },
@@ -45,7 +49,11 @@ fn print_resp(r: &Resp) {
         Resp::BulkString(Some(b)) => match std::str::from_utf8(b.as_ref()) {
             Ok(s) => println!("{}", s),
             Err(_) => {
-                let hex = b.as_ref().iter().map(|x| format!("{:02x}", x)).collect::<String>();
+                let hex = b
+                    .as_ref()
+                    .iter()
+                    .map(|x| format!("{:02x}", x))
+                    .collect::<String>();
                 println!("0x{}", hex);
             }
         },
@@ -189,7 +197,10 @@ async fn main() -> io::Result<()> {
 
         let target_addr = if let Some(key) = extract_key_from_tokens(&tokens) {
             let s = key_slot(key);
-            slot_map.get(&s).cloned().unwrap_or_else(|| default_addr.clone())
+            slot_map
+                .get(&s)
+                .cloned()
+                .unwrap_or_else(|| default_addr.clone())
         } else {
             default_addr.clone()
         };

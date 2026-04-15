@@ -1,4 +1,4 @@
-use crate::cmd::{process_frame, ConnectionContext, ServerContext};
+use crate::cmd::{ConnectionContext, ServerContext, process_frame};
 use crate::resp::Resp;
 use bytes::Bytes;
 use std::sync::Arc;
@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 async fn test_keyspace_notifications() {
     let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-    
+
     // 1. Enable K$ (Keyspace events for Strings)
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("CONFIG"))),
@@ -23,7 +23,7 @@ async fn test_keyspace_notifications() {
     let (tx, mut rx) = mpsc::channel(32);
     let mut sub_ctx = ConnectionContext::new(1, None, Some(tx), None);
     sub_ctx.authenticated = true;
-    
+
     let sub_req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("SUBSCRIBE"))),
         Resp::BulkString(Some(Bytes::from("__keyspace@0__:mykey"))),
@@ -44,7 +44,10 @@ async fn test_keyspace_notifications() {
     let msg = rx.recv().await.expect("Expected notification");
     if let Resp::Array(Some(items)) = msg {
         assert_eq!(items[0], Resp::BulkString(Some(Bytes::from("message"))));
-        assert_eq!(items[1], Resp::BulkString(Some(Bytes::from("__keyspace@0__:mykey"))));
+        assert_eq!(
+            items[1],
+            Resp::BulkString(Some(Bytes::from("__keyspace@0__:mykey")))
+        );
         assert_eq!(items[2], Resp::BulkString(Some(Bytes::from("set"))));
     } else {
         panic!("Unexpected notification format: {:?}", msg);
@@ -55,7 +58,7 @@ async fn test_keyspace_notifications() {
 async fn test_keyevent_notifications() {
     let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-    
+
     // 1. Enable Eg (Keyevent events for Generic commands)
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("CONFIG"))),
@@ -70,7 +73,7 @@ async fn test_keyevent_notifications() {
     let (tx, mut rx) = mpsc::channel(32);
     let mut sub_ctx = ConnectionContext::new(1, None, Some(tx), None);
     sub_ctx.authenticated = true;
-    
+
     let sub_req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("SUBSCRIBE"))),
         Resp::BulkString(Some(Bytes::from("__keyevent@0__:del"))),
@@ -97,7 +100,10 @@ async fn test_keyevent_notifications() {
     let msg = rx.recv().await.expect("Expected notification");
     if let Resp::Array(Some(items)) = msg {
         assert_eq!(items[0], Resp::BulkString(Some(Bytes::from("message"))));
-        assert_eq!(items[1], Resp::BulkString(Some(Bytes::from("__keyevent@0__:del"))));
+        assert_eq!(
+            items[1],
+            Resp::BulkString(Some(Bytes::from("__keyevent@0__:del")))
+        );
         assert_eq!(items[2], Resp::BulkString(Some(Bytes::from("mykey"))));
     } else {
         panic!("Unexpected notification format: {:?}", msg);

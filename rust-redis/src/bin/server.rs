@@ -1,35 +1,35 @@
 #![allow(unexpected_cfgs)]
 #![allow(unused_imports)]
 #![allow(dead_code)]
-use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::TcpListener;
 use tracing::{error, info, warn};
-#[path = "../clock.rs"]
-pub mod clock;
+#[path = "../acl.rs"]
+pub mod acl;
 #[path = "../aof.rs"]
 mod aof;
+#[path = "../clock.rs"]
+pub mod clock;
 #[path = "../cmd/mod.rs"]
 mod cmd;
 #[path = "../conf.rs"]
 mod conf;
 #[path = "../db.rs"]
 mod db;
-#[path = "../rdb.rs"]
-mod rdb;
-#[path = "../rax.rs"]
-mod rax;
-#[path = "../hll.rs"]
-mod hll;
-#[path = "../stream.rs"]
-mod stream;
-#[path = "../resp.rs"]
-mod resp;
 #[path = "../geo.rs"]
 mod geo;
-#[path = "../acl.rs"]
-pub mod acl;
+#[path = "../hll.rs"]
+mod hll;
+#[path = "../rax.rs"]
+mod rax;
+#[path = "../rdb.rs"]
+mod rdb;
+#[path = "../resp.rs"]
+mod resp;
+#[path = "../stream.rs"]
+mod stream;
 
 #[cfg(test)]
 #[path = "../tests/mod.rs"]
@@ -83,7 +83,6 @@ async fn main() {
     }
 }
 
-
 async fn run_server(
     cfg: conf::Config,
     _guard: Option<tracing_appender::non_blocking::WorkerGuard>,
@@ -96,7 +95,7 @@ async fn run_server(
     }
 
     let listener = TcpListener::bind(&addr).await.unwrap();
-    
+
     // Initialize multiple databases
     let mut dbs = Vec::with_capacity(cfg.databases as usize);
     for _ in 0..cfg.databases {
@@ -112,10 +111,10 @@ async fn run_server(
 
     // Create script cache
     let script_manager = cmd::scripting::create_script_manager();
-    
+
     // Initialize ACL
     let mut acl_store = acl::Acl::new();
-    
+
     // Load from ACL file if configured
     if let Some(acl_file) = &cfg.aclfile {
         // If the file doesn't exist, we just start with default ACL.
@@ -132,16 +131,18 @@ async fn run_server(
     // Apply requirepass to default user if set (compatibility)
     if let Some(pass) = &cfg.requirepass {
         if let Some(default_user_arc) = acl_store.users.get("default") {
-             let mut default_user = (**default_user_arc).clone();
-             // Add the password
-             default_user.passwords.insert(pass.clone());
-             acl_store.set_user(default_user);
+            let mut default_user = (**default_user_arc).clone();
+            // Add the password
+            default_user.passwords.insert(pass.clone());
+            acl_store.set_user(default_user);
         }
     }
 
     let acl = Arc::new(std::sync::RwLock::new(acl_store));
     let mut rng = rand::rng();
-    let run_id: String = (0..40).map(|_| rng.sample(rand::distr::Alphanumeric) as char).collect();
+    let run_id: String = (0..40)
+        .map(|_| rng.sample(rand::distr::Alphanumeric) as char)
+        .collect();
     // Hold the raw Aof before the task starts so we can load it first.
     let raw_aof = if cfg.appendonly {
         info!("AOF enabled, file: {}", cfg.appendfilename);
@@ -156,7 +157,11 @@ async fn run_server(
     let my_run_id = run_id.clone();
     let cluster_state = {
         let node_id = cluster::NodeId(my_run_id.clone());
-        Arc::new(RwLock::new(cluster::ClusterState::new(node_id, cfg.bind.clone(), cfg.port)))
+        Arc::new(RwLock::new(cluster::ClusterState::new(
+            node_id,
+            cfg.bind.clone(),
+            cfg.port,
+        )))
     };
     let mut server_ctx = cmd::ServerContext {
         databases: databases,
@@ -169,7 +174,9 @@ async fn run_server(
         pubsub_channels: std::sync::Arc::new(dashmap::DashMap::new()),
         pubsub_patterns: std::sync::Arc::new(dashmap::DashMap::new()),
         run_id: Arc::new(std::sync::RwLock::new(run_id)),
-        replid2: Arc::new(std::sync::RwLock::new("0000000000000000000000000000000000000000".to_string())),
+        replid2: Arc::new(std::sync::RwLock::new(
+            "0000000000000000000000000000000000000000".to_string(),
+        )),
         second_repl_offset: Arc::new(std::sync::atomic::AtomicI64::new(-1)),
         start_time: std::time::Instant::now(),
         client_count: Arc::new(AtomicU64::new(0)),
@@ -178,8 +185,12 @@ async fn run_server(
         monitors: std::sync::Arc::new(dashmap::DashMap::new()),
         replicas: std::sync::Arc::new(dashmap::DashMap::new()),
         repl_backlog: std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new())),
-        repl_backlog_size: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(cfg.repl_backlog_size)),
-        repl_ping_replica_period: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(cfg.repl_ping_replica_period)),
+        repl_backlog_size: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(
+            cfg.repl_backlog_size,
+        )),
+        repl_ping_replica_period: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+            cfg.repl_ping_replica_period,
+        )),
         repl_timeout: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(cfg.repl_timeout)),
         repl_offset: std::sync::Arc::new(AtomicU64::new(0)),
         replica_ack: std::sync::Arc::new(dashmap::DashMap::new()),
@@ -187,25 +198,48 @@ async fn run_server(
         replica_listening_port: std::sync::Arc::new(dashmap::DashMap::new()),
         slowlog: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::VecDeque::new())),
         slowlog_next_id: std::sync::Arc::new(AtomicU64::new(1)),
-        slowlog_max_len: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(cfg.slowlog_max_len as usize)),
-        slowlog_threshold_us: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(cfg.slowlog_log_slower_than)),
+        slowlog_max_len: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(
+            cfg.slowlog_max_len as usize,
+        )),
+        slowlog_threshold_us: std::sync::Arc::new(std::sync::atomic::AtomicI64::new(
+            cfg.slowlog_log_slower_than,
+        )),
         mem_peak_rss: std::sync::Arc::new(AtomicU64::new(0)),
         maxmemory: std::sync::Arc::new(AtomicU64::new(cfg.maxmemory)),
-        notify_keyspace_events: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(cmd::notify::parse_notify_flags(&cfg.notify_keyspace_events))),
+        notify_keyspace_events: std::sync::Arc::new(std::sync::atomic::AtomicU32::new(
+            cmd::notify::parse_notify_flags(&cfg.notify_keyspace_events),
+        )),
         rdbcompression: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cfg.rdbcompression)),
         rdbchecksum: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cfg.rdbchecksum)),
-        stop_writes_on_bgsave_error: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cfg.stop_writes_on_bgsave_error)),
-        replica_read_only: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cfg.replica_read_only)),
-        min_replicas_to_write: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(cfg.min_replicas_to_write)),
-        min_replicas_max_lag: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(cfg.min_replicas_max_lag)),
-        repl_diskless_sync: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(cfg.repl_diskless_sync)),
-        repl_diskless_sync_delay: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(cfg.repl_diskless_sync_delay)),
+        stop_writes_on_bgsave_error: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            cfg.stop_writes_on_bgsave_error,
+        )),
+        replica_read_only: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            cfg.replica_read_only,
+        )),
+        min_replicas_to_write: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(
+            cfg.min_replicas_to_write,
+        )),
+        min_replicas_max_lag: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+            cfg.min_replicas_max_lag,
+        )),
+        repl_diskless_sync: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
+            cfg.repl_diskless_sync,
+        )),
+        repl_diskless_sync_delay: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+            cfg.repl_diskless_sync_delay,
+        )),
         maxmemory_policy: Arc::new(RwLock::new(cfg.maxmemory_policy)),
         maxmemory_samples: Arc::new(std::sync::atomic::AtomicUsize::new(cfg.maxmemory_samples)),
         save_params: Arc::new(RwLock::new(cfg.save_params.clone())),
         last_bgsave_ok: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         dirty: Arc::new(AtomicU64::new(0)),
-        last_save_time: Arc::new(std::sync::atomic::AtomicI64::new(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64)),
+        last_save_time: Arc::new(std::sync::atomic::AtomicI64::new(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+        )),
         watched_clients: std::sync::Arc::new(dashmap::DashMap::new()),
         client_watched_dirty: std::sync::Arc::new(dashmap::DashMap::new()),
         tracking_clients: std::sync::Arc::new(dashmap::DashMap::new()),
@@ -221,7 +255,7 @@ async fn run_server(
         cluster: cluster_state.clone(),
         node_conns: Arc::new(dashmap::DashMap::new()),
     };
-    
+
     if cfg.cluster_enabled {
         let p = std::path::Path::new(&cfg.dir).join(&cfg.cluster_config_file);
         if p.exists() {
@@ -232,7 +266,7 @@ async fn run_server(
             }
         }
     }
-    
+
     // Load AOF while we still have exclusive ownership of the Aof struct,
     // then hand it off to the background task.
     if let Some(aof) = raw_aof {
@@ -269,8 +303,14 @@ async fn run_server(
             }
 
             // Only trigger if no child process is running
-            if trigger_save && dirty > 0 && server_ctx_for_save.rdb_child_pid.load(Ordering::Relaxed) == -1 {
-                info!("Configured save reached ({} changes, {} seconds). Starting background save.", dirty, elapsed);
+            if trigger_save
+                && dirty > 0
+                && server_ctx_for_save.rdb_child_pid.load(Ordering::Relaxed) == -1
+            {
+                info!(
+                    "Configured save reached ({} changes, {} seconds). Starting background save.",
+                    dirty, elapsed
+                );
                 cmd::save::bgsave(&[], &server_ctx_for_save);
             }
         }
@@ -285,8 +325,13 @@ async fn run_server(
 
         let current_clients = server_ctx.client_count.load(Ordering::Relaxed);
         if current_clients >= server_ctx.config.maxclients {
-            warn!("max number of clients reached, rejecting connection from {}", addr);
-            let _ = socket.write_all(b"-ERR max number of clients reached\r\n").await;
+            warn!(
+                "max number of clients reached, rejecting connection from {}",
+                addr
+            );
+            let _ = socket
+                .write_all(b"-ERR max number of clients reached\r\n")
+                .await;
             continue;
         }
 
@@ -319,7 +364,7 @@ async fn run_server(
                 server_ctx_cloned.clients.insert(connection_id, ci);
             }
             let (read_half, write_half) = socket.into_split();
-            
+
             // Writer task
             tokio::spawn(async move {
                 let mut writer = BufWriter::new(write_half);
@@ -330,7 +375,7 @@ async fn run_server(
                     match resp {
                         Resp::Control(ref s) if s == "START_RDB_TRANSFER" => {
                             buffering = true;
-                        },
+                        }
                         Resp::Control(ref s) if s == "RDB_FINISHED" => {
                             buffering = false;
                             for item in buffer.drain(..) {
@@ -341,7 +386,7 @@ async fn run_server(
                             if writer.flush().await.is_err() {
                                 break;
                             }
-                        },
+                        }
                         _ => {
                             if buffering {
                                 buffer.push(resp);
@@ -359,12 +404,19 @@ async fn run_server(
                 // Signal shutdown
                 let _ = shutdown_tx.send(true);
             });
-            
+
             // Frame channel
             let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel(32);
             let _conn_ctx_id = connection_id;
-            let mut conn_ctx = cmd::ConnectionContext::new(connection_id, client_fd, Some(tx_for_conn), Some(shutdown_rx.clone()));
-            server_ctx_cloned.client_watched_dirty.insert(connection_id, conn_ctx.watched_keys_dirty.clone());
+            let mut conn_ctx = cmd::ConnectionContext::new(
+                connection_id,
+                client_fd,
+                Some(tx_for_conn),
+                Some(shutdown_rx.clone()),
+            );
+            server_ctx_cloned
+                .client_watched_dirty
+                .insert(connection_id, conn_ctx.watched_keys_dirty.clone());
 
             // Reader Task
             tokio::spawn(async move {
@@ -377,7 +429,7 @@ async fn run_server(
                             }
                         }
                         Ok(None) => break, // EOF
-                        Err(_) => break, // Error
+                        Err(_) => break,   // Error
                     }
                 }
             });
@@ -406,11 +458,11 @@ async fn run_server(
                                     &mut conn_ctx,
                                     &server_ctx_cloned,
                                 ).await;
-                
+
                                 if tx.send(response).await.is_err() {
                                     break;
                                 }
-                
+
                                 if let Some(cmd) = cmd_to_log {
                                     if let Some(aof) = &server_ctx_cloned.aof {
                                         aof.append(&cmd).await;
@@ -453,7 +505,7 @@ async fn run_server(
                     }
                 }
             }
-            
+
             // Cleanup subscriptions on disconnect
             for channel in conn_ctx.subscriptions.iter() {
                 if let Some(subscribers) = server_ctx_cloned.pubsub_channels.get(channel) {
@@ -468,13 +520,18 @@ async fn run_server(
             // Cleanup watched keys
             for (db_idx, keys) in conn_ctx.watched_keys.iter() {
                 for key in keys {
-                    if let Some(mut clients) = server_ctx_cloned.watched_clients.get_mut(&(*db_idx, key.clone())) {
+                    if let Some(mut clients) = server_ctx_cloned
+                        .watched_clients
+                        .get_mut(&(*db_idx, key.clone()))
+                    {
                         clients.remove(&conn_ctx.id);
                     }
                 }
             }
             server_ctx_cloned.client_watched_dirty.remove(&conn_ctx.id);
-            server_ctx_cloned.client_count.fetch_sub(1, Ordering::Relaxed);
+            server_ctx_cloned
+                .client_count
+                .fetch_sub(1, Ordering::Relaxed);
             server_ctx_cloned.clients.remove(&conn_ctx.id);
             server_ctx_cloned.monitors.remove(&conn_ctx.id);
             server_ctx_cloned.replicas.remove(&conn_ctx.id);

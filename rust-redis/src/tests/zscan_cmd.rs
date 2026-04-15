@@ -1,5 +1,5 @@
-use crate::cmd::{process_frame, ConnectionContext, ServerContext};
 use crate::cmd::scripting;
+use crate::cmd::{ConnectionContext, ServerContext, process_frame};
 use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
@@ -39,7 +39,7 @@ async fn test_zscan_basic() {
             assert_eq!(items.len(), 2);
             // Check cursor
             match &items[0] {
-                Resp::BulkString(Some(_)) => {},
+                Resp::BulkString(Some(_)) => {}
                 _ => panic!("expected BulkString cursor"),
             }
             // Check elements
@@ -47,10 +47,10 @@ async fn test_zscan_basic() {
                 Resp::Array(Some(elements)) => {
                     assert!(elements.len() > 0);
                     assert_eq!(elements.len() % 2, 0); // Member-score pairs
-                },
+                }
                 _ => panic!("expected Array elements"),
             }
-        },
+        }
         _ => panic!("expected Array response"),
     }
 }
@@ -93,10 +93,10 @@ async fn test_zscan_expired() {
             match &items[1] {
                 Resp::Array(Some(elements)) => {
                     assert_eq!(elements.len(), 0);
-                },
+                }
                 _ => panic!("expected Array elements"),
             }
-        },
+        }
         _ => panic!("expected Array response"),
     }
 }
@@ -136,10 +136,10 @@ async fn test_zscan_match() {
                 Resp::Array(Some(elements)) => {
                     // Should find aa, ab, ac (6 elements total with scores)
                     assert_eq!(elements.len(), 6);
-                },
+                }
                 _ => panic!("expected Array elements"),
             }
-        },
+        }
         _ => panic!("expected Array response"),
     }
 }
@@ -148,7 +148,7 @@ async fn test_zscan_match() {
 async fn test_zscan_count() {
     let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
-    
+
     // Prepare data
     let mut args = vec![
         Resp::BulkString(Some(Bytes::from("ZADD"))),
@@ -176,11 +176,10 @@ async fn test_zscan_count() {
                 Resp::Array(Some(elements)) => {
                     // It should return exactly 5 items (10 elements with scores)
                     assert_eq!(elements.len(), 10);
-                },
+                }
                 _ => panic!("expected Array elements"),
             }
-        },
+        }
         _ => panic!("expected Array response"),
     }
 }
-

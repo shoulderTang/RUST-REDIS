@@ -1,5 +1,5 @@
-use crate::cmd::{process_frame, ConnectionContext, ServerContext};
 use crate::cmd::scripting;
+use crate::cmd::{ConnectionContext, ServerContext, process_frame};
 use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
@@ -39,7 +39,7 @@ async fn test_hscan_basic() {
             assert_eq!(items.len(), 2);
             // Check cursor
             match &items[0] {
-                Resp::BulkString(Some(_)) => {},
+                Resp::BulkString(Some(_)) => {}
                 _ => panic!("expected BulkString cursor"),
             }
             // Check elements
@@ -47,10 +47,10 @@ async fn test_hscan_basic() {
                 Resp::Array(Some(elements)) => {
                     assert!(elements.len() > 0);
                     assert_eq!(elements.len() % 2, 0); // Key-value pairs
-                },
+                }
                 _ => panic!("expected Array elements"),
             }
-        },
+        }
         _ => panic!("expected Array response"),
     }
 }
@@ -90,10 +90,10 @@ async fn test_hscan_match() {
                 Resp::Array(Some(elements)) => {
                     // Should find aa, ab, ac (6 elements total with values)
                     assert_eq!(elements.len(), 6);
-                },
+                }
                 _ => panic!("expected Array elements"),
             }
-        },
+        }
         _ => panic!("expected Array response"),
     }
 }
@@ -130,10 +130,10 @@ async fn test_hscan_count() {
                     // Should return around 5 items (10 elements)
                     // Note: Implementation sorts keys, so it's deterministic
                     assert_eq!(elements.len(), 10);
-                },
+                }
                 _ => panic!("expected Array elements"),
             }
-        },
+        }
         _ => panic!("expected Array response"),
     }
 }
@@ -159,7 +159,11 @@ async fn test_hscan_wrong_type() {
     ]));
     let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
-        Resp::Error(msg) => assert!(msg.contains("WRONGTYPE"), "Expected WRONGTYPE error, got: {}", msg),
+        Resp::Error(msg) => assert!(
+            msg.contains("WRONGTYPE"),
+            "Expected WRONGTYPE error, got: {}",
+            msg
+        ),
         _ => panic!("expected WRONGTYPE error, got: {:?}", res),
     }
 }

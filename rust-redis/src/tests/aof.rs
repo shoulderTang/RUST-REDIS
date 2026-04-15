@@ -53,7 +53,8 @@ async fn test_aof_append_and_load() {
     let mut server_ctx = crate::tests::helper::create_server_context();
     Arc::make_mut(&mut server_ctx.config).appendfilename = path.to_string();
     server_ctx.databases = db_new.clone();
-    aof_loader.load(&server_ctx)
+    aof_loader
+        .load(&server_ctx)
         .await
         .expect("failed to load aof");
 

@@ -5,6 +5,48 @@ use std::pin::Pin;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufWriter};
 use tokio::net::tcp::OwnedWriteHalf;
 
+/// Format a signed integer into a stack buffer without heap allocation.
+/// Returns the ASCII decimal bytes slice.
+fn fmt_int(n: i64, buf: &mut [u8; 20]) -> &[u8] {
+    if n == 0 {
+        buf[19] = b'0';
+        return &buf[19..];
+    }
+    let negative = n < 0;
+    let mut v = if negative {
+        n.wrapping_neg() as u64
+    } else {
+        n as u64
+    };
+    let mut pos = 20usize;
+    while v > 0 {
+        pos -= 1;
+        buf[pos] = b'0' + (v % 10) as u8;
+        v /= 10;
+    }
+    if negative {
+        pos -= 1;
+        buf[pos] = b'-';
+    }
+    &buf[pos..]
+}
+
+/// Format a usize into a stack buffer without heap allocation.
+fn fmt_usize(n: usize, buf: &mut [u8; 20]) -> &[u8] {
+    if n == 0 {
+        buf[19] = b'0';
+        return &buf[19..];
+    }
+    let mut v = n;
+    let mut pos = 20usize;
+    while v > 0 {
+        pos -= 1;
+        buf[pos] = b'0' + (v % 10) as u8;
+        v /= 10;
+    }
+    &buf[pos..]
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Resp {
     SimpleString(Bytes),
@@ -72,7 +114,7 @@ where
                 "invalid EOF delimiter length",
             ));
         }
-        let delimiter_bytes = delimiter.as_bytes().to_vec();
+        let delimiter_bytes = delimiter.as_bytes();
         let d_len = delimiter_bytes.len();
 
         let mut buf = Vec::new();
@@ -81,7 +123,7 @@ where
             let b = reader.read_u8().await?;
             buf.push(b);
             if buf.len() >= d_len {
-                if &buf[buf.len() - d_len..] == delimiter_bytes.as_slice() {
+                if &buf[buf.len() - d_len..] == delimiter_bytes {
                     buf.truncate(buf.len() - d_len);
                     break;
                 }
@@ -213,16 +255,18 @@ pub fn write_frame<'a>(
                 writer.write_all(b"\r\n").await?;
             }
             Resp::Integer(i) => {
+                let mut buf = [0u8; 20];
                 writer.write_all(b":").await?;
-                writer.write_all(i.to_string().as_bytes()).await?;
+                writer.write_all(fmt_int(*i, &mut buf)).await?;
                 writer.write_all(b"\r\n").await?;
             }
             Resp::BulkString(None) => {
                 writer.write_all(b"$-1\r\n").await?;
             }
             Resp::BulkString(Some(data)) => {
+                let mut buf = [0u8; 20];
                 writer.write_all(b"$").await?;
-                writer.write_all(data.len().to_string().as_bytes()).await?;
+                writer.write_all(fmt_usize(data.len(), &mut buf)).await?;
                 writer.write_all(b"\r\n").await?;
                 writer.write_all(data.as_ref()).await?;
                 writer.write_all(b"\r\n").await?;
@@ -231,8 +275,9 @@ pub fn write_frame<'a>(
                 writer.write_all(b"*-1\r\n").await?;
             }
             Resp::Array(Some(items)) => {
+                let mut buf = [0u8; 20];
                 writer.write_all(b"*").await?;
-                writer.write_all(items.len().to_string().as_bytes()).await?;
+                writer.write_all(fmt_usize(items.len(), &mut buf)).await?;
                 writer.write_all(b"\r\n").await?;
                 for item in items {
                     write_frame(writer, item).await?;
@@ -252,32 +297,66 @@ pub fn write_frame<'a>(
 impl Resp {
     #[allow(dead_code)]
     pub fn as_bytes(&self) -> Vec<u8> {
+        let mut buf = [0u8; 20];
         match self {
-            Resp::SimpleString(s) => format!("+{}\r\n", String::from_utf8_lossy(s)).into_bytes(),
-            Resp::Error(s) => format!("-{}\r\n", s).into_bytes(),
-            Resp::StaticError(s) => format!("-{}\r\n", s).into_bytes(),
-            Resp::Integer(i) => format!(":{}\r\n", i).into_bytes(),
+            Resp::SimpleString(s) => {
+                let mut v = Vec::with_capacity(3 + s.len());
+                v.push(b'+');
+                v.extend_from_slice(s.as_ref());
+                v.extend_from_slice(b"\r\n");
+                v
+            }
+            Resp::Error(s) => {
+                let mut v = Vec::with_capacity(3 + s.len());
+                v.push(b'-');
+                v.extend_from_slice(s.as_bytes());
+                v.extend_from_slice(b"\r\n");
+                v
+            }
+            Resp::StaticError(s) => {
+                let mut v = Vec::with_capacity(3 + s.len());
+                v.push(b'-');
+                v.extend_from_slice(s.as_bytes());
+                v.extend_from_slice(b"\r\n");
+                v
+            }
+            Resp::Integer(i) => {
+                let digits = fmt_int(*i, &mut buf);
+                let mut v = Vec::with_capacity(3 + digits.len());
+                v.push(b':');
+                v.extend_from_slice(digits);
+                v.extend_from_slice(b"\r\n");
+                v
+            }
             Resp::BulkString(None) => b"$-1\r\n".to_vec(),
             Resp::BulkString(Some(data)) => {
-                let mut result = format!("${}\r\n", data.len()).into_bytes();
-                result.extend_from_slice(data);
-                result.extend_from_slice(b"\r\n");
-                result
+                let len_bytes = fmt_usize(data.len(), &mut buf);
+                let mut v = Vec::with_capacity(3 + len_bytes.len() + data.len() + 2);
+                v.push(b'$');
+                v.extend_from_slice(len_bytes);
+                v.extend_from_slice(b"\r\n");
+                v.extend_from_slice(data.as_ref());
+                v.extend_from_slice(b"\r\n");
+                v
             }
             Resp::Array(None) => b"*-1\r\n".to_vec(),
             Resp::Array(Some(items)) => {
-                let mut result = format!("*{}\r\n", items.len()).into_bytes();
+                let len_bytes = fmt_usize(items.len(), &mut buf);
+                let mut v = Vec::with_capacity(3 + len_bytes.len());
+                v.push(b'*');
+                v.extend_from_slice(len_bytes);
+                v.extend_from_slice(b"\r\n");
                 for item in items {
-                    result.extend_from_slice(&item.as_bytes());
+                    v.extend_from_slice(&item.as_bytes());
                 }
-                result
+                v
             }
             Resp::Multiple(items) => {
-                let mut result = Vec::new();
+                let mut v = Vec::new();
                 for item in items {
-                    result.extend_from_slice(&item.as_bytes());
+                    v.extend_from_slice(&item.as_bytes());
                 }
-                result
+                v
             }
             Resp::NoReply | Resp::Control(_) => Vec::new(),
         }

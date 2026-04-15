@@ -1,12 +1,12 @@
 use crate::conf::Config;
 use crate::db::{Db, Entry, SortedSet, TotalOrderF64, Value};
-use crate::stream::{Stream, StreamID, StreamEntry, ConsumerGroup, Consumer, PendingEntry};
+use crate::stream::{Consumer, ConsumerGroup, PendingEntry, Stream, StreamEntry, StreamID};
 use bytes::{Buf, Bytes};
-use std::collections::{VecDeque, HashMap, HashSet};
+use dashmap::DashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::sync::{Arc, RwLock};
-use dashmap::DashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // Constants for RDB format
@@ -221,7 +221,7 @@ impl<W: Write> RdbEncoder<W> {
         // 1. Write number of listpacks
         let entries = stream.range(&StreamID::new(0, 0), &StreamID::new(u64::MAX, u64::MAX));
         if entries.is_empty() {
-             self.write_len(0)?;
+            self.write_len(0)?;
         } else {
             self.write_len(1)?; // 1 listpack for simplicity
 
@@ -230,41 +230,41 @@ impl<W: Write> RdbEncoder<W> {
             let mut master_id_str = Vec::new();
             master_id_str.extend_from_slice(&master_id.ms.to_be_bytes());
             master_id_str.extend_from_slice(&master_id.seq.to_be_bytes());
-            self.write_string(&master_id_str)?; 
+            self.write_string(&master_id_str)?;
 
             // Build Listpack
             let mut lp = ListpackBuilder::new();
             for entry in &entries {
                 // Flags (None = 0)
-                lp.append_int(0); 
-                
+                lp.append_int(0);
+
                 // ms-diff, seq-diff
                 let ms_diff = (entry.id.ms as i128 - master_id.ms as i128) as i64;
                 let seq_diff = (entry.id.seq as i128 - master_id.seq as i128) as i64;
                 lp.append_int(ms_diff);
                 lp.append_int(seq_diff);
-                
+
                 // Num fields
                 lp.append_int(entry.fields.len() as i64);
-                
+
                 // Fields
                 for (k, v) in &entry.fields {
                     lp.append_string(k);
                     lp.append_string(v);
                 }
-                
+
                 // LP-count (3 + 1 + 2*fields)
                 let lp_count = 3 + 1 + 2 * entry.fields.len() as i64;
                 lp.append_int(lp_count);
             }
-            
+
             let lp_bytes = lp.finish();
             self.write_string(&lp_bytes)?;
         }
 
         // 2. Total number of items
         self.write_len(stream.len() as u64)?;
-        
+
         // 3. Last ID
         self.write_len(stream.last_id.ms)?;
         self.write_len(stream.last_id.seq)?;
@@ -286,7 +286,7 @@ impl<W: Write> RdbEncoder<W> {
                 self.writer.write_all(&id_bytes)?;
                 self.crc.update(&id_bytes);
 
-                self.write_u64_le(pending.delivery_time as u64)?; 
+                self.write_u64_le(pending.delivery_time as u64)?;
                 self.write_len(pending.delivery_count)?;
             }
 
@@ -294,8 +294,8 @@ impl<W: Write> RdbEncoder<W> {
             self.write_len(group.consumers.len() as u64)?;
             for consumer in group.consumers.values() {
                 self.write_string(consumer.name.as_bytes())?;
-                self.write_u64_le(consumer.seen_time as u64)?; 
-                
+                self.write_u64_le(consumer.seen_time as u64)?;
+
                 // Consumer PEL
                 self.write_len(consumer.pending_ids.len() as u64)?;
                 for pid in &consumer.pending_ids {
@@ -461,7 +461,7 @@ impl ListpackBuilder {
     fn append_string(&mut self, s: &[u8]) {
         let len = s.len();
         let start_len = self.buf.len();
-        
+
         if len < 64 {
             self.buf.push(0x80 | (len as u8));
         } else if len < 4096 {
@@ -469,12 +469,12 @@ impl ListpackBuilder {
             self.buf.push(len as u8);
         } else if len <= u32::MAX as usize {
             self.buf.push(0xF0);
-            self.buf.extend_from_slice(&(len as u32).to_le_bytes()); 
+            self.buf.extend_from_slice(&(len as u32).to_le_bytes());
         } else {
             panic!("String too large for listpack");
         }
         self.buf.extend_from_slice(s);
-        
+
         let encoded_len = (self.buf.len() - start_len) as u32;
         self.encode_backlen(encoded_len);
         self.num_elements += 1;
@@ -482,11 +482,11 @@ impl ListpackBuilder {
 
     fn append_int(&mut self, v: i64) {
         let start_len = self.buf.len();
-        
+
         if v >= 0 && v <= 127 {
             self.buf.push(v as u8);
         } else if v >= -4096 && v <= 4095 {
-            let v = v as u16; 
+            let v = v as u16;
             self.buf.push(0xC0 | (((v >> 8) as u8) & 0x1F));
             self.buf.push(v as u8);
         } else if v >= -32768 && v <= 32767 {
@@ -494,7 +494,7 @@ impl ListpackBuilder {
             self.buf.extend_from_slice(&(v as i16).to_le_bytes());
         } else if v >= -8388608 && v <= 8388607 {
             self.buf.push(0xF2);
-            let v = v as i32; 
+            let v = v as i32;
             self.buf.push((v & 0xFF) as u8);
             self.buf.push(((v >> 8) & 0xFF) as u8);
             self.buf.push(((v >> 16) & 0xFF) as u8);
@@ -505,7 +505,7 @@ impl ListpackBuilder {
             self.buf.push(0xF4);
             self.buf.extend_from_slice(&v.to_le_bytes());
         }
-        
+
         let encoded_len = (self.buf.len() - start_len) as u32;
         self.encode_backlen(encoded_len);
         self.num_elements += 1;
@@ -549,7 +549,7 @@ impl<'a> ListpackReader<'a> {
 
     fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
         if self.pos + buf.len() <= self.buf.len() {
-            buf.copy_from_slice(&self.buf[self.pos..self.pos+buf.len()]);
+            buf.copy_from_slice(&self.buf[self.pos..self.pos + buf.len()]);
             self.pos += buf.len();
             Ok(())
         } else {
@@ -559,7 +559,7 @@ impl<'a> ListpackReader<'a> {
 
     fn read_bytes(&mut self, len: usize) -> io::Result<Vec<u8>> {
         if self.pos + len <= self.buf.len() {
-            let bytes = self.buf[self.pos..self.pos+len].to_vec();
+            let bytes = self.buf[self.pos..self.pos + len].to_vec();
             self.pos += len;
             Ok(bytes)
         } else {
@@ -636,42 +636,45 @@ impl<'a> ListpackReader<'a> {
             }
             LpElement::Int(val_i16 as i64)
         } else if b & 0xF0 == 0xE0 {
-             // 12-bit string
-             let b2 = self.read_u8()?;
-             let len = (((b & 0x0F) as usize) << 8) | (b2 as usize);
-             let bytes = self.read_bytes(len)?;
-             LpElement::String(bytes)
+            // 12-bit string
+            let b2 = self.read_u8()?;
+            let len = (((b & 0x0F) as usize) << 8) | (b2 as usize);
+            let bytes = self.read_bytes(len)?;
+            LpElement::String(bytes)
         } else if b == 0xF0 {
-             // 32-bit string
-             let len = self.read_u32_le()? as usize;
-             let bytes = self.read_bytes(len)?;
-             LpElement::String(bytes)
+            // 32-bit string
+            let len = self.read_u32_le()? as usize;
+            let bytes = self.read_bytes(len)?;
+            LpElement::String(bytes)
         } else if b == 0xF1 {
-             // 16-bit int
-             let val = self.read_i16_le()?;
-             LpElement::Int(val as i64)
+            // 16-bit int
+            let val = self.read_i16_le()?;
+            LpElement::Int(val as i64)
         } else if b == 0xF2 {
-             // 24-bit int
-             let mut buf = [0u8; 3];
-             self.read_exact(&mut buf)?;
-             let val = (buf[0] as i32) | ((buf[1] as i32) << 8) | ((buf[2] as i32) << 16);
-             // Sign extend 24-bit
-             let val = if val & 0x800000 != 0 {
-                 val | 0xFF000000u32 as i32
-             } else {
-                 val
-             };
-             LpElement::Int(val as i64)
+            // 24-bit int
+            let mut buf = [0u8; 3];
+            self.read_exact(&mut buf)?;
+            let val = (buf[0] as i32) | ((buf[1] as i32) << 8) | ((buf[2] as i32) << 16);
+            // Sign extend 24-bit
+            let val = if val & 0x800000 != 0 {
+                val | 0xFF000000u32 as i32
+            } else {
+                val
+            };
+            LpElement::Int(val as i64)
         } else if b == 0xF3 {
-             // 32-bit int
-             let val = self.read_i32_le()?;
-             LpElement::Int(val as i64)
+            // 32-bit int
+            let val = self.read_i32_le()?;
+            LpElement::Int(val as i64)
         } else if b == 0xF4 {
-             // 64-bit int
-             let val = self.read_i64_le()?;
-             LpElement::Int(val)
+            // 64-bit int
+            let val = self.read_i64_le()?;
+            LpElement::Int(val)
         } else {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("Invalid listpack entry: {:02x}", b)));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid listpack entry: {:02x}", b),
+            ));
         };
 
         self.skip_backlen()?;
@@ -691,7 +694,7 @@ impl<R: Read> RdbLoader<R> {
             crc: Crc64::new(),
         }
     }
-    
+
     pub fn digest(&self) -> u64 {
         self.crc.digest()
     }
@@ -855,87 +858,115 @@ impl<R: Read> RdbLoader<R> {
                 let stream = self.load_stream()?;
                 Ok(Value::Stream(stream))
             }
-            _ => Err(io::Error::new(io::ErrorKind::InvalidData, format!("Unknown value type: {}", type_code))),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unknown value type: {}", type_code),
+            )),
         }
     }
 
     fn load_stream(&mut self) -> io::Result<Stream> {
         let mut stream = Stream::new();
-        
+
         // 1. Listpacks
         let (num_listpacks, _) = self.read_len()?;
         for _ in 0..num_listpacks {
             let master_id_bytes = self.read_string()?;
             let lp_bytes = self.read_string()?;
-            
+
             let mut lp = ListpackReader::new(&lp_bytes);
-            
+
             // Skip Header (Total Bytes 4, Num Elements 2)
             lp.read_u32_le()?;
             lp.read_u16_le()?;
-            
+
             loop {
                 // Read Flags
                 let _flags_elem = match lp.read_element()? {
                     Some(e) => e,
                     None => break, // EOF
                 };
-                
+
                 // Read ms_diff
                 let ms_diff = match lp.read_element()? {
-                     Some(LpElement::Int(v)) => v,
-                     _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "Expected ms_diff int")),
+                    Some(LpElement::Int(v)) => v,
+                    _ => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Expected ms_diff int",
+                        ));
+                    }
                 };
                 // Read seq_diff
                 let seq_diff = match lp.read_element()? {
-                     Some(LpElement::Int(v)) => v,
-                     _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "Expected seq_diff int")),
+                    Some(LpElement::Int(v)) => v,
+                    _ => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Expected seq_diff int",
+                        ));
+                    }
                 };
                 // Read num_fields
                 let num_fields = match lp.read_element()? {
-                     Some(LpElement::Int(v)) => v,
-                     _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "Expected num_fields int")),
+                    Some(LpElement::Int(v)) => v,
+                    _ => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Expected num_fields int",
+                        ));
+                    }
                 };
-                
+
                 let mut fields = Vec::new();
                 for _ in 0..num_fields {
                     let k = match lp.read_element()? {
                         Some(LpElement::String(v)) => v,
-                        _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "Expected field key string")),
+                        _ => {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "Expected field key string",
+                            ));
+                        }
                     };
                     let v = match lp.read_element()? {
                         Some(LpElement::String(v)) => v,
-                        _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "Expected field value string")),
+                        _ => {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "Expected field value string",
+                            ));
+                        }
                     };
                     fields.push((Bytes::from(k), Bytes::from(v)));
                 }
-                
+
                 // Read lp_count
                 let _lp_count = lp.read_element()?;
-                
+
                 // Reconstruct ID
                 let master_ms = u64::from_be_bytes(master_id_bytes[0..8].try_into().unwrap());
                 let master_seq = u64::from_be_bytes(master_id_bytes[8..16].try_into().unwrap());
-                
+
                 let id = StreamID {
                     ms: (master_ms as i128 + ms_diff as i128) as u64,
                     seq: (master_seq as i128 + seq_diff as i128) as u64,
                 };
-                
+
                 // Insert into stream
                 if let Err(e) = stream.insert(id, fields) {
-                     // Since RDB load should trust data, maybe we shouldn't fail?
-                     // But if data is corrupted, we should fail.
-                     // The only expected error is order violation if we process listpacks out of order,
-                     // or if we have duplicates.
-                     return Err(io::Error::new(io::ErrorKind::InvalidData, e));
+                    // Since RDB load should trust data, maybe we shouldn't fail?
+                    // But if data is corrupted, we should fail.
+                    // The only expected error is order violation if we process listpacks out of order,
+                    // or if we have duplicates.
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, e));
                 }
             }
         }
 
         // 2. Total number of items
         let (_total_items, _) = self.read_len()?;
-        
+
         // 3. Last ID
         let ms = self.read_len()?.0;
         let seq = self.read_len()?.0;
@@ -945,14 +976,15 @@ impl<R: Read> RdbLoader<R> {
         let (num_groups, _) = self.read_len()?;
         for _ in 0..num_groups {
             let name_bytes = self.read_string()?;
-            let name = String::from_utf8(name_bytes.to_vec()).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            
+            let name = String::from_utf8(name_bytes.to_vec())
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
             let ms = self.read_len()?.0;
             let seq = self.read_len()?.0;
             let last_id = StreamID::new(ms, seq);
-            
+
             let mut group = ConsumerGroup::new(name.clone(), last_id);
-            
+
             // PEL
             let (pel_len, _) = self.read_len()?;
             for _ in 0..pel_len {
@@ -962,10 +994,10 @@ impl<R: Read> RdbLoader<R> {
                 let ms = u64::from_be_bytes(id_bytes[0..8].try_into().unwrap());
                 let seq = u64::from_be_bytes(id_bytes[8..16].try_into().unwrap());
                 let pid = StreamID::new(ms, seq);
-                
+
                 let delivery_time = self.read_u64_le()? as u128; // Assuming 64-bit LE
                 let delivery_count = self.read_len()?.0;
-                
+
                 let pending = PendingEntry {
                     id: pid,
                     delivery_time,
@@ -974,16 +1006,17 @@ impl<R: Read> RdbLoader<R> {
                 };
                 group.pel.insert(pid, pending);
             }
-            
+
             // Consumers
             let (cons_len, _) = self.read_len()?;
             for _ in 0..cons_len {
                 let cname_bytes = self.read_string()?;
-                let cname = String::from_utf8(cname_bytes.to_vec()).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-                
+                let cname = String::from_utf8(cname_bytes.to_vec())
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
                 let mut consumer = Consumer::new(cname.clone());
                 consumer.seen_time = self.read_u64_le()? as u128;
-                
+
                 // Consumer PEL
                 let (cpel_len, _) = self.read_len()?;
                 for _ in 0..cpel_len {
@@ -992,9 +1025,9 @@ impl<R: Read> RdbLoader<R> {
                     let ms = u64::from_be_bytes(pid_bytes[0..8].try_into().unwrap());
                     let seq = u64::from_be_bytes(pid_bytes[8..16].try_into().unwrap());
                     let pid = StreamID::new(ms, seq);
-                    
+
                     consumer.pending_ids.insert(pid);
-                    
+
                     // Update global PEL owner
                     if let Some(pending) = group.pel.get_mut(&pid) {
                         pending.owner = cname.clone();
@@ -1004,19 +1037,19 @@ impl<R: Read> RdbLoader<R> {
             }
             stream.groups.insert(name, group);
         }
-        
+
         Ok(stream)
     }
 
     pub fn load(&mut self, databases: &Arc<Vec<RwLock<Db>>>) -> io::Result<()> {
         // Simple loader: assumes only one DB and reads until EOF
         // Real RDB loader handles opcodes
-        
+
         let mut magic = [0u8; 9];
         self.read_exact(&mut magic)?;
         if &magic != b"REDIS0009" {
-             // For now assume version 9 or fail
-             // return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid Magic"));
+            // For now assume version 9 or fail
+            // return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid Magic"));
         }
 
         let mut current_db_index = 0;
@@ -1038,8 +1071,8 @@ impl<R: Read> RdbLoader<R> {
                     expire_at = Some(expires);
                 }
                 RDB_OPCODE_EXPIRETIME => {
-                     let expires = self.read_u32_be()?;
-                     expire_at = Some(expires as u64 * 1000);
+                    let expires = self.read_u32_be()?;
+                    expire_at = Some(expires as u64 * 1000);
                 }
                 RDB_OPCODE_SELECTDB => {
                     let (id, _) = self.read_len()?;
@@ -1054,9 +1087,9 @@ impl<R: Read> RdbLoader<R> {
                     let val = match type_code {
                         RDB_TYPE_STRING => {
                             let s = self.read_string()?;
-                    Value::String(s)
-                }
-                RDB_TYPE_LIST => {
+                            Value::String(s)
+                        }
+                        RDB_TYPE_LIST => {
                             let (len, _) = self.read_len()?;
                             let mut list = VecDeque::new();
                             for _ in 0..len {
@@ -1085,33 +1118,39 @@ impl<R: Read> RdbLoader<R> {
                         RDB_TYPE_ZSET => {
                             let (len, _) = self.read_len()?;
                             let mut zset = SortedSet::new();
-                    for _ in 0..len {
-                        let member = self.read_string()?;
-                        let score_bytes = self.read_string()?;
-                        let score_str = String::from_utf8_lossy(&score_bytes);
-                        let score = score_str.parse::<f64>().unwrap_or(0.0);
-                        zset.members.insert(member.clone(), score);
-                        zset.scores.insert((TotalOrderF64(score), member));
-                    }
-                    Value::ZSet(zset)
-                }
+                            for _ in 0..len {
+                                let member = self.read_string()?;
+                                let score_bytes = self.read_string()?;
+                                let score_str = String::from_utf8_lossy(&score_bytes);
+                                let score = score_str.parse::<f64>().unwrap_or(0.0);
+                                zset.members.insert(member.clone(), score);
+                                zset.scores.insert((TotalOrderF64(score), member));
+                            }
+                            Value::ZSet(zset)
+                        }
                         RDB_TYPE_STREAM_LISTPACKS => {
                             let stream = self.load_stream()?;
                             Value::Stream(stream)
                         }
                         _ => {
-                            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("Unknown value type: {}", type_code)));
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!("Unknown value type: {}", type_code),
+                            ));
                         }
                     };
-                    
+
                     if let Some(db_lock) = databases.get(current_db_index) {
-                        db_lock.read().unwrap().insert(key, Entry::new(val, expire_at));
+                        db_lock
+                            .read()
+                            .unwrap()
+                            .insert(key, Entry::new(val, expire_at));
                     }
                     expire_at = None;
                 }
             }
         }
-        
+
         Ok(())
     }
 }

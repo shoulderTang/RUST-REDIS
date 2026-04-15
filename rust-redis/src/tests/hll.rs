@@ -1,8 +1,8 @@
-use crate::cmd::{process_frame, ConnectionContext, ServerContext};
+use crate::cmd::scripting;
+use crate::cmd::{ConnectionContext, ServerContext, process_frame};
 use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
-use crate::cmd::scripting;
 use bytes::Bytes;
 use std::sync::{Arc, RwLock};
 
@@ -84,7 +84,7 @@ async fn test_hll() {
 async fn test_hll_string_promotion() {
     use crate::db::{Entry, Value};
     use crate::hll::HLL_REGISTERS;
-    
+
     let server_ctx = crate::tests::helper::create_server_context();
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
@@ -93,7 +93,10 @@ async fn test_hll_string_promotion() {
     let raw_hll = vec![0u8; HLL_REGISTERS];
     {
         let db = server_ctx.databases[0].read().unwrap();
-        db.insert(key.clone(), Entry::new(Value::String(Bytes::from(raw_hll)), None));
+        db.insert(
+            key.clone(),
+            Entry::new(Value::String(Bytes::from(raw_hll)), None),
+        );
     }
 
     // PFCOUNT should work and return 0
@@ -121,7 +124,7 @@ async fn test_hll_string_promotion() {
         let db = server_ctx.databases[0].read().unwrap();
         if let Some(entry) = db.get(&key) {
             match &entry.value {
-                Value::HyperLogLog(_) => {}, // Good
+                Value::HyperLogLog(_) => {} // Good
                 _ => panic!("Value should have been promoted to HyperLogLog"),
             }
         } else {

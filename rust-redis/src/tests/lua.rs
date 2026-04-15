@@ -1,10 +1,10 @@
-use crate::cmd::{process_frame, ConnectionContext, ServerContext};
 use crate::aof::AppendFsync;
+use crate::cmd::scripting;
+use crate::cmd::{ConnectionContext, ServerContext, process_frame};
 use crate::conf::Config;
 use crate::db::{Db, Value};
-use bytes::Bytes;
-use crate::cmd::scripting;
 use crate::resp::Resp;
+use bytes::Bytes;
 use std::sync::{Arc, RwLock};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -18,11 +18,7 @@ async fn test_eval() {
         Resp::BulkString(Some(Bytes::from("k1"))),
         Resp::BulkString(Some(Bytes::from("v1"))),
     ]));
-    process_frame(
-        req,
-        &mut conn_ctx,
-        &server_ctx,
-    ).await;
+    process_frame(req, &mut conn_ctx, &server_ctx).await;
 
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("EVAL"))),
@@ -30,11 +26,7 @@ async fn test_eval() {
         Resp::BulkString(Some(Bytes::from("1"))),
         Resp::BulkString(Some(Bytes::from("k1"))),
     ]));
-    let (res, _) = process_frame(
-        req,
-        &mut conn_ctx,
-        &server_ctx,
-    ).await;
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::BulkString(Some(b)) => assert_eq!(b, Bytes::from("v1")),
         _ => panic!("expected BulkString(v1)"),
@@ -52,11 +44,7 @@ async fn test_eval_pcall() {
         Resp::BulkString(Some(Bytes::from("return redis.call('UNKNOWN_CMD')"))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
-    let (res, _) = process_frame(
-        req,
-        &mut conn_ctx,
-        &server_ctx,
-    ).await;
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Error(e) => assert!(e.contains("ERR error running script")),
         _ => panic!("expected Error, got {:?}", res),
@@ -68,11 +56,7 @@ async fn test_eval_pcall() {
         Resp::BulkString(Some(Bytes::from("return redis.pcall('UNKNOWN_CMD')"))),
         Resp::BulkString(Some(Bytes::from("0"))),
     ]));
-    let (res, _) = process_frame(
-        req,
-        &mut conn_ctx,
-        &server_ctx,
-    ).await;
+    let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
         Resp::Error(e) => assert_eq!(e, "ERR unknown command"),
         _ => panic!("expected Error, got {:?}", res),
@@ -202,6 +186,9 @@ async fn test_lua_isolation_per_call() {
     // nil in Lua maps to BulkString(None) / false — global is not carried over.
     match res2 {
         Resp::BulkString(None) => {}
-        _ => panic!("expected nil (BulkString(None)) for isolated Lua VM, got {:?}", res2),
+        _ => panic!(
+            "expected nil (BulkString(None)) for isolated Lua VM, got {:?}",
+            res2
+        ),
     }
 }

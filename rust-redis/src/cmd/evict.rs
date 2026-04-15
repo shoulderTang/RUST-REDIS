@@ -52,7 +52,7 @@ fn evict_one_key(ctx: &ServerContext, policy: EvictionPolicy) -> bool {
     for _ in 0..samples {
         let db_idx = rng.random_range(0..ctx.databases.len());
         let db = &ctx.databases[db_idx];
-        
+
         let db_read = db.read().unwrap();
         if db_read.is_empty() {
             continue;
@@ -112,7 +112,11 @@ fn evict_one_key(ctx: &ServerContext, policy: EvictionPolicy) -> bool {
         let db = &ctx.databases[db_idx];
         let db_read = db.read().unwrap();
         if db_read.remove(&key).is_some() {
-            info!("Evicted key {} from DB {}", String::from_utf8_lossy(&key), db_idx);
+            info!(
+                "Evicted key {} from DB {}",
+                String::from_utf8_lossy(&key),
+                db_idx
+            );
             return true;
         }
     }

@@ -9,10 +9,14 @@ async fn test_watch_basic() {
     let mut conn2 = crate::tests::helper::create_connection_context();
     conn1.id = 1;
     conn2.id = 2;
-    
+
     // Register dirty flags in server context (as done in server.rs)
-    server_ctx.client_watched_dirty.insert(conn1.id, conn1.watched_keys_dirty.clone());
-    server_ctx.client_watched_dirty.insert(conn2.id, conn2.watched_keys_dirty.clone());
+    server_ctx
+        .client_watched_dirty
+        .insert(conn1.id, conn1.watched_keys_dirty.clone());
+    server_ctx
+        .client_watched_dirty
+        .insert(conn2.id, conn2.watched_keys_dirty.clone());
 
     // 1. Client 1 watches 'foo'
     run_cmd(vec!["WATCH", "foo"], &mut conn1, &server_ctx).await;
@@ -34,7 +38,9 @@ async fn test_watch_no_modification() {
     let server_ctx = crate::tests::helper::create_server_context();
     let mut conn1 = crate::tests::helper::create_connection_context();
     conn1.id = 1;
-    server_ctx.client_watched_dirty.insert(conn1.id, conn1.watched_keys_dirty.clone());
+    server_ctx
+        .client_watched_dirty
+        .insert(conn1.id, conn1.watched_keys_dirty.clone());
 
     run_cmd(vec!["WATCH", "foo"], &mut conn1, &server_ctx).await;
     run_cmd(vec!["MULTI"], &mut conn1, &server_ctx).await;
@@ -45,7 +51,9 @@ async fn test_watch_no_modification() {
     if let Resp::Array(Some(arr)) = res {
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0], Resp::SimpleString(Bytes::from_static(b"OK")));
-    } else { panic!("Expected array, got {:?}", res); }
+    } else {
+        panic!("Expected array, got {:?}", res);
+    }
 }
 
 #[tokio::test]
@@ -55,12 +63,16 @@ async fn test_unwatch() {
     let mut conn2 = crate::tests::helper::create_connection_context();
     conn1.id = 1;
     conn2.id = 2;
-    server_ctx.client_watched_dirty.insert(conn1.id, conn1.watched_keys_dirty.clone());
-    server_ctx.client_watched_dirty.insert(conn2.id, conn2.watched_keys_dirty.clone());
+    server_ctx
+        .client_watched_dirty
+        .insert(conn1.id, conn1.watched_keys_dirty.clone());
+    server_ctx
+        .client_watched_dirty
+        .insert(conn2.id, conn2.watched_keys_dirty.clone());
 
     run_cmd(vec!["WATCH", "foo"], &mut conn1, &server_ctx).await;
     run_cmd(vec!["UNWATCH"], &mut conn1, &server_ctx).await;
-    
+
     run_cmd(vec!["SET", "foo", "bar"], &mut conn2, &server_ctx).await;
 
     run_cmd(vec!["MULTI"], &mut conn1, &server_ctx).await;
@@ -70,7 +82,9 @@ async fn test_unwatch() {
     // EXEC should succeed because of UNWATCH
     if let Resp::Array(Some(arr)) = res {
         assert_eq!(arr.len(), 1);
-    } else { panic!("Expected array, got {:?}", res); }
+    } else {
+        panic!("Expected array, got {:?}", res);
+    }
 }
 
 #[tokio::test]
@@ -80,8 +94,12 @@ async fn test_watch_triggered_by_exec() {
     let mut conn2 = crate::tests::helper::create_connection_context();
     conn1.id = 1;
     conn2.id = 2;
-    server_ctx.client_watched_dirty.insert(conn1.id, conn1.watched_keys_dirty.clone());
-    server_ctx.client_watched_dirty.insert(conn2.id, conn2.watched_keys_dirty.clone());
+    server_ctx
+        .client_watched_dirty
+        .insert(conn1.id, conn1.watched_keys_dirty.clone());
+    server_ctx
+        .client_watched_dirty
+        .insert(conn2.id, conn2.watched_keys_dirty.clone());
 
     run_cmd(vec!["WATCH", "foo"], &mut conn1, &server_ctx).await;
 

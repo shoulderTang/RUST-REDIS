@@ -5,7 +5,7 @@ use dashmap::DashMap;
 use glob::Pattern;
 
 pub async fn subscribe(
-    args: Vec<Resp>,
+    args: &[Resp],
     conn_ctx: &mut ConnectionContext,
     server_ctx: &ServerContext,
 ) -> Resp {
@@ -17,11 +17,11 @@ pub async fn subscribe(
     let mut last_resp = Resp::Error("Internal error".to_string());
 
     // Skip command name
-    for (i, arg) in args.into_iter().enumerate().skip(1) {
+    for (i, arg) in args.iter().enumerate().skip(1) {
         let channel_name = match arg {
-            Resp::BulkString(Some(ref b)) => String::from_utf8_lossy(b).to_string(),
-            Resp::SimpleString(ref b) => String::from_utf8_lossy(b).to_string(),
-            _ => continue, 
+            Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_string(),
+            Resp::SimpleString(b) => String::from_utf8_lossy(b).to_string(),
+            _ => continue,
         };
 
         // Add to connection subscriptions
@@ -32,7 +32,7 @@ pub async fn subscribe(
                 .pubsub_channels
                 .entry(channel_name.clone())
                 .or_insert_with(DashMap::new);
-            
+
             if let Some(sender) = &conn_ctx.msg_sender {
                 channel_map.insert(conn_ctx.id, sender.clone());
             }
@@ -58,7 +58,7 @@ pub async fn subscribe(
 }
 
 pub async fn unsubscribe(
-    args: Vec<Resp>,
+    args: &[Resp],
     conn_ctx: &mut ConnectionContext,
     server_ctx: &ServerContext,
 ) -> Resp {
@@ -98,7 +98,7 @@ pub async fn unsubscribe(
         // Remove from global map
         if let Some(subscribers) = server_ctx.pubsub_channels.get(&channel_name) {
             subscribers.remove(&conn_ctx.id);
-            // If empty, we could remove the channel from pubsub_channels, 
+            // If empty, we could remove the channel from pubsub_channels,
             // but that requires another lock or check. Leaving it is fine for now.
         }
 
@@ -122,7 +122,7 @@ pub async fn unsubscribe(
 }
 
 pub async fn psubscribe(
-    args: Vec<Resp>,
+    args: &[Resp],
     conn_ctx: &mut ConnectionContext,
     server_ctx: &ServerContext,
 ) -> Resp {
@@ -133,19 +133,19 @@ pub async fn psubscribe(
     let len = args.len();
     let mut last_resp = Resp::Error("Internal error".to_string());
 
-    for (i, arg) in args.into_iter().enumerate().skip(1) {
+    for (i, arg) in args.iter().enumerate().skip(1) {
         let pattern = match arg {
-            Resp::BulkString(Some(ref b)) => String::from_utf8_lossy(b).to_string(),
-            Resp::SimpleString(ref b) => String::from_utf8_lossy(b).to_string(),
+            Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_string(),
+            Resp::SimpleString(b) => String::from_utf8_lossy(b).to_string(),
             _ => continue,
         };
 
         if conn_ctx.psubscriptions.insert(pattern.clone()) {
-             let pattern_map = server_ctx
+            let pattern_map = server_ctx
                 .pubsub_patterns
                 .entry(pattern.clone())
                 .or_insert_with(DashMap::new);
-            
+
             if let Some(sender) = &conn_ctx.msg_sender {
                 pattern_map.insert(conn_ctx.id, sender.clone());
             }
@@ -170,7 +170,7 @@ pub async fn psubscribe(
 }
 
 pub async fn punsubscribe(
-    args: Vec<Resp>,
+    args: &[Resp],
     conn_ctx: &mut ConnectionContext,
     server_ctx: &ServerContext,
 ) -> Resp {
@@ -188,7 +188,7 @@ pub async fn punsubscribe(
     };
 
     if patterns_to_unsubscribe.is_empty() && args.len() <= 1 {
-         return Resp::Array(Some(vec![
+        return Resp::Array(Some(vec![
             Resp::BulkString(Some(Bytes::from("punsubscribe"))),
             Resp::BulkString(None),
             Resp::Integer((conn_ctx.subscriptions.len() + conn_ctx.psubscriptions.len()) as i64),
@@ -217,7 +217,7 @@ pub async fn punsubscribe(
         ]));
 
         if i < len - 1 {
-             if let Some(sender) = &conn_ctx.msg_sender {
+            if let Some(sender) = &conn_ctx.msg_sender {
                 let _ = sender.send(resp).await;
             }
         } else {
@@ -228,7 +228,7 @@ pub async fn punsubscribe(
 }
 
 pub async fn publish(
-    args: Vec<Resp>,
+    args: &[Resp],
     _conn_ctx: &mut ConnectionContext,
     server_ctx: &ServerContext,
 ) -> Resp {
@@ -275,16 +275,16 @@ pub async fn publish(
         if let Ok(pat) = Pattern::new(pattern_str) {
             if pat.matches(&channel_name) {
                 let subscribers = item.value();
-                 let msg_frame = Resp::Array(Some(vec![
+                let msg_frame = Resp::Array(Some(vec![
                     Resp::BulkString(Some(Bytes::from("pmessage"))),
                     Resp::BulkString(Some(Bytes::from(pattern_str.clone()))),
                     Resp::BulkString(Some(Bytes::from(channel_name.clone()))),
                     Resp::BulkString(Some(message_bytes.clone())),
                 ]));
-                
+
                 for sub in subscribers.iter() {
                     if sub.value().send(msg_frame.clone()).await.is_ok() {
-                         count += 1;
+                        count += 1;
                     }
                 }
             }
@@ -295,14 +295,14 @@ pub async fn publish(
 }
 
 pub async fn pubsub_command(
-    args: Vec<Resp>,
+    args: &[Resp],
     _conn_ctx: &mut ConnectionContext,
     server_ctx: &ServerContext,
 ) -> Resp {
     if args.len() < 2 {
         return Resp::Error("ERR wrong number of arguments for 'pubsub' command".to_string());
     }
-    
+
     let subcmd = match &args[1] {
         Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_string().to_uppercase(),
         Resp::SimpleString(b) => String::from_utf8_lossy(b).to_string().to_uppercase(),
@@ -320,49 +320,49 @@ pub async fn pubsub_command(
             } else {
                 None
             };
-            
+
             let mut channels = Vec::new();
             for item in server_ctx.pubsub_channels.iter() {
-                 let channel = item.key();
-                 // Only list active channels (with at least one subscriber)
-                 if item.value().is_empty() {
-                     continue;
-                 }
+                let channel = item.key();
+                // Only list active channels (with at least one subscriber)
+                if item.value().is_empty() {
+                    continue;
+                }
 
-                 if let Some(p) = &pattern {
-                     if let Ok(pat) = Pattern::new(p) {
-                         if pat.matches(channel) {
-                             channels.push(Resp::BulkString(Some(Bytes::from(channel.clone()))));
-                         }
-                     } else if p == channel {
-                         // Fallback for invalid patterns: treat as literal match
-                         channels.push(Resp::BulkString(Some(Bytes::from(channel.clone()))));
-                     }
-                 } else {
-                     channels.push(Resp::BulkString(Some(Bytes::from(channel.clone()))));
-                 }
+                if let Some(p) = &pattern {
+                    if let Ok(pat) = Pattern::new(p) {
+                        if pat.matches(channel) {
+                            channels.push(Resp::BulkString(Some(Bytes::from(channel.clone()))));
+                        }
+                    } else if p == channel {
+                        // Fallback for invalid patterns: treat as literal match
+                        channels.push(Resp::BulkString(Some(Bytes::from(channel.clone()))));
+                    }
+                } else {
+                    channels.push(Resp::BulkString(Some(Bytes::from(channel.clone()))));
+                }
             }
             Resp::Array(Some(channels))
         }
         "NUMSUB" => {
-             let mut result = Vec::new();
-             for arg in args.iter().skip(2) {
-                 let channel = match arg {
+            let mut result = Vec::new();
+            for arg in args.iter().skip(2) {
+                let channel = match arg {
                     Resp::BulkString(Some(b)) => String::from_utf8_lossy(b).to_string(),
                     Resp::SimpleString(b) => String::from_utf8_lossy(b).to_string(),
                     _ => continue,
-                 };
-                 
-                 let count = if let Some(subs) = server_ctx.pubsub_channels.get(&channel) {
-                     subs.len() as i64
-                 } else {
-                     0
-                 };
-                 
-                 result.push(Resp::BulkString(Some(Bytes::from(channel))));
-                 result.push(Resp::Integer(count));
-             }
-             Resp::Array(Some(result))
+                };
+
+                let count = if let Some(subs) = server_ctx.pubsub_channels.get(&channel) {
+                    subs.len() as i64
+                } else {
+                    0
+                };
+
+                result.push(Resp::BulkString(Some(Bytes::from(channel))));
+                result.push(Resp::Integer(count));
+            }
+            Resp::Array(Some(result))
         }
         "NUMPAT" => {
             let count = server_ctx.pubsub_patterns.len() as i64;

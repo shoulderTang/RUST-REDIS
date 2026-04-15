@@ -79,8 +79,8 @@ pub struct Config {
     pub repl_diskless_sync_delay: u64,
     pub sentinel_monitors: Vec<(String, String, u16, u32)>, // name, ip, port, quorum
     pub sentinel_down_after_milliseconds: Vec<(String, u64)>, // name, ms
-    pub sentinel_failover_timeout: Vec<(String, u64)>, // name, ms
-    pub sentinel_parallel_syncs: Vec<(String, u32)>, // name, count
+    pub sentinel_failover_timeout: Vec<(String, u64)>,      // name, ms
+    pub sentinel_parallel_syncs: Vec<(String, u32)>,        // name, count
 
     // Cluster mode configuration
     pub cluster_enabled: bool,
@@ -158,7 +158,7 @@ fn parse_memory(s: &str) -> Option<u64> {
     } else {
         (s.as_str(), 1)
     };
-    
+
     num.parse::<u64>().ok().map(|n| n * unit)
 }
 
@@ -423,7 +423,9 @@ pub fn load_config(path: Option<&str>) -> io::Result<Config> {
                         // sentinel monitor <name> <ip> <port> <quorum>
                         let name = parts[2].to_string();
                         let ip = parts[3].to_string();
-                        if let (Ok(port), Ok(quorum)) = (parts[4].parse::<u16>(), parts[5].parse::<u32>()) {
+                        if let (Ok(port), Ok(quorum)) =
+                            (parts[4].parse::<u16>(), parts[5].parse::<u32>())
+                        {
                             cfg.sentinel_monitors.push((name, ip, port, quorum));
                         } else {
                             warn!("invalid sentinel monitor configuration: {:?}", parts);

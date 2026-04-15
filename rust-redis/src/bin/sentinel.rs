@@ -1,42 +1,41 @@
-
 #![allow(unexpected_cfgs)]
 #![allow(unused_imports)]
 #![allow(dead_code)]
 
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::net::TcpListener;
-use tokio::io::{AsyncWriteExt, BufReader};
-use tracing::{info, warn, error};
 use tokio::io::AsyncWriteExt as _;
+use tokio::io::{AsyncWriteExt, BufReader};
+use tokio::net::TcpListener;
+use tracing::{error, info, warn};
 
 use crate::resp::Resp;
-use crate::sentinel::{SentinelState, start_manual_failover, reset_failover_state};
+use crate::sentinel::{SentinelState, reset_failover_state, start_manual_failover};
 
-#[path = "../clock.rs"]
-pub mod clock;
+#[path = "../acl.rs"]
+pub mod acl;
 #[path = "../aof.rs"]
 mod aof;
+#[path = "../clock.rs"]
+pub mod clock;
 #[path = "../cmd/mod.rs"]
 mod cmd;
 #[path = "../conf.rs"]
 mod conf;
 #[path = "../db.rs"]
 mod db;
-#[path = "../rdb.rs"]
-mod rdb;
-#[path = "../rax.rs"]
-mod rax;
-#[path = "../hll.rs"]
-mod hll;
-#[path = "../stream.rs"]
-mod stream;
-#[path = "../resp.rs"]
-mod resp;
 #[path = "../geo.rs"]
 mod geo;
-#[path = "../acl.rs"]
-pub mod acl;
+#[path = "../hll.rs"]
+mod hll;
+#[path = "../rax.rs"]
+mod rax;
+#[path = "../rdb.rs"]
+mod rdb;
+#[path = "../resp.rs"]
+mod resp;
+#[path = "../stream.rs"]
+mod stream;
 
 #[path = "../cluster.rs"]
 pub mod cluster;
@@ -81,7 +80,10 @@ async fn main() {
     }
 }
 
-async fn run_sentinel(cfg: conf::Config, _guard: Option<tracing_appender::non_blocking::WorkerGuard>) {
+async fn run_sentinel(
+    cfg: conf::Config,
+    _guard: Option<tracing_appender::non_blocking::WorkerGuard>,
+) {
     let addr: String = cfg.address();
     info!("Sentinel starting on {}", addr);
 
@@ -89,36 +91,40 @@ async fn run_sentinel(cfg: conf::Config, _guard: Option<tracing_appender::non_bl
     let sentinel_port = 26379;
     let sentinel_state = sentinel::SentinelState::new(sentinel_ip, sentinel_port);
     sentinel_state.set_config_path(cfg.config_file.clone());
-    
+
     // Initialize monitors from config
     {
         let mut masters = sentinel_state.masters.write().unwrap();
         for (name, ip, port, quorum) in &cfg.sentinel_monitors {
-             let mut master = sentinel::MasterInstance::new(name.clone(), ip.clone(), *port, *quorum);
-             
-             // Apply down-after-milliseconds
-             for (n, ms) in &cfg.sentinel_down_after_milliseconds {
-                 if n == name {
-                     master.down_after_period = *ms;
-                 }
-             }
-             
-             // Apply failover-timeout
-             for (n, ms) in &cfg.sentinel_failover_timeout {
-                 if n == name {
-                     master.failover_timeout = *ms;
-                 }
-             }
-             
-             // Apply parallel-syncs
-             for (n, count) in &cfg.sentinel_parallel_syncs {
-                 if n == name {
-                     master.parallel_syncs = *count;
-                 }
-             }
+            let mut master =
+                sentinel::MasterInstance::new(name.clone(), ip.clone(), *port, *quorum);
 
-             masters.insert(name.clone(), Arc::new(RwLock::new(master)));
-             info!("Monitoring master {} at {}:{} quorum {}", name, ip, port, quorum);
+            // Apply down-after-milliseconds
+            for (n, ms) in &cfg.sentinel_down_after_milliseconds {
+                if n == name {
+                    master.down_after_period = *ms;
+                }
+            }
+
+            // Apply failover-timeout
+            for (n, ms) in &cfg.sentinel_failover_timeout {
+                if n == name {
+                    master.failover_timeout = *ms;
+                }
+            }
+
+            // Apply parallel-syncs
+            for (n, count) in &cfg.sentinel_parallel_syncs {
+                if n == name {
+                    master.parallel_syncs = *count;
+                }
+            }
+
+            masters.insert(name.clone(), Arc::new(RwLock::new(master)));
+            info!(
+                "Monitoring master {} at {}:{} quorum {}",
+                name, ip, port, quorum
+            );
         }
     }
 
@@ -130,7 +136,7 @@ async fn run_sentinel(cfg: conf::Config, _guard: Option<tracing_appender::non_bl
     tokio::spawn(async move {
         sentinel::sentinel_cron(sentinel_state_clone).await;
     });
-    
+
     loop {
         let (socket, addr) = match listener.accept().await {
             Ok(s) => s,
@@ -139,9 +145,9 @@ async fn run_sentinel(cfg: conf::Config, _guard: Option<tracing_appender::non_bl
                 continue;
             }
         };
-        
+
         info!("Accepted connection from {}", addr);
-        
+
         let sentinel_state_clone = sentinel_state.clone();
         tokio::spawn(async move {
             let (read_half, mut write_half) = socket.into_split();
@@ -153,7 +159,7 @@ async fn run_sentinel(cfg: conf::Config, _guard: Option<tracing_appender::non_bl
                     Ok(None) => {
                         info!("Connection closed by peer");
                         break;
-                    },
+                    }
                     Err(e) => {
                         error!("Error reading frame: {}", e);
                         break;
@@ -167,9 +173,13 @@ async fn run_sentinel(cfg: conf::Config, _guard: Option<tracing_appender::non_bl
                             let cmd_s = String::from_utf8_lossy(cmd_bs).to_uppercase();
                             if cmd_s == "SUBSCRIBE" && items.len() >= 2 {
                                 let channel = match &items[1] {
-                                    Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(),
+                                    Resp::BulkString(Some(s)) => {
+                                        String::from_utf8_lossy(s).to_string()
+                                    }
                                     _ => {
-                                        let err_bytes = Resp::Error("ERR invalid channel".to_string()).as_bytes();
+                                        let err_bytes =
+                                            Resp::Error("ERR invalid channel".to_string())
+                                                .as_bytes();
                                         let _ = write_half.write_all(&err_bytes).await;
                                         break;
                                     }
@@ -236,11 +246,17 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                 "PING" => Resp::SimpleString("PONG".to_string().into()).as_bytes(),
                 "SENTINEL" => {
                     if args.len() < 2 {
-                        return Resp::Error("ERR wrong number of arguments for 'sentinel' command".to_string()).as_bytes();
+                        return Resp::Error(
+                            "ERR wrong number of arguments for 'sentinel' command".to_string(),
+                        )
+                        .as_bytes();
                     }
                     let subcommand = match &args[1] {
                         Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_uppercase(),
-                        _ => return Resp::Error("ERR invalid sentinel subcommand".to_string()).as_bytes(),
+                        _ => {
+                            return Resp::Error("ERR invalid sentinel subcommand".to_string())
+                                .as_bytes();
+                        }
                     };
 
                     match subcommand.as_str() {
@@ -253,37 +269,71 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                                         Resp::SimpleString("OK".to_string().into()).as_bytes()
                                     }
                                     Err(e) => {
-                                        error!(path = p.as_str(), err = e.as_str(), "flushconfig_err");
+                                        error!(
+                                            path = p.as_str(),
+                                            err = e.as_str(),
+                                            "flushconfig_err"
+                                        );
                                         Resp::Error(e).as_bytes()
                                     }
                                 }
                             } else {
-                                Resp::Error("ERR No config file specified for Sentinel".to_string()).as_bytes()
+                                Resp::Error("ERR No config file specified for Sentinel".to_string())
+                                    .as_bytes()
                             }
                         }
                         "MONITOR" => {
                             if args.len() != 6 {
-                                return Resp::Error("ERR wrong number of arguments for 'sentinel monitor' command".to_string()).as_bytes();
+                                return Resp::Error(
+                                    "ERR wrong number of arguments for 'sentinel monitor' command"
+                                        .to_string(),
+                                )
+                                .as_bytes();
                             }
-                            let name = match &args[2] { Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(), _ => return Resp::Error("ERR invalid name".to_string()).as_bytes() };
-                            let ip = match &args[3] { Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(), _ => return Resp::Error("ERR invalid ip".to_string()).as_bytes() };
+                            let name = match &args[2] {
+                                Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(),
+                                _ => return Resp::Error("ERR invalid name".to_string()).as_bytes(),
+                            };
+                            let ip = match &args[3] {
+                                Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(),
+                                _ => return Resp::Error("ERR invalid ip".to_string()).as_bytes(),
+                            };
                             let port = match &args[4] {
-                                Resp::BulkString(Some(s)) => match String::from_utf8_lossy(s).parse::<u16>() {
-                                    Ok(v) => v,
-                                    Err(_) => return Resp::Error("ERR invalid port".to_string()).as_bytes(),
-                                },
+                                Resp::BulkString(Some(s)) => {
+                                    match String::from_utf8_lossy(s).parse::<u16>() {
+                                        Ok(v) => v,
+                                        Err(_) => {
+                                            return Resp::Error("ERR invalid port".to_string())
+                                                .as_bytes();
+                                        }
+                                    }
+                                }
                                 _ => return Resp::Error("ERR invalid port".to_string()).as_bytes(),
                             };
                             let quorum = match &args[5] {
-                                Resp::BulkString(Some(s)) => match String::from_utf8_lossy(s).parse::<u32>() {
-                                    Ok(v) => v,
-                                    Err(_) => return Resp::Error("ERR invalid quorum".to_string()).as_bytes(),
-                                },
-                                _ => return Resp::Error("ERR invalid quorum".to_string()).as_bytes(),
+                                Resp::BulkString(Some(s)) => {
+                                    match String::from_utf8_lossy(s).parse::<u32>() {
+                                        Ok(v) => v,
+                                        Err(_) => {
+                                            return Resp::Error("ERR invalid quorum".to_string())
+                                                .as_bytes();
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    return Resp::Error("ERR invalid quorum".to_string())
+                                        .as_bytes();
+                                }
                             };
                             match state.monitor_master(&name, &ip, port, quorum) {
                                 Ok(()) => {
-                                    info!(master = name.as_str(), ip = ip.as_str(), port = port, quorum = quorum, "monitor_ok");
+                                    info!(
+                                        master = name.as_str(),
+                                        ip = ip.as_str(),
+                                        port = port,
+                                        quorum = quorum,
+                                        "monitor_ok"
+                                    );
                                     Resp::SimpleString("OK".to_string().into()).as_bytes()
                                 }
                                 Err(e) => {
@@ -294,9 +344,16 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                         }
                         "REMOVE" => {
                             if args.len() != 3 {
-                                return Resp::Error("ERR wrong number of arguments for 'sentinel remove' command".to_string()).as_bytes();
+                                return Resp::Error(
+                                    "ERR wrong number of arguments for 'sentinel remove' command"
+                                        .to_string(),
+                                )
+                                .as_bytes();
                             }
-                            let name = match &args[2] { Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(), _ => return Resp::Error("ERR invalid name".to_string()).as_bytes() };
+                            let name = match &args[2] {
+                                Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(),
+                                _ => return Resp::Error("ERR invalid name".to_string()).as_bytes(),
+                            };
                             match state.remove_master(&name) {
                                 Ok(()) => {
                                     info!(master = name.as_str(), "remove_ok");
@@ -310,17 +367,43 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                         }
                         "SET" => {
                             if args.len() < 4 {
-                                return Resp::Error("ERR wrong number of arguments for 'sentinel set' command".to_string()).as_bytes();
+                                return Resp::Error(
+                                    "ERR wrong number of arguments for 'sentinel set' command"
+                                        .to_string(),
+                                )
+                                .as_bytes();
                             }
-                            let name = match &args[2] { Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(), _ => return Resp::Error("ERR invalid name".to_string()).as_bytes() };
+                            let name = match &args[2] {
+                                Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(),
+                                _ => return Resp::Error("ERR invalid name".to_string()).as_bytes(),
+                            };
                             if (args.len() - 3) % 2 != 1 {
-                                return Resp::Error("ERR Invalid number of arguments for SENTINEL SET".to_string()).as_bytes();
+                                return Resp::Error(
+                                    "ERR Invalid number of arguments for SENTINEL SET".to_string(),
+                                )
+                                .as_bytes();
                             }
                             let mut options: Vec<(String, String)> = Vec::new();
                             let mut i = 3;
                             while i + 1 < args.len() {
-                                let opt = match &args[i] { Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(), _ => return Resp::Error("ERR invalid option".to_string()).as_bytes() };
-                                let val = match &args[i+1] { Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(), _ => return Resp::Error("ERR invalid value".to_string()).as_bytes() };
+                                let opt = match &args[i] {
+                                    Resp::BulkString(Some(s)) => {
+                                        String::from_utf8_lossy(s).to_string()
+                                    }
+                                    _ => {
+                                        return Resp::Error("ERR invalid option".to_string())
+                                            .as_bytes();
+                                    }
+                                };
+                                let val = match &args[i + 1] {
+                                    Resp::BulkString(Some(s)) => {
+                                        String::from_utf8_lossy(s).to_string()
+                                    }
+                                    _ => {
+                                        return Resp::Error("ERR invalid value".to_string())
+                                            .as_bytes();
+                                    }
+                                };
                                 options.push((opt, val));
                                 i += 2;
                             }
@@ -337,16 +420,31 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                         }
                         "CKQUORUM" => {
                             if args.len() != 3 {
-                                return Resp::Error("ERR wrong number of arguments for 'sentinel ckquorum' command".to_string()).as_bytes();
+                                return Resp::Error(
+                                    "ERR wrong number of arguments for 'sentinel ckquorum' command"
+                                        .to_string(),
+                                )
+                                .as_bytes();
                             }
                             let master_name = match &args[2] {
                                 Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(),
-                                _ => return Resp::Error("ERR invalid master name".to_string()).as_bytes(),
+                                _ => {
+                                    return Resp::Error("ERR invalid master name".to_string())
+                                        .as_bytes();
+                                }
                             };
                             match sentinel::check_quorum_for_master(&state, &master_name) {
                                 Ok((total, reachable, majority, quorum, ok)) => {
                                     let status = if ok { "OK" } else { "NOQUORUM" };
-                                    info!(master = master_name.as_str(), total = total, reachable = reachable, majority = majority, quorum = quorum, status = status, "ckquorum");
+                                    info!(
+                                        master = master_name.as_str(),
+                                        total = total,
+                                        reachable = reachable,
+                                        majority = majority,
+                                        quorum = quorum,
+                                        status = status,
+                                        "ckquorum"
+                                    );
                                     let response = vec![
                                         Resp::BulkString(Some(status.into())),
                                         Resp::Integer(reachable as i64),
@@ -357,7 +455,11 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                                     Resp::Array(Some(response)).as_bytes()
                                 }
                                 Err(e) => {
-                                    error!(master = master_name.as_str(), err = e.as_str(), "ckquorum_err");
+                                    error!(
+                                        master = master_name.as_str(),
+                                        err = e.as_str(),
+                                        "ckquorum_err"
+                                    );
                                     Resp::Error(e).as_bytes()
                                 }
                             }
@@ -368,7 +470,10 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                             }
                             let master_name = match &args[2] {
                                 Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(),
-                                _ => return Resp::Error("ERR invalid master name".to_string()).as_bytes(),
+                                _ => {
+                                    return Resp::Error("ERR invalid master name".to_string())
+                                        .as_bytes();
+                                }
                             };
                             let masters = state.masters.read().unwrap();
                             if let Some(master_lock) = masters.get(&master_name) {
@@ -385,7 +490,8 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                                     Resp::Array(None).as_bytes()
                                 }
                             } else {
-                                Resp::Error("ERR No such master with that name".to_string()).as_bytes()
+                                Resp::Error("ERR No such master with that name".to_string())
+                                    .as_bytes()
                             }
                         }
                         "SIMULATE-FAILURE" => {
@@ -394,13 +500,21 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                             }
                             let master_name = match &args[2] {
                                 Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(),
-                                _ => return Resp::Error("ERR invalid master name".to_string()).as_bytes(),
+                                _ => {
+                                    return Resp::Error("ERR invalid master name".to_string())
+                                        .as_bytes();
+                                }
                             };
                             let mode = match &args[3] {
-                                Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_uppercase(),
+                                Resp::BulkString(Some(s)) => {
+                                    String::from_utf8_lossy(s).to_uppercase()
+                                }
                                 _ => return Resp::Error("ERR invalid mode".to_string()).as_bytes(),
                             };
-                            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+                            let now = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap()
+                                .as_millis() as u64;
                             // For FAILOVER, avoid holding any lock across await
                             if mode == "FAILOVER" {
                                 let exists = {
@@ -408,15 +522,26 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                                     masters.contains_key(&master_name)
                                 };
                                 if !exists {
-                                    return Resp::Error("ERR No such master with that name".to_string()).as_bytes();
+                                    return Resp::Error(
+                                        "ERR No such master with that name".to_string(),
+                                    )
+                                    .as_bytes();
                                 }
                                 match sentinel::start_manual_failover(&state, &master_name).await {
                                     Ok(()) => {
-                                        info!(master = master_name.as_str(), "simulate_failover_started");
-                                        return Resp::SimpleString("OK".to_string().into()).as_bytes();
+                                        info!(
+                                            master = master_name.as_str(),
+                                            "simulate_failover_started"
+                                        );
+                                        return Resp::SimpleString("OK".to_string().into())
+                                            .as_bytes();
                                     }
                                     Err(e) => {
-                                        error!(master = master_name.as_str(), err = e.as_str(), "simulate_failover_err");
+                                        error!(
+                                            master = master_name.as_str(),
+                                            err = e.as_str(),
+                                            "simulate_failover_err"
+                                        );
                                         return Resp::Error(format!("ERR {}", e)).as_bytes();
                                     }
                                 }
@@ -427,13 +552,33 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                                 if let Some(master_lock) = masters.get(&master_name) {
                                     let mut master = master_lock.write().unwrap();
                                     match mode.as_str() {
-                                        "SDOWN" => { master.s_down_since_time = now; info!(master = master_name.as_str(), "simulate_sdown"); }
-                                        "CLEAR" => { master.s_down_since_time = 0; info!(master = master_name.as_str(), "simulate_clear"); }
-                                        "CONNFAIL" => { master.last_pong_time = 0; info!(master = master_name.as_str(), "simulate_connfail"); }
-                                        _ => return Resp::Error("ERR unknown failure mode".to_string()).as_bytes(),
+                                        "SDOWN" => {
+                                            master.s_down_since_time = now;
+                                            info!(master = master_name.as_str(), "simulate_sdown");
+                                        }
+                                        "CLEAR" => {
+                                            master.s_down_since_time = 0;
+                                            info!(master = master_name.as_str(), "simulate_clear");
+                                        }
+                                        "CONNFAIL" => {
+                                            master.last_pong_time = 0;
+                                            info!(
+                                                master = master_name.as_str(),
+                                                "simulate_connfail"
+                                            );
+                                        }
+                                        _ => {
+                                            return Resp::Error(
+                                                "ERR unknown failure mode".to_string(),
+                                            )
+                                            .as_bytes();
+                                        }
                                     }
                                 } else {
-                                    return Resp::Error("ERR No such master with that name".to_string()).as_bytes();
+                                    return Resp::Error(
+                                        "ERR No such master with that name".to_string(),
+                                    )
+                                    .as_bytes();
                                 }
                             }
                             Resp::SimpleString("OK".to_string().into()).as_bytes()
@@ -445,7 +590,8 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                                 let master = master.read().unwrap();
                                 let mut master_info = Vec::new();
                                 master_info.push(Resp::BulkString(Some("name".into())));
-                                master_info.push(Resp::BulkString(Some(master.name.clone().into())));
+                                master_info
+                                    .push(Resp::BulkString(Some(master.name.clone().into())));
                                 master_info.push(Resp::BulkString(Some("ip".into())));
                                 master_info.push(Resp::BulkString(Some(master.ip.clone().into())));
                                 master_info.push(Resp::BulkString(Some("port".into())));
@@ -461,7 +607,10 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                             }
                             let master_name = match &args[2] {
                                 Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(),
-                                _ => return Resp::Error("ERR invalid master name".to_string()).as_bytes(),
+                                _ => {
+                                    return Resp::Error("ERR invalid master name".to_string())
+                                        .as_bytes();
+                                }
                             };
 
                             let masters = state.masters.read().unwrap();
@@ -478,11 +627,18 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                         }
                         "SLAVES" => {
                             if args.len() != 3 {
-                                return Resp::Error("ERR wrong number of arguments for 'sentinel slaves' command".to_string()).as_bytes();
+                                return Resp::Error(
+                                    "ERR wrong number of arguments for 'sentinel slaves' command"
+                                        .to_string(),
+                                )
+                                .as_bytes();
                             }
                             let master_name = match &args[2] {
                                 Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(),
-                                _ => return Resp::Error("ERR invalid master name".to_string()).as_bytes(),
+                                _ => {
+                                    return Resp::Error("ERR invalid master name".to_string())
+                                        .as_bytes();
+                                }
                             };
 
                             let masters = state.masters.read().unwrap();
@@ -492,15 +648,20 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                                 for slave in master.slaves.values() {
                                     let mut slave_info = Vec::new();
                                     slave_info.push(Resp::BulkString(Some("name".into())));
-                                    slave_info.push(Resp::BulkString(Some(format!("{}:{}", slave.ip, slave.port).into())));
+                                    slave_info.push(Resp::BulkString(Some(
+                                        format!("{}:{}", slave.ip, slave.port).into(),
+                                    )));
                                     slave_info.push(Resp::BulkString(Some("ip".into())));
-                                    slave_info.push(Resp::BulkString(Some(slave.ip.clone().into())));
+                                    slave_info
+                                        .push(Resp::BulkString(Some(slave.ip.clone().into())));
                                     slave_info.push(Resp::BulkString(Some("port".into())));
                                     slave_info.push(Resp::Integer(slave.port as i64));
                                     slave_info.push(Resp::BulkString(Some("flags".into())));
-                                    slave_info.push(Resp::BulkString(Some(slave.flags.clone().into())));
+                                    slave_info
+                                        .push(Resp::BulkString(Some(slave.flags.clone().into())));
                                     slave_info.push(Resp::BulkString(Some("runid".into())));
-                                    slave_info.push(Resp::BulkString(Some(slave.run_id.clone().into())));
+                                    slave_info
+                                        .push(Resp::BulkString(Some(slave.run_id.clone().into())));
                                     response.push(Resp::Array(Some(slave_info)));
                                 }
                                 Resp::Array(Some(response)).as_bytes()
@@ -514,7 +675,10 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                             }
                             let master_name = match &args[2] {
                                 Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(),
-                                _ => return Resp::Error("ERR invalid master name".to_string()).as_bytes(),
+                                _ => {
+                                    return Resp::Error("ERR invalid master name".to_string())
+                                        .as_bytes();
+                                }
                             };
 
                             let masters = state.masters.read().unwrap();
@@ -524,13 +688,18 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                                 for sentinel in master.sentinels.values() {
                                     let mut sentinel_info = Vec::new();
                                     sentinel_info.push(Resp::BulkString(Some("name".into())));
-                                    sentinel_info.push(Resp::BulkString(Some(format!("{}:{}", sentinel.ip, sentinel.port).into())));
+                                    sentinel_info.push(Resp::BulkString(Some(
+                                        format!("{}:{}", sentinel.ip, sentinel.port).into(),
+                                    )));
                                     sentinel_info.push(Resp::BulkString(Some("ip".into())));
-                                    sentinel_info.push(Resp::BulkString(Some(sentinel.ip.clone().into())));
+                                    sentinel_info
+                                        .push(Resp::BulkString(Some(sentinel.ip.clone().into())));
                                     sentinel_info.push(Resp::BulkString(Some("port".into())));
                                     sentinel_info.push(Resp::Integer(sentinel.port as i64));
                                     sentinel_info.push(Resp::BulkString(Some("runid".into())));
-                                    sentinel_info.push(Resp::BulkString(Some(sentinel.run_id.clone().into())));
+                                    sentinel_info.push(Resp::BulkString(Some(
+                                        sentinel.run_id.clone().into(),
+                                    )));
                                     response.push(Resp::Array(Some(sentinel_info)));
                                 }
                                 Resp::Array(Some(response)).as_bytes()
@@ -568,20 +737,23 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                                 }
                             }
 
-                            let response = vec![
-                                Resp::Integer(is_down),
-                                leader,
-                                leader_epoch,
-                            ];
+                            let response = vec![Resp::Integer(is_down), leader, leader_epoch];
                             Resp::Array(Some(response)).as_bytes()
                         }
                         "RESET" => {
                             if args.len() != 3 {
-                                return Resp::Error("ERR wrong number of arguments for 'sentinel reset' command".to_string()).as_bytes();
+                                return Resp::Error(
+                                    "ERR wrong number of arguments for 'sentinel reset' command"
+                                        .to_string(),
+                                )
+                                .as_bytes();
                             }
                             let master_name = match &args[2] {
                                 Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(),
-                                _ => return Resp::Error("ERR invalid master name".to_string()).as_bytes(),
+                                _ => {
+                                    return Resp::Error("ERR invalid master name".to_string())
+                                        .as_bytes();
+                                }
                             };
 
                             let masters = state.masters.read().unwrap();
@@ -590,7 +762,11 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                                 // Reset master state
                                 master.s_down_since_time = 0;
                                 master.last_ping_time = 0;
-                                master.last_pong_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+                                master.last_pong_time = SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_millis()
+                                    as u64;
                                 master.slaves.clear();
                                 master.sentinels.clear();
                                 Resp::Integer(1).as_bytes()
@@ -602,15 +778,15 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                             // SENTINEL HELLO - Return sentinel information for discovery
                             // Format: [ip, port, runid, current_epoch, master_name, master_ip, master_port, master_config_epoch]
                             let mut response = Vec::new();
-                            
+
                             // Add this sentinel's info
                             response.push(Resp::BulkString(Some(state.ip.clone().into())));
                             response.push(Resp::BulkString(Some(state.port.to_string().into())));
                             response.push(Resp::BulkString(Some(state.run_id.clone().into())));
-                            
+
                             let current_epoch = state.current_epoch.read().unwrap();
                             response.push(Resp::Integer(*current_epoch as i64));
-                            
+
                             // Add master information for the first master (if any)
                             let masters = state.masters.read().unwrap();
                             if let Some(master_lock) = masters.values().next() {
@@ -626,16 +802,23 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                                 response.push(Resp::Integer(0));
                                 response.push(Resp::Integer(0));
                             }
-                            
+
                             Resp::Array(Some(response)).as_bytes()
                         }
                         "FAILOVER" => {
                             if args.len() != 3 {
-                                return Resp::Error("ERR wrong number of arguments for 'sentinel failover' command".to_string()).as_bytes();
+                                return Resp::Error(
+                                    "ERR wrong number of arguments for 'sentinel failover' command"
+                                        .to_string(),
+                                )
+                                .as_bytes();
                             }
                             let master_name = match &args[2] {
                                 Resp::BulkString(Some(s)) => String::from_utf8_lossy(s).to_string(),
-                                _ => return Resp::Error("ERR invalid master name".to_string()).as_bytes(),
+                                _ => {
+                                    return Resp::Error("ERR invalid master name".to_string())
+                                        .as_bytes();
+                                }
                             };
 
                             match start_manual_failover(&state, &master_name).await {
@@ -644,12 +827,18 @@ async fn process_sentinel_command(frame: Resp, state: &sentinel::SentinelState) 
                                     Resp::SimpleString("OK".to_string().into()).as_bytes()
                                 }
                                 Err(e) => {
-                                    error!("Failed to start manual failover for master {}: {}", master_name, e);
+                                    error!(
+                                        "Failed to start manual failover for master {}: {}",
+                                        master_name, e
+                                    );
                                     Resp::Error(format!("ERR {}", e)).as_bytes()
                                 }
                             }
                         }
-                        _ => Resp::Error(format!("ERR Unknown SENTINEL subcommand '{}'", subcommand)).as_bytes(),
+                        _ => {
+                            Resp::Error(format!("ERR Unknown SENTINEL subcommand '{}'", subcommand))
+                                .as_bytes()
+                        }
                     }
                 }
                 _ => Resp::Error(format!("ERR unknown command '{}'", command)).as_bytes(),

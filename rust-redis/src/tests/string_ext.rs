@@ -126,7 +126,7 @@ async fn test_getset() {
     ]));
     let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
-        Resp::BulkString(None) => {},
+        Resp::BulkString(None) => {}
         _ => panic!("expected BulkString(None), got {:?}", res),
     }
 
@@ -177,7 +177,7 @@ async fn test_getdel_getex() {
     ]));
     let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
-        Resp::BulkString(None) => {},
+        Resp::BulkString(None) => {}
         _ => panic!("expected BulkString(None), got {:?}", res),
     }
 
@@ -211,7 +211,7 @@ async fn test_getdel_getex() {
     ]));
     let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
-        Resp::BulkString(None) => {},
+        Resp::BulkString(None) => {}
         _ => panic!("expected BulkString(None)"),
     }
 
@@ -391,7 +391,7 @@ async fn test_msetnx() {
     ]));
     let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
-        Resp::BulkString(None) => {},
+        Resp::BulkString(None) => {}
         _ => panic!("expected BulkString(None)"),
     }
 }
@@ -496,26 +496,24 @@ async fn test_stralgo_minmatchlen() {
                     // item is [[4, 7], [5, 8]]
                     match &matches[0] {
                         Resp::Array(Some(item)) => {
-                             // item[0] = [4, 7]
-                             match &item[0] {
-                                 Resp::Array(Some(range)) => {
-                                     match (&range[0], &range[1]) {
-                                         (Resp::Integer(s), Resp::Integer(e)) => {
-                                             assert_eq!(*s, 4);
-                                             assert_eq!(*e, 7);
-                                         },
-                                         _ => panic!("invalid range format"),
-                                     }
-                                 },
-                                 _ => panic!("invalid range"),
-                             }
-                        },
+                            // item[0] = [4, 7]
+                            match &item[0] {
+                                Resp::Array(Some(range)) => match (&range[0], &range[1]) {
+                                    (Resp::Integer(s), Resp::Integer(e)) => {
+                                        assert_eq!(*s, 4);
+                                        assert_eq!(*e, 7);
+                                    }
+                                    _ => panic!("invalid range format"),
+                                },
+                                _ => panic!("invalid range"),
+                            }
+                        }
                         _ => panic!("invalid match item"),
                     }
-                },
+                }
                 _ => panic!("expected matches array"),
             }
-        },
+        }
         _ => panic!("expected Array, got {:?}", res),
     }
 
@@ -532,15 +530,15 @@ async fn test_stralgo_minmatchlen() {
     ]));
     let (res, _) = process_frame(req, &mut conn_ctx, &server_ctx).await;
     match res {
-         Resp::Array(Some(arr)) => {
+        Resp::Array(Some(arr)) => {
             assert_eq!(arr.len(), 4);
             match &arr[1] {
                 Resp::Array(Some(matches)) => {
                     assert_eq!(matches.len(), 1);
-                },
+                }
                 _ => panic!("expected matches array"),
             }
-         },
-         _ => panic!("expected Array"),
+        }
+        _ => panic!("expected Array"),
     }
 }
