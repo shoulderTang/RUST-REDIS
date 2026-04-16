@@ -1,0 +1,47 @@
+# rust-redis 待优化事项
+
+## 性能优化
+
+### P1 - 过期扫描策略：全量 O(n) → 随机采样
+文件: src/cmd/mod.rs  函数: start_expiration_task
+当前行为: 每 100ms 对每个 DB 扫描全部 key（DashMap::retain 全量迭代）
+目标行为: 每轮随机抽 20 个 key，若过期比例 > 25% 则继续抽，
+          总处理时间可控，与 Redis 行为一致
+影响: key 数量达百万级时当前方案每轮耗时线性增长
+
+### P2 - repl_backlog 改用非阻塞同步原语
+文件: src/cmd/mod.rs  字段: ServerContext::repl_backlog
+当前: Arc<std::sync::Mutex<VecDeque<(u64, Resp)>>>
+问题: 异步上下文持有阻塞锁会占用 Tokio worker 线程
+目标: 改为 tokio::sync::Mutex，或用 crossbeam::queue::SegQueue 无锁队列
+影响: 高并发写入 + 有副本时锁竞争明显
+
+### P3 - AOF flush 批量化（everysec 模式）
+文件: src/aof.rs  函数: Aof::append
+当前: 每条写命令都调用 self.writer.flush()，触发一次 OS write() syscall
+目标: everysec 模式下积攒多条命令后批量 flush（阈值：N 条或 4KB），
+      fsync 继续由独立定时任务控制，不影响持久性保证
+影响: 高写入吞吐时减少 syscall 次数
+
+### P4 - ACL 检查改用无锁读取
+文件: src/cmd/mod.rs  函数: check_access
+当前: 每条命令取 server_ctx.acl.read()（RwLock 共享读锁）
+目标: 引入 arc-swap crate，将 ACL 存为 ArcSwap<Acl>，
+      读取路径变为原子指针加载，无锁竞争
+影响: ACL 极少变更，读锁是不必要的开销
+
+### P5 - resp::read_line 零分配整数解析
+文件: src/resp.rs  函数: read_line / read_integer_line
+当前: 每次解析数组长度行、bulk 长度行都分配 String，解析后即丢弃
+目标: 在固定栈缓冲区内解析整数，跳过 String 分配
+影响: 每条命令至少产生 2 次短生命周期 String 分配（数组头 + 每个 bulk 头）
+
+### P6 - ServerContext clone 开销：拆分子结构
+文件: src/cmd/mod.rs  结构体: ServerContext
+当前: 每新建连接 clone 一次 ServerContext，触发 40+ 次原子引用计数操作
+目标: 将字段归组为更少的子 Arc，例如：
+        Arc<ReplicationState>  // run_id, replid2, repl_offset, replicas ...
+        Arc<PubSubState>       // pubsub_channels, pubsub_patterns
+        Arc<ClusterState>      // cluster, node_conns
+      这样 clone ServerContext 从 40+ 次原子操作降至 ~6 次
+影响: 高连接数场景（每秒数千新连接）时有明显收益

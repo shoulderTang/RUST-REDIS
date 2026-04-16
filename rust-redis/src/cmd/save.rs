@@ -7,10 +7,14 @@ use crate::cmd::ServerContext;
 use std::sync::atomic::Ordering;
 
 pub fn save(_items: &[Resp], ctx: &ServerContext) -> Resp {
+    // Snapshot dirty before the blocking save so we don't discard concurrent writes.
+    let dirty_before = ctx.dirty.load(Ordering::Relaxed);
     match rdb::rdb_save(&ctx.databases, &ctx.config) {
         Ok(_) => {
             ctx.last_bgsave_ok.store(true, Ordering::Relaxed);
-            ctx.dirty.store(0, Ordering::Relaxed);
+            ctx.dirty.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                Some(current.saturating_sub(dirty_before))
+            }).ok();
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -34,6 +38,10 @@ pub fn bgsave(_items: &[Resp], ctx: &ServerContext) -> Resp {
     let last_save_time = ctx.last_save_time.clone();
     let dirty = ctx.dirty.clone();
 
+    // Snapshot the dirty counter before the save starts.  On success we only
+    // subtract this value so that writes arriving *during* the save are not lost.
+    let dirty_before = ctx.dirty.load(Ordering::Relaxed);
+
     // Use 1 as in-progress sentinel (replaces child PID; no fork involved)
     ctx.rdb_child_pid.store(1, Ordering::Relaxed);
 
@@ -41,7 +49,11 @@ pub fn bgsave(_items: &[Resp], ctx: &ServerContext) -> Resp {
         match rdb::rdb_save(&databases_clone, &config_clone) {
             Ok(_) => {
                 last_bgsave_ok.store(true, Ordering::Relaxed);
-                dirty.store(0, Ordering::Relaxed);
+                // Subtract only what was dirty at save-start time; preserve any
+                // additional writes that occurred while the save was running.
+                dirty.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                    Some(current.saturating_sub(dirty_before))
+                }).ok();
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()

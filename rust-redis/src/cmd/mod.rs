@@ -894,10 +894,9 @@ pub async fn process_frame(
                 };
 
                 let cmd_name = command_name(cmd_raw);
-                // Cache once per command: avoids 3× RwLock acquisitions and 5× utf8+string checks
+                // Cache once per command: avoids repeated RwLock acquisitions and string checks
                 let role = *server_ctx.replication_role.read().unwrap();
-                let is_write =
-                    std::str::from_utf8(cmd_raw).map_or(false, |s| command::is_write_command(s));
+                let is_write = is_write_cmd(cmd_name);
 
                 // Authentication Check
                 if server_ctx.config.requirepass.is_some() && !conn_ctx.authenticated {
@@ -907,6 +906,9 @@ pub async fn process_frame(
                         return (Resp::StaticError("NOAUTH Authentication required."), None);
                     }
                 }
+
+                // Compute min-replicas check once so the condition and error body share the result.
+                let mut noreplicas_info: Option<(usize, usize)> = None;
 
                 // ACL Check
                 if let Err(e) = check_access(cmd_name, cmd_raw, &items, conn_ctx, server_ctx) {
@@ -935,29 +937,23 @@ pub async fn process_frame(
                         Some(cmd_name),
                         Some(items),
                     )
-                } else if server_ctx.min_replicas_to_write.load(Ordering::Relaxed) > 0
-                    && role == ReplicationRole::Master
-                    && is_write
-                    && {
-                        let min_replicas = server_ctx.min_replicas_to_write.load(Ordering::Relaxed);
+                } else if {
+                    let min_replicas = server_ctx.min_replicas_to_write.load(Ordering::Relaxed);
+                    if min_replicas > 0 && role == ReplicationRole::Master && is_write {
                         let max_lag = server_ctx.min_replicas_max_lag.load(Ordering::Relaxed);
                         let now = crate::clock::now_secs();
-                        let healthy_replicas = server_ctx
+                        let healthy = server_ctx
                             .replica_ack_time
                             .iter()
                             .filter(|r| now.saturating_sub(*r.value()) <= max_lag)
                             .count();
-                        healthy_replicas < min_replicas
+                        if healthy < min_replicas {
+                            noreplicas_info = Some((healthy, min_replicas));
+                        }
                     }
-                {
-                    let min_replicas = server_ctx.min_replicas_to_write.load(Ordering::Relaxed);
-                    let max_lag = server_ctx.min_replicas_max_lag.load(Ordering::Relaxed);
-                    let now = crate::clock::now_secs();
-                    let healthy_replicas = server_ctx
-                        .replica_ack_time
-                        .iter()
-                        .filter(|r| now.saturating_sub(*r.value()) <= max_lag)
-                        .count();
+                    noreplicas_info.is_some()
+                } {
+                    let (healthy_replicas, min_replicas) = noreplicas_info.unwrap();
                     (
                         Resp::Error(format!(
                             "NOREPLICAS Not enough good replicas to write. {} < {}",
@@ -1052,19 +1048,15 @@ pub async fn process_frame(
                         latency::record_latency(server_ctx, &cmd_str, (elapsed_us / 1000) as u64);
                     }
 
-                    // Handle client tracking
-                    if conn_ctx.client_tracking && conn_ctx.client_caching {
-                        if let Ok(s) = std::str::from_utf8(cmd_raw) {
-                            if !command::is_write_command(s) {
-                                let keys = get_command_keys(cmd_name, &items);
-                                for key in keys {
-                                    server_ctx
-                                        .tracking_clients
-                                        .entry((conn_ctx.db_index, key.to_vec()))
-                                        .or_insert_with(HashSet::new)
-                                        .insert(conn_ctx.id);
-                                }
-                            }
+                    // Handle client tracking (reuse already-computed is_write)
+                    if conn_ctx.client_tracking && conn_ctx.client_caching && !is_write {
+                        let keys = get_command_keys(cmd_name, &items);
+                        for key in keys {
+                            server_ctx
+                                .tracking_clients
+                                .entry((conn_ctx.db_index, key.to_vec()))
+                                .or_insert_with(HashSet::new)
+                                .insert(conn_ctx.id);
                         }
                     }
 
@@ -1073,33 +1065,28 @@ pub async fn process_frame(
                     let is_queued =
                         matches!(res, Resp::SimpleString(ref s) if s.as_ref() == b"QUEUED");
                     let is_error = matches!(res, Resp::Error(_) | Resp::StaticError(_));
-                    if !is_queued && !is_error {
-                        if let Ok(s) = std::str::from_utf8(cmd_raw) {
-                            if command::is_write_command(s) {
-                                // Increment dirty counter
-                                let changes = match &res {
-                                    Resp::Integer(n) if *n > 0 => *n as u64,
-                                    _ => 1,
-                                };
-                                server_ctx.dirty.fetch_add(changes, Ordering::Relaxed);
+                    if !is_queued && !is_error && is_write {
+                        // Increment dirty counter
+                        let changes = match &res {
+                            Resp::Integer(n) if *n > 0 => *n as u64,
+                            _ => 1,
+                        };
+                        server_ctx.dirty.fetch_add(changes, Ordering::Relaxed);
 
-                                let keys = get_command_keys(cmd_name, &items);
-                                for key in keys {
-                                    touch_watched_key(key, conn_ctx.db_index, server_ctx);
-
-                                    // Trigger keyspace notification
-                                    let event = s.to_lowercase();
-                                    let flags = notify::get_notify_flags_for_command(cmd_name);
-                                    notify::notify_keyspace_event(
-                                        server_ctx,
-                                        flags,
-                                        &event,
-                                        key,
-                                        conn_ctx.db_index,
-                                    )
-                                    .await;
-                                }
-                            }
+                        let keys = get_command_keys(cmd_name, &items);
+                        // Hoist event/flags out of the per-key loop
+                        let event = String::from_utf8_lossy(cmd_raw).to_lowercase();
+                        let notify_flags = notify::get_notify_flags_for_command(cmd_name);
+                        for key in keys {
+                            touch_watched_key(key, conn_ctx.db_index, server_ctx);
+                            notify::notify_keyspace_event(
+                                server_ctx,
+                                notify_flags,
+                                &event,
+                                key,
+                                conn_ctx.db_index,
+                            )
+                            .await;
                         }
                     }
 
@@ -1159,9 +1146,8 @@ pub async fn process_frame(
         if let Some(items) = original_items.as_ref() {
             if items.is_empty() {
                 None
-            } else if let Some(b) = as_bytes(&items[0]) {
-                if let Ok(s) = std::str::from_utf8(&b) {
-                    if command::is_write_command(s) && !conn_ctx.in_multi {
+            } else if as_bytes(&items[0]).is_some() {
+                if is_write_cmd(cmd_name) && !conn_ctx.in_multi {
                         match cmd_name {
                             Command::Multi | Command::Exec | Command::Discard => None,
                             Command::Blpop => match &res {
@@ -1263,7 +1249,7 @@ pub async fn process_frame(
                                 }
                             }
                             _ => {
-                                if command::is_blocking_command(s) {
+                                if matches!(cmd_name, Command::Xreadgroup) {
                                     None
                                 } else {
                                     Some(Resp::Array(Some(items.clone())))
@@ -1273,9 +1259,6 @@ pub async fn process_frame(
                     } else {
                         None
                     }
-                } else {
-                    None
-                }
             } else {
                 None
             }
@@ -1488,13 +1471,11 @@ async fn dispatch_command(
                 let (res, _) =
                     Box::pin(dispatch_command(inner_cmd, &q, conn_ctx, server_ctx)).await;
 
-                // Trigger watched keys invalidation
-                if let Ok(s) = std::str::from_utf8(cmd_raw) {
-                    if command::is_write_command(s) {
-                        let keys = get_command_keys(inner_cmd, &q);
-                        for key in keys {
-                            touch_watched_key(key, conn_ctx.db_index, server_ctx);
-                        }
+                // Trigger watched keys invalidation (use O(1) enum check)
+                if is_write_cmd(inner_cmd) {
+                    let keys = get_command_keys(inner_cmd, &q);
+                    for key in keys {
+                        touch_watched_key(key, conn_ctx.db_index, server_ctx);
                     }
                 }
 
@@ -2039,8 +2020,114 @@ pub(crate) fn command_name(raw: &[u8]) -> Command {
         m
     });
 
-    let s = String::from_utf8_lossy(raw).to_uppercase();
-    map.get(&s).copied().unwrap_or(Command::Unknown)
+    // Stack-allocate the uppercase form to avoid heap allocation on the hot path.
+    // Command names are short ASCII strings; 32 bytes is enough for the longest one.
+    if raw.len() > 32 {
+        return Command::Unknown;
+    }
+    let mut buf = [0u8; 32];
+    let len = raw.len();
+    for (i, &b) in raw.iter().enumerate() {
+        if !b.is_ascii() {
+            return Command::Unknown;
+        }
+        buf[i] = b.to_ascii_uppercase();
+    }
+    // SAFETY: all bytes are ASCII uppercase, which is valid UTF-8
+    let upper = unsafe { std::str::from_utf8_unchecked(&buf[..len]) };
+    map.get(upper).copied().unwrap_or(Command::Unknown)
+}
+
+/// O(1) enum-based write-command check, replaces the O(n) COMMAND_TABLE linear scan.
+pub(crate) fn is_write_cmd(cmd: Command) -> bool {
+    matches!(
+        cmd,
+        Command::Set
+            | Command::SetNx
+            | Command::SetEx
+            | Command::PSetEx
+            | Command::GetSet
+            | Command::GetDel
+            | Command::GetEx
+            | Command::SetRange
+            | Command::Mset
+            | Command::MsetNx
+            | Command::Del
+            | Command::Unlink
+            | Command::Append
+            | Command::Incr
+            | Command::Decr
+            | Command::IncrBy
+            | Command::IncrByFloat
+            | Command::DecrBy
+            | Command::Rename
+            | Command::RenameNx
+            | Command::Move
+            | Command::SwapDb
+            | Command::Persist
+            | Command::Copy
+            | Command::Expire
+            | Command::PExpire
+            | Command::ExpireAt
+            | Command::PExpireAt
+            | Command::FlushDb
+            | Command::FlushAll
+            | Command::Lpush
+            | Command::Lpushx
+            | Command::Rpush
+            | Command::Rpushx
+            | Command::Lpop
+            | Command::Rpop
+            | Command::Blpop
+            | Command::Brpop
+            | Command::Blmove
+            | Command::Lmove
+            | Command::Linsert
+            | Command::Lrem
+            | Command::Ltrim
+            | Command::Hset
+            | Command::HsetNx
+            | Command::HincrBy
+            | Command::HincrByFloat
+            | Command::Hmset
+            | Command::Hdel
+            | Command::Sadd
+            | Command::Srem
+            | Command::SMove
+            | Command::SInterStore
+            | Command::SUnionStore
+            | Command::SDiffStore
+            | Command::SPop
+            | Command::Zadd
+            | Command::ZIncrBy
+            | Command::Zrem
+            | Command::Zpopmin
+            | Command::Bzpopmin
+            | Command::Zpopmax
+            | Command::Bzpopmax
+            | Command::Zunionstore
+            | Command::Zinterstore
+            | Command::Zdiffstore
+            | Command::Pfadd
+            | Command::Pfmerge
+            | Command::GeoAdd
+            | Command::GeoRadius
+            | Command::GeoRadiusByMember
+            | Command::GeoSearchStore
+            | Command::Xadd
+            | Command::Xdel
+            | Command::Xtrim
+            | Command::Xgroup
+            | Command::Xreadgroup
+            | Command::Xack
+            | Command::Xclaim
+            | Command::Xautoclaim
+            | Command::SetBit
+            | Command::BitOp
+            | Command::BitField
+            | Command::Restore
+            | Command::Sort
+    )
 }
 
 pub fn start_expiration_task(ctx: ServerContext) {
@@ -2064,9 +2151,13 @@ pub fn start_expiration_task(ctx: ServerContext) {
             }
 
             for (db_idx, db_lock) in ctx_clone.databases.iter().enumerate() {
+                // Use a read lock here: DashMap::retain takes &self and manages
+                // its own shard-level locks internally. A write lock would block
+                // ALL concurrent command handlers for the entire scan duration
+                // (every 100 ms), causing periodic latency spikes.
                 let mut expired_keys = Vec::new();
                 {
-                    if let Ok(db) = db_lock.write() {
+                    if let Ok(db) = db_lock.read() {
                         db.retain(|k, v| {
                             if v.is_expired() {
                                 expired_keys.push(k.clone());

@@ -44,7 +44,7 @@ use crate::resp::Resp;
 #[path = "../cluster.rs"]
 pub mod cluster;
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 {
@@ -342,7 +342,9 @@ async fn run_server(
         tokio::spawn(async move {
             // Shutdown signal
             let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
-            let (tx, mut rx) = tokio::sync::mpsc::channel(32);
+            // 256 slots: supports deep pipelining without premature back-pressure.
+            // 32 was too small for clients sending 100+ pipelined commands at once.
+            let (tx, mut rx) = tokio::sync::mpsc::channel(256);
             let tx_for_conn = tx.clone();
 
             {
@@ -371,7 +373,7 @@ async fn run_server(
                 let mut buffer: Vec<Resp> = Vec::new();
                 let mut buffering = false;
 
-                while let Some(resp) = rx.recv().await {
+                'outer: while let Some(resp) = rx.recv().await {
                     match resp {
                         Resp::Control(ref s) if s == "START_RDB_TRANSFER" => {
                             buffering = true;
@@ -380,22 +382,44 @@ async fn run_server(
                             buffering = false;
                             for item in buffer.drain(..) {
                                 if resp::write_frame(&mut writer, &item).await.is_err() {
-                                    break;
+                                    break 'outer;
                                 }
                             }
                             if writer.flush().await.is_err() {
-                                break;
+                                break 'outer;
                             }
                         }
-                        _ => {
+                        resp => {
                             if buffering {
                                 buffer.push(resp);
                             } else {
+                                // Write the first frame
                                 if resp::write_frame(&mut writer, &resp).await.is_err() {
-                                    break;
+                                    break 'outer;
+                                }
+                                // Drain any additional pending frames before flushing once.
+                                // This batches multiple responses into a single syscall.
+                                loop {
+                                    match rx.try_recv() {
+                                        Ok(Resp::Control(ref s)) if s == "START_RDB_TRANSFER" => {
+                                            buffering = true;
+                                            break;
+                                        }
+                                        Ok(next) => {
+                                            if buffering {
+                                                buffer.push(next);
+                                            } else if resp::write_frame(&mut writer, &next)
+                                                .await
+                                                .is_err()
+                                            {
+                                                break 'outer;
+                                            }
+                                        }
+                                        Err(_) => break, // channel empty or closed
+                                    }
                                 }
                                 if writer.flush().await.is_err() {
-                                    break;
+                                    break 'outer;
                                 }
                             }
                         }
@@ -406,7 +430,7 @@ async fn run_server(
             });
 
             // Frame channel
-            let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel(32);
+            let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel(256);
             let _conn_ctx_id = connection_id;
             let mut conn_ctx = cmd::ConnectionContext::new(
                 connection_id,

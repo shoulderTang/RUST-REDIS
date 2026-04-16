@@ -90,6 +90,11 @@ impl<W: Write> RdbEncoder<W> {
         self.crc.digest()
     }
 
+    /// Consume the encoder and return the inner writer so the caller can fsync.
+    pub fn into_inner(self) -> W {
+        self.writer
+    }
+
     pub fn write_u16_le(&mut self, v: u16) -> io::Result<()> {
         let bytes = v.to_le_bytes();
         self.writer.write_all(&bytes)?;
@@ -187,15 +192,22 @@ impl<W: Write> RdbEncoder<W> {
 
     fn write_len(&mut self, len: u64) -> io::Result<()> {
         if len < 64 {
+            // 6-bit length: 0b00xxxxxx
             self.write_u8((len as u8) & 0x3F)?;
         } else if len < 16384 {
+            // 14-bit length: 0b01xxxxxx xxxxxxxx
             let b1 = (((len >> 8) as u8) & 0x3F) | 0x40;
             let b2 = (len as u8) & 0xFF;
             self.write_u8(b1)?;
             self.write_u8(b2)?;
-        } else {
+        } else if len <= u32::MAX as u64 {
+            // 32-bit length: 0x80 + 4 bytes big-endian
             self.write_u8(0x80)?;
             self.write_u32_be(len as u32)?;
+        } else {
+            // 64-bit length: 0x81 + 8 bytes big-endian (RDB extension for huge values)
+            self.write_u8(0x81)?;
+            self.write_u64_be(len)?;
         }
         Ok(())
     }
@@ -752,11 +764,17 @@ impl<R: Read> RdbLoader<R> {
                 Ok((len, false))
             }
             2 => {
-                let len = self.read_u32_be()?;
-                Ok((len as u64, false))
+                // 0x80 = 32-bit; 0x81 = 64-bit extension (written by write_len for len > u32::MAX)
+                if b == 0x81 {
+                    let len = self.read_u64_be()?;
+                    Ok((len, false))
+                } else {
+                    let len = self.read_u32_be()?;
+                    Ok((len as u64, false))
+                }
             }
             3 => {
-                // Special encoding
+                // Special encoding (integer-encoded string, etc.)
                 Ok(((b & 0x3F) as u64, true))
             }
             _ => unreachable!(),
@@ -1047,9 +1065,21 @@ impl<R: Read> RdbLoader<R> {
 
         let mut magic = [0u8; 9];
         self.read_exact(&mut magic)?;
-        if &magic != b"REDIS0009" {
-            // For now assume version 9 or fail
-            // return Err(io::Error::new(io::ErrorKind::InvalidData, "Invalid Magic"));
+        if &magic[..5] != b"REDIS" {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Not a valid RDB file (bad magic)",
+            ));
+        }
+        let version = std::str::from_utf8(&magic[5..9])
+            .ok()
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(0);
+        if !(1..=11).contains(&version) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Unsupported RDB version: {}", version),
+            ));
         }
 
         let mut current_db_index = 0;
@@ -1141,10 +1171,12 @@ impl<R: Read> RdbLoader<R> {
                     };
 
                     if let Some(db_lock) = databases.get(current_db_index) {
+                        // expire_at from RDB is an absolute timestamp in ms,
+                        // not a relative TTL — use new_with_expire, not new.
                         db_lock
                             .read()
                             .unwrap()
-                            .insert(key, Entry::new(val, expire_at));
+                            .insert(key, Entry::new_with_expire(val, expire_at));
                     }
                     expire_at = None;
                 }
@@ -1156,10 +1188,32 @@ impl<R: Read> RdbLoader<R> {
 }
 
 pub fn rdb_save(databases: &Arc<Vec<RwLock<Db>>>, conf: &Config) -> io::Result<()> {
-    let file = File::create(&conf.dbfilename)?;
-    let writer = BufWriter::new(file);
-    let mut encoder = RdbEncoder::new(writer, conf.rdbcompression, conf.rdbchecksum);
-    encoder.save(databases)
+    // Write to a temp file first; rename atomically on success so a crash
+    // mid-save never leaves a corrupt final RDB file.
+    let tmp_path = format!("{}.tmp.{}", conf.dbfilename, std::process::id());
+    let result = (|| -> io::Result<()> {
+        let file = File::create(&tmp_path)?;
+        let writer = BufWriter::new(file);
+        let mut encoder = RdbEncoder::new(writer, conf.rdbcompression, conf.rdbchecksum);
+        encoder.save(databases)?;
+        // Recover the BufWriter to call fsync — ensures data reaches disk
+        // before the rename so a crash mid-rename still leaves the old file intact.
+        // (encoder.save() already called flush; sync_all persists to physical media.)
+        encoder.into_inner().get_ref().sync_all()?;
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => {
+            std::fs::rename(&tmp_path, &conf.dbfilename)?;
+            Ok(())
+        }
+        Err(e) => {
+            // Best-effort cleanup of the temp file on error
+            let _ = std::fs::remove_file(&tmp_path);
+            Err(e)
+        }
+    }
 }
 
 pub fn rdb_load(databases: &Arc<Vec<RwLock<Db>>>, conf: &Config) -> io::Result<()> {

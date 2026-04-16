@@ -42,7 +42,10 @@ pub fn start_clock_task() {
     // Initialize immediately so the cache is valid before any key operation
     update();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(1));
+        // 10 ms resolution is sufficient for expiry and LRU tracking.
+        // Redis itself uses 100 ms. 1 ms caused 1000 unnecessary timer
+        // wakeups per second per worker thread.
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(10));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
