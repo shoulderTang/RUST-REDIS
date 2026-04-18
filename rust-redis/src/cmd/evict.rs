@@ -7,12 +7,12 @@ use std::sync::atomic::Ordering;
 use tracing::{info, warn};
 
 pub fn perform_eviction(ctx: &ServerContext) -> Result<(), String> {
-    let maxmemory = ctx.maxmemory.load(Ordering::Relaxed);
+    let maxmemory = ctx.mem.maxmemory.load(Ordering::Relaxed);
     if maxmemory == 0 {
         return Ok(());
     }
 
-    let policy = *ctx.maxmemory_policy.read().unwrap();
+    let policy = *ctx.mem.maxmemory_policy.read().unwrap();
     if policy == EvictionPolicy::NoEviction {
         // We still check if we are over limit, but we don't evict.
         // Actually, noeviction means we return error on write commands if over limit.
@@ -42,7 +42,7 @@ pub fn is_over_maxmemory(maxmemory: u64) -> bool {
 }
 
 fn evict_one_key(ctx: &ServerContext, policy: EvictionPolicy) -> bool {
-    let samples = ctx.maxmemory_samples.load(Ordering::Relaxed);
+    let samples = ctx.mem.maxmemory_samples.load(Ordering::Relaxed);
     let mut best_key: Option<(usize, bytes::Bytes)> = None;
     let mut best_score: f64 = -1.0;
 

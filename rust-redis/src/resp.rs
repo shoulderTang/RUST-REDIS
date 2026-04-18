@@ -83,18 +83,60 @@ where
     Ok(Some(line))
 }
 
+/// Parse a CRLF-terminated integer line without any heap allocation.
+/// Returns `Ok(None)` on clean EOF before the first byte.
 async fn read_integer_line<R>(reader: &mut R) -> io::Result<Option<i64>>
 where
     R: AsyncBufReadExt + Unpin,
 {
-    let line = match read_line(reader).await? {
-        Some(l) => l,
-        None => return Ok(None),
-    };
-    let value = line
-        .parse::<i64>()
-        .map_err(|_| io::Error::new(ErrorKind::InvalidData, "invalid integer"))?;
-    Ok(Some(value))
+    let mut value: i64 = 0;
+    let mut negative = false;
+    let mut got_data = false;
+
+    loop {
+        let filled = reader.fill_buf().await?;
+        if filled.is_empty() {
+            if !got_data {
+                return Ok(None);
+            }
+            return Err(io::Error::new(
+                ErrorKind::UnexpectedEof,
+                "connection reset while reading integer",
+            ));
+        }
+        let mut consumed = 0usize;
+        let mut done = false;
+        for &b in filled {
+            consumed += 1;
+            got_data = true;
+            match b {
+                b'\r' => {} // will be followed by '\n'
+                b'\n' => {
+                    done = true;
+                    break;
+                }
+                b'-' if !negative && value == 0 && consumed == 1 => {
+                    negative = true;
+                }
+                b'0'..=b'9' => {
+                    value = value
+                        .wrapping_mul(10)
+                        .wrapping_add((b - b'0') as i64);
+                }
+                _ => {
+                    reader.consume(consumed);
+                    return Err(io::Error::new(
+                        ErrorKind::InvalidData,
+                        "invalid byte in integer line",
+                    ));
+                }
+            }
+        }
+        reader.consume(consumed);
+        if done {
+            return Ok(Some(if negative { -value } else { value }));
+        }
+    }
 }
 
 async fn read_bulk_string<R>(reader: &mut R) -> io::Result<Option<Resp>>

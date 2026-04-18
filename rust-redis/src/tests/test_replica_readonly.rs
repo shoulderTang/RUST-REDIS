@@ -10,10 +10,10 @@ async fn test_replica_read_only() {
 
     // 1. Set as Slave
     {
-        let mut role = ctx.replication_role.write().unwrap();
+        let mut role = ctx.repl.replication_role.write().unwrap();
         *role = crate::cmd::ReplicationRole::Slave;
     }
-    ctx.replica_read_only.store(true, Ordering::Relaxed);
+    ctx.repl.replica_read_only.store(true, Ordering::Relaxed);
 
     // 2. Try write command (SET) -> Should fail
     let res = run_cmd(vec!["SET", "foo", "bar"], &mut conn_ctx, &ctx).await;
@@ -37,7 +37,7 @@ async fn test_replica_read_only() {
     assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
 
     // 6. Disable read-only
-    ctx.replica_read_only.store(false, Ordering::Relaxed);
+    ctx.repl.replica_read_only.store(false, Ordering::Relaxed);
     conn_ctx.is_master = false;
 
     // 7. Try write command -> Should succeed

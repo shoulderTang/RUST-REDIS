@@ -9,8 +9,8 @@ async fn test_min_replicas_to_write() {
     let mut conn_ctx = create_connection_context();
 
     // 1. Enable min-replicas-to-write = 1
-    ctx.min_replicas_to_write.store(1, Ordering::Relaxed);
-    ctx.min_replicas_max_lag.store(10, Ordering::Relaxed);
+    ctx.repl.min_replicas_to_write.store(1, Ordering::Relaxed);
+    ctx.repl.min_replicas_max_lag.store(10, Ordering::Relaxed);
 
     // 2. Try write -> should fail (0 replicas)
     let res = run_cmd(vec!["SET", "k1", "v1"], &mut conn_ctx, &ctx).await;
@@ -24,7 +24,7 @@ async fn test_min_replicas_to_write() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    ctx.replica_ack_time.insert(1, now); // Just acknowledged
+    ctx.repl.replica_ack_time.insert(1, now); // Just acknowledged
 
     // 4. Try write -> should succeed
     let res = run_cmd(vec!["SET", "k1", "v1"], &mut conn_ctx, &ctx).await;
@@ -32,7 +32,7 @@ async fn test_min_replicas_to_write() {
 
     // 5. Simulate lag
     let old_time = now - 11; // 11 seconds ago (max lag is 10)
-    ctx.replica_ack_time.insert(1, old_time);
+    ctx.repl.replica_ack_time.insert(1, old_time);
 
     // 6. Try write -> should fail
     let res = run_cmd(vec!["SET", "k2", "v2"], &mut conn_ctx, &ctx).await;

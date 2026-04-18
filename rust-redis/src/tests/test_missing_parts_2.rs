@@ -19,7 +19,7 @@ mod tests {
         // Verify it's in tracking_clients
         assert!(
             server_ctx
-                .tracking_clients
+                .clients_ctx.tracking_clients
                 .contains_key(&(0, b"mykey".to_vec()))
         );
 
@@ -31,7 +31,7 @@ mod tests {
         // Verify it's removed from tracking_clients (after invalidation)
         assert!(
             !server_ctx
-                .tracking_clients
+                .clients_ctx.tracking_clients
                 .contains_key(&(0, b"mykey".to_vec()))
         );
     }

@@ -7,7 +7,7 @@ pub fn monitor(
     server_ctx: &ServerContext,
 ) -> (Resp, Option<Resp>) {
     if let Some(sender) = &conn_ctx.msg_sender {
-        server_ctx.monitors.insert(conn_ctx.id, sender.clone());
+        server_ctx.clients_ctx.monitors.insert(conn_ctx.id, sender.clone());
         (Resp::SimpleString(Bytes::from("OK")), None)
     } else {
         (

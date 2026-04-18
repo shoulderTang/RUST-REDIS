@@ -37,7 +37,7 @@ pub async fn slowlog(items: &[Resp], server_ctx: &ServerContext) -> (Resp, Optio
             } else {
                 10_000
             };
-            let log = server_ctx.slowlog.lock().await;
+            let log = server_ctx.slowlog.log.lock().await;
             let mut resp_entries = Vec::new();
             for entry in log.iter().take(count) {
                 let mut args_resp = Vec::new();
@@ -57,11 +57,11 @@ pub async fn slowlog(items: &[Resp], server_ctx: &ServerContext) -> (Resp, Optio
             (Resp::Array(Some(resp_entries)), None)
         }
         "LEN" => {
-            let log = server_ctx.slowlog.lock().await;
+            let log = server_ctx.slowlog.log.lock().await;
             (Resp::Integer(log.len() as i64), None)
         }
         "RESET" => {
-            let mut log = server_ctx.slowlog.lock().await;
+            let mut log = server_ctx.slowlog.log.lock().await;
             log.clear();
             (Resp::SimpleString(Bytes::from("OK")), None)
         }

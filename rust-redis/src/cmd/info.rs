@@ -59,7 +59,7 @@ pub fn info(items: &[Resp], ctx: &ServerContext) -> Resp {
 }
 
 pub fn role(_items: &[Resp], ctx: &ServerContext) -> Resp {
-    let role = *ctx.replication_role.read().unwrap();
+    let role = *ctx.repl.replication_role.read().unwrap();
     match role {
         crate::cmd::ReplicationRole::Master => {
             let mut role_info = Vec::new();
@@ -70,12 +70,12 @@ pub fn role(_items: &[Resp], ctx: &ServerContext) -> Resp {
         }
         crate::cmd::ReplicationRole::Slave => {
             let mh = ctx
-                .master_host
+                .repl.master_host
                 .read()
                 .unwrap()
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string());
-            let mp = ctx.master_port.read().unwrap().unwrap_or(0) as i64;
+            let mp = ctx.repl.master_port.read().unwrap().unwrap_or(0) as i64;
             let mut role_info = Vec::new();
             role_info.push(Resp::BulkString(Some(Bytes::from("slave"))));
             role_info.push(Resp::BulkString(Some(Bytes::from(mh))));
@@ -105,10 +105,10 @@ fn get_server_info(_ctx: &ServerContext) -> String {
 fn get_clients_info(ctx: &ServerContext) -> String {
     let mut s = String::new();
     s.push_str("# Clients\r\n");
-    let connected = ctx.client_count.load(Ordering::Relaxed);
+    let connected = ctx.clients_ctx.client_count.load(Ordering::Relaxed);
     s.push_str(&format!("connected_clients:{}\r\n", connected));
 
-    let blocked = ctx.blocked_client_count.load(Ordering::Relaxed);
+    let blocked = ctx.clients_ctx.blocked_client_count.load(Ordering::Relaxed);
     s.push_str(&format!("blocked_clients:{}\r\n", blocked));
 
     s.push_str(&format!("maxclients:{}\r\n", ctx.config.maxclients));
@@ -119,11 +119,11 @@ fn get_memory_info(ctx: &ServerContext) -> String {
     let (rss, external_peak) = get_memory_usage();
     let used_memory = rss; // Approximation
     // Update and read persistent peak from context
-    let stored_peak = ctx.mem_peak_rss.load(Ordering::Relaxed);
+    let stored_peak = ctx.mem.mem_peak_rss.load(Ordering::Relaxed);
     //for test //stored_peak = 89999999;
     let mut new_peak = stored_peak.max(external_peak).max(used_memory);
     if new_peak > stored_peak {
-        ctx.mem_peak_rss.store(new_peak, Ordering::Relaxed);
+        ctx.mem.mem_peak_rss.store(new_peak, Ordering::Relaxed);
     } else {
         new_peak = stored_peak;
     }
@@ -153,13 +153,13 @@ fn get_memory_info(ctx: &ServerContext) -> String {
         "used_memory_lua_human:{}\r\n",
         bytes_to_human(lua_mem)
     ));
-    let maxmemory = ctx.maxmemory.load(Ordering::Relaxed);
+    let maxmemory = ctx.mem.maxmemory.load(Ordering::Relaxed);
     s.push_str(&format!("maxmemory:{}\r\n", maxmemory));
     s.push_str(&format!(
         "maxmemory_human:{}\r\n",
         bytes_to_human(maxmemory)
     ));
-    let policy = *ctx.maxmemory_policy.read().unwrap();
+    let policy = *ctx.mem.maxmemory_policy.read().unwrap();
     s.push_str(&format!("maxmemory_policy:{}\r\n", policy.as_str()));
     s
 }
@@ -202,20 +202,20 @@ fn get_memory_usage() -> (u64, u64) {
 fn get_replication_info(ctx: &ServerContext) -> String {
     let mut s = String::new();
     s.push_str("# Replication\r\n");
-    let role = *ctx.replication_role.read().unwrap();
+    let role = *ctx.repl.replication_role.read().unwrap();
     match role {
         crate::cmd::ReplicationRole::Master => {
             s.push_str("role:master\r\n");
-            let connected_slaves = ctx.replicas.len();
+            let connected_slaves = ctx.repl.replicas.len();
             s.push_str(&format!("connected_slaves:{}\r\n", connected_slaves));
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs() as u64;
             let mut idx = 0;
-            for entry in ctx.replicas.iter() {
+            for entry in ctx.repl.replicas.iter() {
                 let id = *entry.key();
-                let addr = if let Some(ci) = ctx.clients.get(&id) {
+                let addr = if let Some(ci) = ctx.clients_ctx.clients.get(&id) {
                     ci.addr.clone()
                 } else {
                     String::from("unknown:0")
@@ -226,15 +226,15 @@ fn get_replication_info(ctx: &ServerContext) -> String {
                     ip = host.to_string();
                     port = port_s.parse::<u16>().unwrap_or(0);
                 }
-                if let Some(p) = ctx.replica_listening_port.get(&id) {
+                if let Some(p) = ctx.repl.replica_listening_port.get(&id) {
                     port = *p.value();
                 }
-                let offset = if let Some(v) = ctx.replica_ack.get(&id) {
+                let offset = if let Some(v) = ctx.repl.replica_ack.get(&id) {
                     *v.value()
                 } else {
                     0
                 };
-                let ack_time = if let Some(t) = ctx.replica_ack_time.get(&id) {
+                let ack_time = if let Some(t) = ctx.repl.replica_ack_time.get(&id) {
                     *t.value()
                 } else {
                     now
@@ -246,10 +246,11 @@ fn get_replication_info(ctx: &ServerContext) -> String {
                 ));
                 idx += 1;
             }
-            let master_offset = ctx.repl_offset.load(Ordering::Relaxed);
-            let repl_backlog_size = ctx.repl_backlog_size.load(Ordering::Relaxed) as u64;
+            let master_offset = ctx.repl.repl_offset.load(Ordering::Relaxed);
+            let repl_backlog_size = ctx.repl.repl_backlog_size.load(Ordering::Relaxed) as u64;
             let (first_offset, histlen) = {
-                if let Ok(q) = ctx.repl_backlog.lock() {
+                // Use try_lock: INFO is best-effort; skip if briefly contended.
+                if let Ok(q) = ctx.repl.repl_backlog.try_lock() {
                     if let Some((off, _)) = q.front() {
                         let first = *off;
                         let hist = master_offset.saturating_sub(first).saturating_add(1);
@@ -261,18 +262,18 @@ fn get_replication_info(ctx: &ServerContext) -> String {
                     (0, 0)
                 }
             };
-            s.push_str(&format!("master_replid:{}\r\n", ctx.run_id.read().unwrap()));
+            s.push_str(&format!("master_replid:{}\r\n", ctx.repl.run_id.read().unwrap()));
             s.push_str(&format!(
                 "master_replid2:{}\r\n",
-                ctx.replid2.read().unwrap()
+                ctx.repl.replid2.read().unwrap()
             ));
             s.push_str(&format!(
                 "master_repl_offset:{}\r\n",
-                ctx.repl_offset.load(std::sync::atomic::Ordering::Relaxed)
+                ctx.repl.repl_offset.load(std::sync::atomic::Ordering::Relaxed)
             ));
             s.push_str(&format!(
                 "second_repl_offset:{}\r\n",
-                ctx.second_repl_offset
+                ctx.repl.second_repl_offset
                     .load(std::sync::atomic::Ordering::Relaxed)
             ));
             let backlog_active = if repl_backlog_size > 0 { 1 } else { 0 };
@@ -287,15 +288,15 @@ fn get_replication_info(ctx: &ServerContext) -> String {
         crate::cmd::ReplicationRole::Slave => {
             s.push_str("role:slave\r\n");
             let mh = ctx
-                .master_host
+                .repl.master_host
                 .read()
                 .unwrap()
                 .clone()
                 .unwrap_or_else(|| "unknown".to_string());
-            let mp = ctx.master_port.read().unwrap().unwrap_or(0);
+            let mp = ctx.repl.master_port.read().unwrap().unwrap_or(0);
             s.push_str(&format!("master_host:{}\r\n", mh));
             s.push_str(&format!("master_port:{}\r\n", mp));
-            let status = if ctx.master_link_established.load(Ordering::Relaxed) {
+            let status = if ctx.repl.master_link_established.load(Ordering::Relaxed) {
                 "up"
             } else {
                 "down"
@@ -304,7 +305,7 @@ fn get_replication_info(ctx: &ServerContext) -> String {
             s.push_str("master_last_io_seconds_ago:0\r\n");
             s.push_str("master_sync_in_progress:0\r\n");
             s.push_str("slave_read_only:1\r\n");
-            let offset = ctx.repl_offset.load(Ordering::Relaxed);
+            let offset = ctx.repl.repl_offset.load(Ordering::Relaxed);
             s.push_str(&format!("slave_repl_offset:{}\r\n", offset));
         }
     }
@@ -367,7 +368,7 @@ fn get_cluster_info(ctx: &ServerContext) -> String {
         if ctx.config.cluster_enabled { "1" } else { "0" }
     ));
     if ctx.config.cluster_enabled {
-        if let Ok(cluster) = ctx.cluster.read() {
+        if let Ok(cluster) = ctx.cluster_ctx.state.read() {
             let (assigned, full) = cluster.coverage_ok();
             let cluster_state = if full { "ok" } else { "fail" };
             s.push_str(&format!("cluster_state:{}\r\n", cluster_state));

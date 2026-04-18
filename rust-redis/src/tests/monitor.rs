@@ -17,7 +17,7 @@ async fn test_monitor() {
     assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
 
     // Verify monitor is registered
-    assert!(server_ctx.monitors.contains_key(&1));
+    assert!(server_ctx.clients_ctx.monitors.contains_key(&1));
 
     // Execute another command from a different client
     let mut client_ctx = ConnectionContext::new(2, None, None, None);
@@ -36,7 +36,7 @@ async fn test_monitor() {
         shutdown_tx: None,
         msg_sender: None,
     };
-    server_ctx.clients.insert(2, client_info);
+    server_ctx.clients_ctx.clients.insert(2, client_info);
 
     let req = Resp::Array(Some(vec![
         Resp::BulkString(Some(Bytes::from("SET"))),
@@ -116,7 +116,7 @@ async fn test_monitor_lua() {
         shutdown_tx: None,
         msg_sender: None,
     };
-    server_ctx.clients.insert(2, client_info);
+    server_ctx.clients_ctx.clients.insert(2, client_info);
 
     // Execute EVAL script: return redis.call('set', 'lua_key', 'lua_val')
     // Script: return redis.call('set', KEYS[1], ARGV[1])

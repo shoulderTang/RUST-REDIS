@@ -162,7 +162,7 @@ pub async fn notify_keyspace_event(
     db_index: usize,
 ) {
     let notify_flags = server_ctx
-        .notify_keyspace_events
+        .mem.notify_keyspace_events
         .load(std::sync::atomic::Ordering::Relaxed);
 
     // If neither K nor E is set, or the event type is not enabled, return
@@ -187,7 +187,7 @@ pub async fn notify_keyspace_event(
 
 async fn publish_event(server_ctx: &ServerContext, channel: &str, message: &str) {
     let mut senders = Vec::new();
-    if let Some(subscribers) = server_ctx.pubsub_channels.get(channel) {
+    if let Some(subscribers) = server_ctx.pubsub.channels.get(channel) {
         for sub in subscribers.iter() {
             senders.push(sub.value().clone());
         }
@@ -204,7 +204,7 @@ async fn publish_event(server_ctx: &ServerContext, channel: &str, message: &str)
     }
 
     // Pattern matching
-    for item in server_ctx.pubsub_patterns.iter() {
+    for item in server_ctx.pubsub.patterns.iter() {
         let pattern_str = item.key();
         if let Ok(pat) = glob::Pattern::new(pattern_str) {
             if pat.matches(channel) {

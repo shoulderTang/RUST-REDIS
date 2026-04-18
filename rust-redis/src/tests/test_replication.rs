@@ -62,7 +62,7 @@ async fn test_expire_propagation() {
     let ctx = create_server_context();
     // Set as Master
     {
-        let mut role = ctx.replication_role.write().unwrap();
+        let mut role = ctx.repl.replication_role.write().unwrap();
         *role = crate::cmd::ReplicationRole::Master;
     }
 
@@ -71,7 +71,7 @@ async fn test_expire_propagation() {
 
     // Create a mock replica
     let (tx, mut rx) = tokio::sync::mpsc::channel(100);
-    ctx.replicas.insert(1, tx);
+    ctx.repl.replicas.insert(1, tx);
 
     // Set a key with short expiration
     let key = "expire_me";
@@ -148,15 +148,15 @@ async fn test_wait_command() {
 
     // 3. Add a replica and simulate ACK
     // Update offset to 10
-    ctx.repl_offset
+    ctx.repl.repl_offset
         .store(10, std::sync::atomic::Ordering::Relaxed);
 
     // Add fake replica
     let (tx, _rx) = tokio::sync::mpsc::channel(100);
-    ctx.replicas.insert(1, tx);
+    ctx.repl.replicas.insert(1, tx);
 
     // Send ACK for offset 10
-    ctx.replica_ack.insert(1, 10);
+    ctx.repl.replica_ack.insert(1, 10);
 
     // WAIT 1 100 -> returns 1 immediately (because offset matched)
     let res = run_cmd(vec!["WAIT", "1", "100"], &mut conn_ctx, &ctx).await;
@@ -166,7 +166,7 @@ async fn test_wait_command() {
     }
 
     // 4. Update offset to 20, replica still at 10
-    ctx.repl_offset
+    ctx.repl.repl_offset
         .store(20, std::sync::atomic::Ordering::Relaxed);
 
     // WAIT 1 500 -> blocks

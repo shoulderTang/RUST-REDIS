@@ -12,10 +12,10 @@ async fn test_watch_basic() {
 
     // Register dirty flags in server context (as done in server.rs)
     server_ctx
-        .client_watched_dirty
+        .clients_ctx.client_watched_dirty
         .insert(conn1.id, conn1.watched_keys_dirty.clone());
     server_ctx
-        .client_watched_dirty
+        .clients_ctx.client_watched_dirty
         .insert(conn2.id, conn2.watched_keys_dirty.clone());
 
     // 1. Client 1 watches 'foo'
@@ -39,7 +39,7 @@ async fn test_watch_no_modification() {
     let mut conn1 = crate::tests::helper::create_connection_context();
     conn1.id = 1;
     server_ctx
-        .client_watched_dirty
+        .clients_ctx.client_watched_dirty
         .insert(conn1.id, conn1.watched_keys_dirty.clone());
 
     run_cmd(vec!["WATCH", "foo"], &mut conn1, &server_ctx).await;
@@ -64,10 +64,10 @@ async fn test_unwatch() {
     conn1.id = 1;
     conn2.id = 2;
     server_ctx
-        .client_watched_dirty
+        .clients_ctx.client_watched_dirty
         .insert(conn1.id, conn1.watched_keys_dirty.clone());
     server_ctx
-        .client_watched_dirty
+        .clients_ctx.client_watched_dirty
         .insert(conn2.id, conn2.watched_keys_dirty.clone());
 
     run_cmd(vec!["WATCH", "foo"], &mut conn1, &server_ctx).await;
@@ -95,10 +95,10 @@ async fn test_watch_triggered_by_exec() {
     conn1.id = 1;
     conn2.id = 2;
     server_ctx
-        .client_watched_dirty
+        .clients_ctx.client_watched_dirty
         .insert(conn1.id, conn1.watched_keys_dirty.clone());
     server_ctx
-        .client_watched_dirty
+        .clients_ctx.client_watched_dirty
         .insert(conn2.id, conn2.watched_keys_dirty.clone());
 
     run_cmd(vec!["WATCH", "foo"], &mut conn1, &server_ctx).await;

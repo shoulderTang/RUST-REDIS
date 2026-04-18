@@ -106,7 +106,7 @@ async fn memory_stats_cmd(ctx: &ServerContext) -> Resp {
     if let Some(usage) = memory_stats() {
         add_stat(
             "peak.allocated",
-            Resp::Integer(ctx.mem_peak_rss.load(Ordering::Relaxed) as i64),
+            Resp::Integer(ctx.mem.mem_peak_rss.load(Ordering::Relaxed) as i64),
         );
         add_stat("total.allocated", Resp::Integer(usage.physical_mem as i64));
         add_stat("startup.allocated", Resp::Integer(0)); // We don't track this yet
@@ -114,7 +114,7 @@ async fn memory_stats_cmd(ctx: &ServerContext) -> Resp {
         add_stat("clients.slaves", Resp::Integer(0));
         add_stat(
             "clients.normal",
-            Resp::Integer(ctx.client_count.load(Ordering::Relaxed) as i64),
+            Resp::Integer(ctx.clients_ctx.client_count.load(Ordering::Relaxed) as i64),
         );
         add_stat("aof.buffer", Resp::Integer(0));
 
@@ -127,8 +127,8 @@ async fn memory_stats_cmd(ctx: &ServerContext) -> Resp {
         let dataset_bytes = usage.physical_mem as i64; // Simplified
         add_stat("dataset.bytes", Resp::Integer(dataset_bytes));
 
-        if ctx.maxmemory.load(Ordering::Relaxed) > 0 {
-            let maxmemory = ctx.maxmemory.load(Ordering::Relaxed) as i64;
+        if ctx.mem.maxmemory.load(Ordering::Relaxed) > 0 {
+            let maxmemory = ctx.mem.maxmemory.load(Ordering::Relaxed) as i64;
             add_stat(
                 "dataset.percentage",
                 Resp::BulkString(Some(Bytes::from(format!(

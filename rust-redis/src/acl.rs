@@ -1,7 +1,7 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{self, BufRead, Write};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct User {
@@ -156,6 +156,7 @@ impl User {
     }
 }
 
+#[derive(Clone)]
 pub struct Acl {
     pub users: HashMap<String, Arc<User>>,
 }

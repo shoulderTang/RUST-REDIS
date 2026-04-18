@@ -24,7 +24,7 @@ pub fn client(
     match sub.as_str() {
         "list" => {
             let mut lines = Vec::new();
-            for entry in server_ctx.clients.iter() {
+            for entry in server_ctx.clients_ctx.clients.iter() {
                 let c = entry.value();
                 let age = c.connect_time.elapsed().as_secs();
                 let idle = c.last_activity.elapsed().as_secs();
@@ -61,14 +61,14 @@ pub fn client(
                     None,
                 );
             }
-            if let Some(mut ci) = server_ctx.clients.get_mut(&conn_ctx.id) {
+            if let Some(mut ci) = server_ctx.clients_ctx.clients.get_mut(&conn_ctx.id) {
                 ci.name = new_name;
             }
             (Resp::SimpleString(Bytes::from("OK")), None)
         }
         "getname" => {
             let name = server_ctx
-                .clients
+                .clients_ctx.clients
                 .get(&conn_ctx.id)
                 .map(|c| c.name.clone())
                 .unwrap_or_default();
@@ -150,7 +150,7 @@ pub fn client(
 }
 
 fn kill_client_by_id(server_ctx: &ServerContext, id: u64) -> bool {
-    if let Some((_k, ci)) = server_ctx.clients.remove(&id) {
+    if let Some((_k, ci)) = server_ctx.clients_ctx.clients.remove(&id) {
         if let Some(tx) = ci.shutdown_tx {
             let _ = tx.send(true);
         }
@@ -162,7 +162,7 @@ fn kill_client_by_id(server_ctx: &ServerContext, id: u64) -> bool {
 
 fn kill_client_by_addr(server_ctx: &ServerContext, addr: &str) -> bool {
     let victim_id = server_ctx
-        .clients
+        .clients_ctx.clients
         .iter()
         .find(|c| c.value().addr == addr)
         .map(|c| c.value().id);

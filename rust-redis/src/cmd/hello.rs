@@ -40,8 +40,8 @@ pub fn hello(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &Serv
                         None => return Resp::Error("ERR syntax error".to_string()),
                     };
 
-                    let acl_guard = server_ctx.acl.read().unwrap();
-                    if let Some(_user) = acl_guard.authenticate(&username, &password) {
+                    let acl = server_ctx.acl.load();
+                    if let Some(_user) = acl.authenticate(&username, &password) {
                         conn_ctx.authenticated = true;
                         conn_ctx.current_username = username;
                     } else {
@@ -61,7 +61,7 @@ pub fn hello(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &Serv
                         return Resp::Error("ERR Client names cannot contain spaces, newlines or special characters.".to_string());
                     }
 
-                    if let Some(mut ci) = server_ctx.clients.get_mut(&conn_ctx.id) {
+                    if let Some(mut ci) = server_ctx.clients_ctx.clients.get_mut(&conn_ctx.id) {
                         ci.name = name;
                     }
                     i += 2;

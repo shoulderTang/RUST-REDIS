@@ -64,7 +64,7 @@ async fn test_xread_block_cancellation() {
     // Verify blocked client count is 1
     assert_eq!(
         server_ctx
-            .blocked_client_count
+            .clients_ctx.blocked_client_count
             .load(std::sync::atomic::Ordering::Relaxed),
         1
     );
@@ -83,7 +83,7 @@ async fn test_xread_block_cancellation() {
     // Verify blocked client count is 0
     assert_eq!(
         server_ctx
-            .blocked_client_count
+            .clients_ctx.blocked_client_count
             .load(std::sync::atomic::Ordering::Relaxed),
         0
     );

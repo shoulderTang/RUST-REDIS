@@ -4,6 +4,7 @@ use crate::cmd::scripting::ScriptManager;
 use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::{Resp, as_bytes, read_frame, write_frame};
+use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::Ordering;
@@ -45,6 +46,42 @@ pub mod stream;
 pub mod string;
 pub mod zset;
 
+/// Shared slow-log state cloned cheaply via a single Arc.
+#[derive(Clone)]
+pub struct SlowLogCtx {
+    pub log:          Arc<Mutex<VecDeque<SlowLogEntry>>>,
+    pub next_id:      Arc<std::sync::atomic::AtomicU64>,
+    pub max_len:      Arc<std::sync::atomic::AtomicUsize>,
+    pub threshold_us: Arc<std::sync::atomic::AtomicI64>,
+}
+
+impl SlowLogCtx {
+    pub fn new(max_len: usize, threshold_us: i64) -> Self {
+        Self {
+            log:          Arc::new(Mutex::new(VecDeque::new())),
+            next_id:      Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            max_len:      Arc::new(std::sync::atomic::AtomicUsize::new(max_len)),
+            threshold_us: Arc::new(std::sync::atomic::AtomicI64::new(threshold_us)),
+        }
+    }
+}
+
+/// Shared pubsub state cloned cheaply via a single Arc.
+#[derive(Clone)]
+pub struct PubSubCtx {
+    pub channels: Arc<DashMap<String, DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>>,
+    pub patterns: Arc<DashMap<String, DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>>,
+}
+
+impl PubSubCtx {
+    pub fn new() -> Self {
+        Self {
+            channels: Arc::new(DashMap::new()),
+            patterns: Arc::new(DashMap::new()),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AclLogEntry {
     pub count: u64,
@@ -65,7 +102,7 @@ pub struct LatencyEvent {
 fn unwatch_all_keys(conn_ctx: &mut ConnectionContext, server_ctx: &ServerContext) {
     for (db_idx, keys) in conn_ctx.watched_keys.iter() {
         for key in keys {
-            if let Some(mut clients) = server_ctx.watched_clients.get_mut(&(*db_idx, key.clone())) {
+            if let Some(mut clients) = server_ctx.clients_ctx.watched_clients.get_mut(&(*db_idx, key.clone())) {
                 clients.remove(&conn_ctx.id);
             }
         }
@@ -77,16 +114,16 @@ fn touch_watched_key(key: &[u8], db_idx: usize, server_ctx: &ServerContext) {
     let map_key = (db_idx, key.to_vec());
 
     // 1. Transaction WATCH
-    if let Some(clients) = server_ctx.watched_clients.get(&map_key) {
+    if let Some(clients) = server_ctx.clients_ctx.watched_clients.get(&map_key) {
         for client_id in clients.iter() {
-            if let Some(dirty_flag) = server_ctx.client_watched_dirty.get(client_id) {
+            if let Some(dirty_flag) = server_ctx.clients_ctx.client_watched_dirty.get(client_id) {
                 dirty_flag.store(true, Ordering::SeqCst);
             }
         }
     }
 
     // 2. Client Side Caching Tracking
-    let client_ids = if let Some(entry) = server_ctx.tracking_clients.get(&map_key) {
+    let client_ids = if let Some(entry) = server_ctx.clients_ctx.tracking_clients.get(&map_key) {
         Some(entry.value().clone())
     } else {
         None
@@ -101,7 +138,7 @@ fn touch_watched_key(key: &[u8], db_idx: usize, server_ctx: &ServerContext) {
         ]));
 
         for client_id in ids.iter() {
-            if let Some(client_info) = server_ctx.clients.get(client_id) {
+            if let Some(client_info) = server_ctx.clients_ctx.clients.get(client_id) {
                 if let Some(sender) = &client_info.msg_sender {
                     let _ = sender.try_send(invalidation_msg.clone());
                 }
@@ -109,7 +146,7 @@ fn touch_watched_key(key: &[u8], db_idx: usize, server_ctx: &ServerContext) {
         }
         // Redis 6.0 tracking usually removes keys after invalidation (except BCAST mode)
         // For simplicity we remove them here.
-        server_ctx.tracking_clients.remove(&map_key);
+        server_ctx.clients_ctx.tracking_clients.remove(&map_key);
     }
 }
 
@@ -131,7 +168,7 @@ pub fn watch(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &Serv
                 .or_insert_with(HashSet::new);
             if keys.insert(key_vec.clone()) {
                 server_ctx
-                    .watched_clients
+                    .clients_ctx.watched_clients
                     .entry((conn_ctx.db_index, key_vec))
                     .or_insert_with(HashSet::new)
                     .insert(conn_ctx.id);
@@ -240,7 +277,7 @@ pub struct NodeConn {
 #[derive(Clone)]
 pub struct ServerContext {
     pub databases: Arc<Vec<RwLock<Db>>>,
-    pub acl: Arc<RwLock<Acl>>,
+    pub acl: Arc<ArcSwap<Acl>>,
     pub aof: Option<AofWriter>,
     pub config: Arc<Config>,
     pub script_manager: Arc<ScriptManager>,
@@ -252,60 +289,14 @@ pub struct ServerContext {
             VecDeque<(tokio::sync::mpsc::Sender<(Vec<u8>, Vec<u8>, f64)>, bool)>,
         >,
     >,
-    pub pubsub_channels: Arc<DashMap<String, DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>>,
-    pub pubsub_patterns: Arc<DashMap<String, DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>>,
-    pub run_id: Arc<RwLock<String>>,  // Primary Replication ID
-    pub replid2: Arc<RwLock<String>>, // Secondary Replication ID
-    pub second_repl_offset: Arc<std::sync::atomic::AtomicI64>,
+    pub pubsub: Arc<PubSubCtx>,
+    pub repl: Arc<ReplicationCtx>,
     pub start_time: std::time::Instant,
-    pub client_count: Arc<std::sync::atomic::AtomicU64>,
-    pub blocked_client_count: Arc<std::sync::atomic::AtomicU64>,
-    pub clients: Arc<DashMap<u64, ClientInfo>>,
-    pub monitors: Arc<DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>,
-    pub replicas: Arc<DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>,
-    pub repl_backlog: Arc<std::sync::Mutex<VecDeque<(u64, Resp)>>>,
-    pub repl_backlog_size: Arc<std::sync::atomic::AtomicUsize>,
-    pub repl_ping_replica_period: Arc<std::sync::atomic::AtomicU64>,
-    pub repl_timeout: Arc<std::sync::atomic::AtomicU64>,
-    pub repl_offset: Arc<std::sync::atomic::AtomicU64>,
-    pub replica_ack: Arc<DashMap<u64, u64>>,
-    pub replica_ack_time: Arc<DashMap<u64, u64>>,
-    pub replica_listening_port: Arc<DashMap<u64, u16>>,
-    pub slowlog: Arc<Mutex<VecDeque<SlowLogEntry>>>,
-    pub slowlog_next_id: Arc<std::sync::atomic::AtomicU64>,
-    pub slowlog_max_len: Arc<std::sync::atomic::AtomicUsize>,
-    pub slowlog_threshold_us: Arc<std::sync::atomic::AtomicI64>,
-    pub mem_peak_rss: Arc<std::sync::atomic::AtomicU64>,
-    pub maxmemory: Arc<std::sync::atomic::AtomicU64>,
-    pub notify_keyspace_events: Arc<std::sync::atomic::AtomicU32>,
-    pub rdbcompression: Arc<std::sync::atomic::AtomicBool>,
-    pub rdbchecksum: Arc<std::sync::atomic::AtomicBool>,
-    pub stop_writes_on_bgsave_error: Arc<std::sync::atomic::AtomicBool>,
-    pub replica_read_only: Arc<std::sync::atomic::AtomicBool>,
-    pub min_replicas_to_write: Arc<std::sync::atomic::AtomicUsize>,
-    pub min_replicas_max_lag: Arc<std::sync::atomic::AtomicU64>,
-    pub repl_diskless_sync: Arc<std::sync::atomic::AtomicBool>,
-    pub repl_diskless_sync_delay: Arc<std::sync::atomic::AtomicU64>,
-    pub maxmemory_policy: Arc<RwLock<crate::conf::EvictionPolicy>>,
-    pub maxmemory_samples: Arc<std::sync::atomic::AtomicUsize>,
-    pub save_params: Arc<RwLock<Vec<(u64, u64)>>>,
-    pub last_bgsave_ok: Arc<std::sync::atomic::AtomicBool>,
-    pub dirty: Arc<std::sync::atomic::AtomicU64>,
-    pub last_save_time: Arc<std::sync::atomic::AtomicI64>,
-    pub watched_clients: Arc<DashMap<(usize, Vec<u8>), HashSet<u64>>>,
-    pub client_watched_dirty: Arc<DashMap<u64, Arc<std::sync::atomic::AtomicBool>>>,
-    pub tracking_clients: Arc<DashMap<(usize, Vec<u8>), HashSet<u64>>>,
-    pub acl_log: Arc<RwLock<VecDeque<AclLogEntry>>>,
-    pub latency_events: Arc<DashMap<String, VecDeque<LatencyEvent>>>,
-    pub replication_role: Arc<RwLock<ReplicationRole>>,
-    pub master_host: Arc<RwLock<Option<String>>>,
-    pub master_port: Arc<RwLock<Option<u16>>>,
-    pub repl_waiters: Arc<std::sync::Mutex<VecDeque<WaitContext>>>,
-    pub rdb_child_pid: Arc<std::sync::atomic::AtomicI32>, // Added for fork tracking
-    pub rdb_sync_client_id: Arc<std::sync::atomic::AtomicU64>, // Added to track which client is syncing
-    pub master_link_established: Arc<std::sync::atomic::AtomicBool>,
-    pub cluster: Arc<RwLock<crate::cluster::ClusterState>>,
-    pub node_conns: Arc<dashmap::DashMap<(String, u16), Arc<NodeConn>>>,
+    pub clients_ctx: Arc<ClientCtx>,
+    pub slowlog: Arc<SlowLogCtx>,
+    pub mem: Arc<MemoryCtx>,
+    pub persist: Arc<PersistenceCtx>,
+    pub cluster_ctx: Arc<ClusterCtx>,
 }
 
 #[derive(Debug)]
@@ -313,6 +304,188 @@ pub struct WaitContext {
     pub target_offset: u64,
     pub num_replicas: usize,
     pub tx: tokio::sync::oneshot::Sender<usize>,
+}
+
+#[derive(Clone)]
+pub struct ClusterCtx {
+    pub state: Arc<RwLock<crate::cluster::ClusterState>>,
+    pub node_conns: Arc<dashmap::DashMap<(String, u16), Arc<NodeConn>>>,
+}
+
+impl ClusterCtx {
+    pub fn new(state: Arc<RwLock<crate::cluster::ClusterState>>) -> Self {
+        Self {
+            state,
+            node_conns: Arc::new(dashmap::DashMap::new()),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct ClientCtx {
+    pub client_count: Arc<std::sync::atomic::AtomicU64>,
+    pub blocked_client_count: Arc<std::sync::atomic::AtomicU64>,
+    pub clients: Arc<DashMap<u64, ClientInfo>>,
+    pub monitors: Arc<DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>,
+    pub watched_clients: Arc<DashMap<(usize, Vec<u8>), HashSet<u64>>>,
+    pub client_watched_dirty: Arc<DashMap<u64, Arc<std::sync::atomic::AtomicBool>>>,
+    pub tracking_clients: Arc<DashMap<(usize, Vec<u8>), HashSet<u64>>>,
+    pub acl_log: Arc<RwLock<VecDeque<AclLogEntry>>>,
+    pub latency_events: Arc<DashMap<String, VecDeque<LatencyEvent>>>,
+}
+
+impl ClientCtx {
+    pub fn new() -> Self {
+        Self {
+            client_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            blocked_client_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            clients: Arc::new(DashMap::new()),
+            monitors: Arc::new(DashMap::new()),
+            watched_clients: Arc::new(DashMap::new()),
+            client_watched_dirty: Arc::new(DashMap::new()),
+            tracking_clients: Arc::new(DashMap::new()),
+            acl_log: Arc::new(RwLock::new(VecDeque::new())),
+            latency_events: Arc::new(DashMap::new()),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct ReplicationCtx {
+    pub run_id: Arc<RwLock<String>>,
+    pub replid2: Arc<RwLock<String>>,
+    pub second_repl_offset: Arc<std::sync::atomic::AtomicI64>,
+    pub replicas: Arc<DashMap<u64, tokio::sync::mpsc::Sender<Resp>>>,
+    pub repl_backlog: Arc<Mutex<VecDeque<(u64, Resp)>>>,
+    pub repl_backlog_size: Arc<std::sync::atomic::AtomicUsize>,
+    pub repl_ping_replica_period: Arc<std::sync::atomic::AtomicU64>,
+    pub repl_timeout: Arc<std::sync::atomic::AtomicU64>,
+    pub repl_offset: Arc<std::sync::atomic::AtomicU64>,
+    pub replica_ack: Arc<DashMap<u64, u64>>,
+    pub replica_ack_time: Arc<DashMap<u64, u64>>,
+    pub replica_listening_port: Arc<DashMap<u64, u16>>,
+    pub replica_read_only: Arc<std::sync::atomic::AtomicBool>,
+    pub min_replicas_to_write: Arc<std::sync::atomic::AtomicUsize>,
+    pub min_replicas_max_lag: Arc<std::sync::atomic::AtomicU64>,
+    pub repl_diskless_sync: Arc<std::sync::atomic::AtomicBool>,
+    pub repl_diskless_sync_delay: Arc<std::sync::atomic::AtomicU64>,
+    pub replication_role: Arc<RwLock<ReplicationRole>>,
+    pub master_host: Arc<RwLock<Option<String>>>,
+    pub master_port: Arc<RwLock<Option<u16>>>,
+    pub repl_waiters: Arc<std::sync::Mutex<VecDeque<WaitContext>>>,
+    pub master_link_established: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl ReplicationCtx {
+    pub fn new(
+        run_id: String,
+        repl_backlog_size: usize,
+        repl_ping_replica_period: u64,
+        repl_timeout: u64,
+        replica_read_only: bool,
+        min_replicas_to_write: usize,
+        min_replicas_max_lag: u64,
+        repl_diskless_sync: bool,
+        repl_diskless_sync_delay: u64,
+    ) -> Self {
+        Self {
+            run_id: Arc::new(RwLock::new(run_id)),
+            replid2: Arc::new(RwLock::new(
+                "0000000000000000000000000000000000000000".to_string(),
+            )),
+            second_repl_offset: Arc::new(std::sync::atomic::AtomicI64::new(-1)),
+            replicas: Arc::new(DashMap::new()),
+            repl_backlog: Arc::new(Mutex::new(VecDeque::new())),
+            repl_backlog_size: Arc::new(std::sync::atomic::AtomicUsize::new(repl_backlog_size)),
+            repl_ping_replica_period: Arc::new(std::sync::atomic::AtomicU64::new(
+                repl_ping_replica_period,
+            )),
+            repl_timeout: Arc::new(std::sync::atomic::AtomicU64::new(repl_timeout)),
+            repl_offset: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            replica_ack: Arc::new(DashMap::new()),
+            replica_ack_time: Arc::new(DashMap::new()),
+            replica_listening_port: Arc::new(DashMap::new()),
+            replica_read_only: Arc::new(std::sync::atomic::AtomicBool::new(replica_read_only)),
+            min_replicas_to_write: Arc::new(std::sync::atomic::AtomicUsize::new(
+                min_replicas_to_write,
+            )),
+            min_replicas_max_lag: Arc::new(std::sync::atomic::AtomicU64::new(min_replicas_max_lag)),
+            repl_diskless_sync: Arc::new(std::sync::atomic::AtomicBool::new(repl_diskless_sync)),
+            repl_diskless_sync_delay: Arc::new(std::sync::atomic::AtomicU64::new(
+                repl_diskless_sync_delay,
+            )),
+            replication_role: Arc::new(RwLock::new(ReplicationRole::Master)),
+            master_host: Arc::new(RwLock::new(None)),
+            master_port: Arc::new(RwLock::new(None)),
+            repl_waiters: Arc::new(std::sync::Mutex::new(VecDeque::new())),
+            master_link_established: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct MemoryCtx {
+    pub maxmemory: Arc<std::sync::atomic::AtomicU64>,
+    pub maxmemory_policy: Arc<RwLock<crate::conf::EvictionPolicy>>,
+    pub maxmemory_samples: Arc<std::sync::atomic::AtomicUsize>,
+    pub mem_peak_rss: Arc<std::sync::atomic::AtomicU64>,
+    pub notify_keyspace_events: Arc<std::sync::atomic::AtomicU32>,
+}
+
+impl MemoryCtx {
+    pub fn new(
+        maxmemory: u64,
+        maxmemory_policy: crate::conf::EvictionPolicy,
+        maxmemory_samples: usize,
+        notify_keyspace_events: u32,
+    ) -> Self {
+        Self {
+            maxmemory: Arc::new(std::sync::atomic::AtomicU64::new(maxmemory)),
+            maxmemory_policy: Arc::new(RwLock::new(maxmemory_policy)),
+            maxmemory_samples: Arc::new(std::sync::atomic::AtomicUsize::new(maxmemory_samples)),
+            mem_peak_rss: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            notify_keyspace_events: Arc::new(std::sync::atomic::AtomicU32::new(
+                notify_keyspace_events,
+            )),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct PersistenceCtx {
+    pub rdbcompression: Arc<std::sync::atomic::AtomicBool>,
+    pub rdbchecksum: Arc<std::sync::atomic::AtomicBool>,
+    pub stop_writes_on_bgsave_error: Arc<std::sync::atomic::AtomicBool>,
+    pub last_bgsave_ok: Arc<std::sync::atomic::AtomicBool>,
+    pub dirty: Arc<std::sync::atomic::AtomicU64>,
+    pub last_save_time: Arc<std::sync::atomic::AtomicI64>,
+    pub save_params: Arc<RwLock<Vec<(u64, u64)>>>,
+    pub rdb_child_pid: Arc<std::sync::atomic::AtomicI32>,
+    pub rdb_sync_client_id: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl PersistenceCtx {
+    pub fn new(
+        rdbcompression: bool,
+        rdbchecksum: bool,
+        stop_writes_on_bgsave_error: bool,
+        save_params: Vec<(u64, u64)>,
+        last_save_time: i64,
+    ) -> Self {
+        Self {
+            rdbcompression: Arc::new(std::sync::atomic::AtomicBool::new(rdbcompression)),
+            rdbchecksum: Arc::new(std::sync::atomic::AtomicBool::new(rdbchecksum)),
+            stop_writes_on_bgsave_error: Arc::new(std::sync::atomic::AtomicBool::new(
+                stop_writes_on_bgsave_error,
+            )),
+            last_bgsave_ok: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            dirty: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            last_save_time: Arc::new(std::sync::atomic::AtomicI64::new(last_save_time)),
+            save_params: Arc::new(RwLock::new(save_params)),
+            rdb_child_pid: Arc::new(std::sync::atomic::AtomicI32::new(-1)),
+            rdb_sync_client_id: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -895,7 +1068,7 @@ pub async fn process_frame(
 
                 let cmd_name = command_name(cmd_raw);
                 // Cache once per command: avoids repeated RwLock acquisitions and string checks
-                let role = *server_ctx.replication_role.read().unwrap();
+                let role = *server_ctx.repl.replication_role.read().unwrap();
                 let is_write = is_write_cmd(cmd_name);
 
                 // Authentication Check
@@ -926,7 +1099,7 @@ pub async fn process_frame(
                         },
                     );
                     (e, None, Some(cmd_name), Some(items))
-                } else if server_ctx.replica_read_only.load(Ordering::Relaxed)
+                } else if server_ctx.repl.replica_read_only.load(Ordering::Relaxed)
                     && role == ReplicationRole::Slave
                     && is_write
                     && !conn_ctx.is_master
@@ -938,12 +1111,12 @@ pub async fn process_frame(
                         Some(items),
                     )
                 } else if {
-                    let min_replicas = server_ctx.min_replicas_to_write.load(Ordering::Relaxed);
+                    let min_replicas = server_ctx.repl.min_replicas_to_write.load(Ordering::Relaxed);
                     if min_replicas > 0 && role == ReplicationRole::Master && is_write {
-                        let max_lag = server_ctx.min_replicas_max_lag.load(Ordering::Relaxed);
+                        let max_lag = server_ctx.repl.min_replicas_max_lag.load(Ordering::Relaxed);
                         let now = crate::clock::now_secs();
                         let healthy = server_ctx
-                            .replica_ack_time
+                            .repl.replica_ack_time
                             .iter()
                             .filter(|r| now.saturating_sub(*r.value()) <= max_lag)
                             .count();
@@ -963,10 +1136,10 @@ pub async fn process_frame(
                         Some(cmd_name),
                         Some(items),
                     )
-                } else if server_ctx.maxmemory.load(Ordering::Relaxed) > 0
-                    && evict::is_over_maxmemory(server_ctx.maxmemory.load(Ordering::Relaxed))
+                } else if server_ctx.mem.maxmemory.load(Ordering::Relaxed) > 0
+                    && evict::is_over_maxmemory(server_ctx.mem.maxmemory.load(Ordering::Relaxed))
                     && is_write
-                    && *server_ctx.maxmemory_policy.read().unwrap()
+                    && *server_ctx.mem.maxmemory_policy.read().unwrap()
                         == crate::conf::EvictionPolicy::NoEviction
                 {
                     (
@@ -978,9 +1151,10 @@ pub async fn process_frame(
                         Some(items),
                     )
                 } else if server_ctx
+                    .persist
                     .stop_writes_on_bgsave_error
                     .load(Ordering::Relaxed)
-                    && !server_ctx.last_bgsave_ok.load(Ordering::Relaxed)
+                    && !server_ctx.persist.last_bgsave_ok.load(Ordering::Relaxed)
                     && is_write
                 {
                     (
@@ -993,14 +1167,14 @@ pub async fn process_frame(
                     )
                 } else {
                     // Perform eviction if needed (already checked it's not noeviction or we are not over limit for write cmd)
-                    if server_ctx.maxmemory.load(Ordering::Relaxed) > 0 {
+                    if server_ctx.mem.maxmemory.load(Ordering::Relaxed) > 0 {
                         if let Err(e) = evict::perform_eviction(server_ctx) {
                             error!("Eviction error: {}", e);
                         }
                     }
 
                     // Monitor broadcasting
-                    if !server_ctx.monitors.is_empty() {
+                    if !server_ctx.clients_ctx.monitors.is_empty() {
                         let now = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap_or_default();
@@ -1008,7 +1182,7 @@ pub async fn process_frame(
 
                         let client_addr = if conn_ctx.is_lua {
                             String::from("lua")
-                        } else if let Some(ci) = server_ctx.clients.get(&conn_ctx.id) {
+                        } else if let Some(ci) = server_ctx.clients_ctx.clients.get(&conn_ctx.id) {
                             ci.addr.clone()
                         } else {
                             String::from("unknown")
@@ -1030,7 +1204,7 @@ pub async fn process_frame(
                             }
                         }
 
-                        for m in server_ctx.monitors.iter() {
+                        for m in server_ctx.clients_ctx.monitors.iter() {
                             let _ = m
                                 .value()
                                 .try_send(Resp::SimpleString(bytes::Bytes::from(cmd_str.clone())));
@@ -1053,7 +1227,7 @@ pub async fn process_frame(
                         let keys = get_command_keys(cmd_name, &items);
                         for key in keys {
                             server_ctx
-                                .tracking_clients
+                                .clients_ctx.tracking_clients
                                 .entry((conn_ctx.db_index, key.to_vec()))
                                 .or_insert_with(HashSet::new)
                                 .insert(conn_ctx.id);
@@ -1071,7 +1245,7 @@ pub async fn process_frame(
                             Resp::Integer(n) if *n > 0 => *n as u64,
                             _ => 1,
                         };
-                        server_ctx.dirty.fetch_add(changes, Ordering::Relaxed);
+                        server_ctx.persist.dirty.fetch_add(changes, Ordering::Relaxed);
 
                         let keys = get_command_keys(cmd_name, &items);
                         // Hoist event/flags out of the per-key loop
@@ -1091,7 +1265,7 @@ pub async fn process_frame(
                     }
 
                     if cmd_name != Command::Slowlog
-                        && elapsed_us >= server_ctx.slowlog_threshold_us.load(Ordering::Relaxed)
+                        && elapsed_us >= server_ctx.slowlog.threshold_us.load(Ordering::Relaxed)
                     {
                         let now = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
@@ -1107,12 +1281,12 @@ pub async fn process_frame(
                             }
                         }
                         let (client_addr, client_name) =
-                            if let Some(ci) = server_ctx.clients.get(&conn_ctx.id) {
+                            if let Some(ci) = server_ctx.clients_ctx.clients.get(&conn_ctx.id) {
                                 (ci.addr.clone(), ci.name.clone())
                             } else {
                                 (String::from("unknown"), String::new())
                             };
-                        let id = server_ctx.slowlog_next_id.fetch_add(1, Ordering::Relaxed);
+                        let id = server_ctx.slowlog.next_id.fetch_add(1, Ordering::Relaxed);
                         let entry = SlowLogEntry {
                             id,
                             timestamp,
@@ -1121,9 +1295,9 @@ pub async fn process_frame(
                             client_addr,
                             client_name,
                         };
-                        let mut logq = server_ctx.slowlog.lock().await;
+                        let mut logq = server_ctx.slowlog.log.lock().await;
                         logq.push_front(entry);
-                        let max_len = server_ctx.slowlog_max_len.load(Ordering::Relaxed);
+                        let max_len = server_ctx.slowlog.max_len.load(Ordering::Relaxed);
                         while logq.len() > max_len {
                             logq.pop_back();
                         }
@@ -1279,8 +1453,8 @@ fn check_access(
     conn_ctx: &ConnectionContext,
     server_ctx: &ServerContext,
 ) -> Result<(), Resp> {
-    let acl_guard = server_ctx.acl.read().unwrap();
-    if let Some(user) = acl_guard.get_user(&conn_ctx.current_username) {
+    let acl = server_ctx.acl.load();
+    if let Some(user) = acl.get_user(&conn_ctx.current_username) {
         if !user.enabled {
             return Err(Resp::Error(format!("NOPERM this user is disabled")));
         }
@@ -1320,7 +1494,7 @@ fn check_access(
                         ));
                     }
                 }
-                let st = server_ctx.cluster.read().unwrap();
+                let st = server_ctx.cluster_ctx.state.read().unwrap();
                 if first >= st.slots.len() {
                     return Err(Resp::StaticError("CLUSTERDOWN Hash slot not served"));
                 }
@@ -2134,12 +2308,22 @@ pub fn start_expiration_task(ctx: ServerContext) {
     let ctx_clone = ctx.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
+        // Redis-style active expiration constants.
+        // Each tick: sample SAMPLE_SIZE keys that carry a TTL; if more than
+        // EXPIRE_RATIO_THRESHOLD fraction are expired, repeat – up to
+        // MAX_ROUNDS times.  Total keys examined per tick is at most
+        // SAMPLE_POOL * MAX_ROUNDS = 2 000, regardless of DB size.
+        const SAMPLE_SIZE: usize = 20;
+        const SAMPLE_POOL: usize = SAMPLE_SIZE * 5; // IteratorRandom reservoir bound
+        const MAX_ROUNDS: usize = 10;
+        const EXPIRE_THRESHOLD_NUM: usize = 5; // >25% of 20 = >5 expired
+
         loop {
             interval.tick().await;
 
             // Check master role
             let is_master = {
-                if let Ok(role) = ctx_clone.replication_role.read() {
+                if let Ok(role) = ctx_clone.repl.replication_role.read() {
                     *role == ReplicationRole::Master
                 } else {
                     false
@@ -2151,23 +2335,49 @@ pub fn start_expiration_task(ctx: ServerContext) {
             }
 
             for (db_idx, db_lock) in ctx_clone.databases.iter().enumerate() {
-                // Use a read lock here: DashMap::retain takes &self and manages
-                // its own shard-level locks internally. A write lock would block
-                // ALL concurrent command handlers for the entire scan duration
-                // (every 100 ms), causing periodic latency spikes.
-                let mut expired_keys = Vec::new();
-                {
+                // Collect expired keys using bounded random sampling.
+                // ThreadRng is !Send so it must be created and dropped within a
+                // scope that contains no .await points.
+                let expired_keys: Vec<bytes::Bytes> = {
+                    use rand::seq::IteratorRandom;
+                    let mut rng = rand::rng();
+                    let mut all_expired: Vec<bytes::Bytes> = Vec::new();
                     if let Ok(db) = db_lock.read() {
-                        db.retain(|k, v| {
-                            if v.is_expired() {
-                                expired_keys.push(k.clone());
-                                false
-                            } else {
-                                true
+                        'rounds: for _ in 0..MAX_ROUNDS {
+                            // Sample up to SAMPLE_SIZE keys that have a TTL set.
+                            // `take(SAMPLE_POOL)` caps the iterator walk to O(SAMPLE_POOL).
+                            let sample: Vec<bytes::Bytes> = db
+                                .iter()
+                                .filter(|e| e.value().expires_at.is_some())
+                                .take(SAMPLE_POOL)
+                                .choose_multiple(&mut rng, SAMPLE_SIZE)
+                                .into_iter()
+                                .map(|e| e.key().clone())
+                                .collect();
+
+                            if sample.is_empty() {
+                                break 'rounds;
                             }
-                        });
+
+                            let mut round_expired: Vec<bytes::Bytes> = Vec::new();
+                            for key in &sample {
+                                if db.get(key).map_or(false, |e| e.is_expired()) {
+                                    db.remove(key);
+                                    round_expired.push(key.clone());
+                                }
+                            }
+
+                            let expired_count = round_expired.len();
+                            all_expired.extend(round_expired);
+
+                            // Stop early if expired ratio ≤ 25 %.
+                            if expired_count <= EXPIRE_THRESHOLD_NUM {
+                                break 'rounds;
+                            }
+                        }
                     }
-                }
+                    all_expired
+                };
 
                 if !expired_keys.is_empty() {
                     let select_cmd = Resp::Array(Some(vec![
@@ -2181,17 +2391,16 @@ pub fn start_expiration_task(ctx: ServerContext) {
                     }
 
                     // 2. Propagate SELECT to Replicas
-                    let next_off = ctx_clone.repl_offset.fetch_add(1, Ordering::Relaxed) + 1;
+                    let next_off = ctx_clone.repl.repl_offset.fetch_add(1, Ordering::Relaxed) + 1;
                     {
-                        if let Ok(mut q) = ctx_clone.repl_backlog.lock() {
-                            q.push_back((next_off, select_cmd.clone()));
-                            let max = ctx_clone.repl_backlog_size.load(Ordering::Relaxed);
-                            while q.len() > max {
-                                q.pop_front();
-                            }
+                        let mut q = ctx_clone.repl.repl_backlog.lock().await;
+                        q.push_back((next_off, select_cmd.clone()));
+                        let max = ctx_clone.repl.repl_backlog_size.load(Ordering::Relaxed);
+                        while q.len() > max {
+                            q.pop_front();
                         }
                     }
-                    for entry in ctx_clone.replicas.iter() {
+                    for entry in ctx_clone.repl.replicas.iter() {
                         let _ = entry.value().try_send(select_cmd.clone());
                     }
                 }
@@ -2218,18 +2427,17 @@ pub fn start_expiration_task(ctx: ServerContext) {
                     }
 
                     // 2. Propagate to Replicas
-                    let next_off = ctx_clone.repl_offset.fetch_add(1, Ordering::Relaxed) + 1;
+                    let next_off = ctx_clone.repl.repl_offset.fetch_add(1, Ordering::Relaxed) + 1;
                     {
-                        if let Ok(mut q) = ctx_clone.repl_backlog.lock() {
-                            q.push_back((next_off, del_cmd.clone()));
-                            let max = ctx_clone.repl_backlog_size.load(Ordering::Relaxed);
-                            while q.len() > max {
-                                q.pop_front();
-                            }
+                        let mut q = ctx_clone.repl.repl_backlog.lock().await;
+                        q.push_back((next_off, del_cmd.clone()));
+                        let max = ctx_clone.repl.repl_backlog_size.load(Ordering::Relaxed);
+                        while q.len() > max {
+                            q.pop_front();
                         }
                     }
 
-                    for entry in ctx_clone.replicas.iter() {
+                    for entry in ctx_clone.repl.replicas.iter() {
                         let _ = entry.value().try_send(del_cmd.clone());
                     }
                 }
@@ -2269,7 +2477,7 @@ pub(crate) async fn send_resp_command_ctx(
     use tokio::io::{BufReader, BufWriter};
     let key = (ip.to_string(), port);
     // Try to get existing connection, or create new one lazily
-    let conn = if let Some(entry) = ctx.node_conns.get(&key) {
+    let conn = if let Some(entry) = ctx.cluster_ctx.node_conns.get(&key) {
         entry.clone()
     } else {
         let stream = TcpStream::connect(format!("{}:{}", ip, port)).await?;
@@ -2278,7 +2486,7 @@ pub(crate) async fn send_resp_command_ctx(
             reader: tokio::sync::Mutex::new(BufReader::new(read_half)),
             writer: tokio::sync::Mutex::new(BufWriter::new(write_half)),
         });
-        ctx.node_conns.insert(key, new_conn.clone());
+        ctx.cluster_ctx.node_conns.insert(key, new_conn.clone());
         new_conn
     };
 
@@ -2356,7 +2564,7 @@ pub fn start_cluster_topology_task(ctx: ServerContext) {
             interval.tick().await;
 
             let (my_id, my_ip, my_port, peers) = {
-                let st = ctx_clone.cluster.read().unwrap();
+                let st = ctx_clone.cluster_ctx.state.read().unwrap();
                 let my_id = st.myself.clone();
                 let my_ip = ctx_clone.config.bind.clone();
                 let my_port = ctx_clone.config.port;
@@ -2375,7 +2583,7 @@ pub fn start_cluster_topology_task(ctx: ServerContext) {
                 }
 
                 if let Ok(Some(myid)) = fetch_cluster_myid(&ctx_clone, &ip, port).await {
-                    if let Ok(mut st) = ctx_clone.cluster.write() {
+                    if let Ok(mut st) = ctx_clone.cluster_ctx.state.write() {
                         let node = crate::cluster::ClusterNode {
                             id: crate::cluster::NodeId(myid),
                             ip: ip.clone(),
@@ -2401,7 +2609,7 @@ pub fn start_cluster_topology_task(ctx: ServerContext) {
 
                 let remote_knows_me = parsed.iter().any(|n| n.id == my_id);
                 {
-                    let mut st = ctx_clone.cluster.write().unwrap();
+                    let mut st = ctx_clone.cluster_ctx.state.write().unwrap();
                     // Merge and record peer as alive
                     st.merge_topology(parsed);
                     // Best-effort: PING succeeded already since we got NODES
@@ -2445,7 +2653,7 @@ pub fn start_cluster_failover_task(ctx: ServerContext) {
             let timeout_ms = ctx_clone.config.cluster_node_timeout;
             // Gather peer endpoints for probing, map id -> (ip, port)
             let _peers = {
-                let st = ctx_clone.cluster.read().unwrap();
+                let st = ctx_clone.cluster_ctx.state.read().unwrap();
                 st.nodes
                     .iter()
                     .map(|(id, n)| (id.clone(), (n.ip.clone(), n.port)))
@@ -2472,7 +2680,7 @@ pub fn start_cluster_failover_task(ctx: ServerContext) {
                 }
             };
             {
-                let mut st = ctx_clone.cluster.write().unwrap();
+                let mut st = ctx_clone.cluster_ctx.state.write().unwrap();
                 st.scan_and_failover(timeout_ms, reach);
             }
         }

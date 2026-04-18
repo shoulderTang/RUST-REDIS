@@ -11,9 +11,9 @@ mod tests {
         let mut conn_ctx = create_connection_context();
 
         // Set maxmemory to a very small value (1 byte)
-        server_ctx.maxmemory.store(1, Ordering::SeqCst);
+        server_ctx.mem.maxmemory.store(1, Ordering::SeqCst);
         {
-            let mut policy = server_ctx.maxmemory_policy.write().unwrap();
+            let mut policy = server_ctx.mem.maxmemory_policy.write().unwrap();
             *policy = EvictionPolicy::NoEviction;
         }
 
@@ -39,9 +39,9 @@ mod tests {
         // We can mock memory usage or just set maxmemory to a very small value
         // and check if some keys are gone.
 
-        server_ctx.maxmemory.store(1, Ordering::SeqCst);
+        server_ctx.mem.maxmemory.store(1, Ordering::SeqCst);
         {
-            let mut policy = server_ctx.maxmemory_policy.write().unwrap();
+            let mut policy = server_ctx.mem.maxmemory_policy.write().unwrap();
             *policy = EvictionPolicy::AllKeysRandom;
         }
 
@@ -73,9 +73,9 @@ mod tests {
         let server_ctx = create_server_context();
         let mut conn_ctx = create_connection_context();
 
-        server_ctx.maxmemory.store(1, Ordering::SeqCst);
+        server_ctx.mem.maxmemory.store(1, Ordering::SeqCst);
         {
-            let mut policy = server_ctx.maxmemory_policy.write().unwrap();
+            let mut policy = server_ctx.mem.maxmemory_policy.write().unwrap();
             *policy = EvictionPolicy::VolatileTtl;
         }
 

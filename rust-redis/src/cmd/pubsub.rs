@@ -29,7 +29,8 @@ pub async fn subscribe(
             // New subscription, add to global map
             // Use entry to handle concurrent access safely
             let channel_map = server_ctx
-                .pubsub_channels
+                .pubsub
+                .channels
                 .entry(channel_name.clone())
                 .or_insert_with(DashMap::new);
 
@@ -96,7 +97,7 @@ pub async fn unsubscribe(
         conn_ctx.subscriptions.remove(&channel_name);
 
         // Remove from global map
-        if let Some(subscribers) = server_ctx.pubsub_channels.get(&channel_name) {
+        if let Some(subscribers) = server_ctx.pubsub.channels.get(&channel_name) {
             subscribers.remove(&conn_ctx.id);
             // If empty, we could remove the channel from pubsub_channels,
             // but that requires another lock or check. Leaving it is fine for now.
@@ -142,7 +143,8 @@ pub async fn psubscribe(
 
         if conn_ctx.psubscriptions.insert(pattern.clone()) {
             let pattern_map = server_ctx
-                .pubsub_patterns
+                .pubsub
+                .patterns
                 .entry(pattern.clone())
                 .or_insert_with(DashMap::new);
 
@@ -205,7 +207,7 @@ pub async fn punsubscribe(
     for (i, pattern) in patterns_to_unsubscribe.into_iter().enumerate() {
         conn_ctx.psubscriptions.remove(&pattern);
 
-        if let Some(subscribers) = server_ctx.pubsub_patterns.get(&pattern) {
+        if let Some(subscribers) = server_ctx.pubsub.patterns.get(&pattern) {
             subscribers.remove(&conn_ctx.id);
         }
 
@@ -250,7 +252,7 @@ pub async fn publish(
     };
 
     let mut senders = Vec::new();
-    if let Some(subscribers) = server_ctx.pubsub_channels.get(&channel_name) {
+    if let Some(subscribers) = server_ctx.pubsub.channels.get(&channel_name) {
         for sub in subscribers.iter() {
             senders.push(sub.value().clone());
         }
@@ -270,7 +272,7 @@ pub async fn publish(
     }
 
     // Pattern matching
-    for item in server_ctx.pubsub_patterns.iter() {
+    for item in server_ctx.pubsub.patterns.iter() {
         let pattern_str = item.key();
         if let Ok(pat) = Pattern::new(pattern_str) {
             if pat.matches(&channel_name) {
@@ -322,7 +324,7 @@ pub async fn pubsub_command(
             };
 
             let mut channels = Vec::new();
-            for item in server_ctx.pubsub_channels.iter() {
+            for item in server_ctx.pubsub.channels.iter() {
                 let channel = item.key();
                 // Only list active channels (with at least one subscriber)
                 if item.value().is_empty() {
@@ -353,7 +355,7 @@ pub async fn pubsub_command(
                     _ => continue,
                 };
 
-                let count = if let Some(subs) = server_ctx.pubsub_channels.get(&channel) {
+                let count = if let Some(subs) = server_ctx.pubsub.channels.get(&channel) {
                     subs.len() as i64
                 } else {
                     0
@@ -365,7 +367,7 @@ pub async fn pubsub_command(
             Resp::Array(Some(result))
         }
         "NUMPAT" => {
-            let count = server_ctx.pubsub_patterns.len() as i64;
+            let count = server_ctx.pubsub.patterns.len() as i64;
             Resp::Integer(count)
         }
         _ => Resp::Error("ERR unknown subcommand".to_string()),

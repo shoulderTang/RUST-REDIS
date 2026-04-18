@@ -91,7 +91,7 @@ async fn test_info_clients() {
     // Since create_server_context initializes client_count to 0, and we are not going through accept loop,
     // we manually increment it to simulate a connection.
     server_ctx
-        .client_count
+        .clients_ctx.client_count
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
     // INFO CLIENTS
@@ -150,7 +150,7 @@ async fn test_info_memory_with_config() {
     let server_ctx = crate::tests::helper::create_server_context();
     // Set maxmemory to 1GB
     server_ctx
-        .maxmemory
+        .mem.maxmemory
         .store(1024 * 1024 * 1024, std::sync::atomic::Ordering::Relaxed);
 
     let mut conn_ctx = crate::tests::helper::create_connection_context();

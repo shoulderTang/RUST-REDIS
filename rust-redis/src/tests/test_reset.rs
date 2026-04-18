@@ -4,7 +4,7 @@ use crate::db::Db;
 use crate::resp::Resp;
 use crate::tests::helper::{create_connection_context, create_server_context};
 use bytes::Bytes;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock};  // RwLock used for Db vec
 use std::time::Instant;
 
 async fn run_cmd_bytes(
@@ -35,7 +35,7 @@ async fn test_reset_basics() {
     let mut conn_ctx = create_connection_context();
 
     // Register client in server_ctx
-    server_ctx.clients.insert(
+    server_ctx.clients_ctx.clients.insert(
         conn_ctx.id,
         ClientInfo {
             id: conn_ctx.id,
@@ -54,12 +54,13 @@ async fn test_reset_basics() {
     );
 
     // Add user "alice" to ACL so check_access passes
-    {
-        let mut acl = server_ctx.acl.write().unwrap();
+    server_ctx.acl.rcu(|old| {
+        let mut new_acl = (**old).clone();
         let mut alice = User::new("alice");
         alice.all_commands = true;
-        acl.users.insert("alice".to_string(), Arc::new(alice));
-    }
+        new_acl.users.insert("alice".to_string(), Arc::new(alice));
+        Arc::new(new_acl)
+    });
 
     // Set some state
     conn_ctx.db_index = 5;
@@ -68,7 +69,7 @@ async fn test_reset_basics() {
 
     // Set client name
     {
-        let mut client_info = server_ctx.clients.get_mut(&conn_ctx.id).unwrap();
+        let mut client_info = server_ctx.clients_ctx.clients.get_mut(&conn_ctx.id).unwrap();
         client_info.name = "myclient".to_string();
     }
 
@@ -83,7 +84,7 @@ async fn test_reset_basics() {
 
     // Verify client name reset
     {
-        let client_info = server_ctx.clients.get(&conn_ctx.id).unwrap();
+        let client_info = server_ctx.clients_ctx.clients.get(&conn_ctx.id).unwrap();
         assert_eq!(client_info.name, "");
     }
 }
@@ -104,7 +105,7 @@ async fn test_reset_pubsub() {
     .await;
 
     assert!(conn_ctx.subscriptions.contains("chan1"));
-    assert!(server_ctx.pubsub_channels.contains_key("chan1"));
+    assert!(server_ctx.pubsub.channels.contains_key("chan1"));
 
     // RESET
     let resp = run_cmd_bytes(vec![Bytes::from("RESET")], &mut conn_ctx, &server_ctx).await;
@@ -115,7 +116,7 @@ async fn test_reset_pubsub() {
     // Verify removed from global map
     // The channel entry might still exist but empty, or be removed?
     // My implementation removes the subscriber from the DashMap inside the channel key.
-    if let Some(subs) = server_ctx.pubsub_channels.get("chan1") {
+    if let Some(subs) = server_ctx.pubsub.channels.get("chan1") {
         assert!(!subs.contains_key(&conn_ctx.id));
     }
 }

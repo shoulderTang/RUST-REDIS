@@ -10,16 +10,16 @@ async fn test_psync2_transition() {
 
     // 1. Set initial state (as if it was a slave of someone)
     {
-        let mut run_id = ctx.run_id.write().unwrap();
+        let mut run_id = ctx.repl.run_id.write().unwrap();
         *run_id = "1111111111111111111111111111111111111111".to_string();
-        ctx.repl_offset.store(100, Ordering::Relaxed);
-
+    }
+    ctx.repl.repl_offset.store(100, Ordering::Relaxed);
+    {
         // Populate backlog
-        if let Ok(mut q) = ctx.repl_backlog.lock() {
-            // Add some dummy frames from offset 50 to 100
-            for i in 50..=100 {
-                q.push_back((i, Resp::SimpleString(Bytes::from("PING"))));
-            }
+        let mut q = ctx.repl.repl_backlog.lock().await;
+        // Add some dummy frames from offset 50 to 100
+        for i in 50..=100 {
+            q.push_back((i, Resp::SimpleString(Bytes::from("PING"))));
         }
     }
 
@@ -29,9 +29,9 @@ async fn test_psync2_transition() {
 
     // 3. Verify IDs
     let old_id = "1111111111111111111111111111111111111111".to_string();
-    let new_id = ctx.run_id.read().unwrap().clone();
-    let replid2 = ctx.replid2.read().unwrap().clone();
-    let second_off = ctx.second_repl_offset.load(Ordering::Relaxed);
+    let new_id = ctx.repl.run_id.read().unwrap().clone();
+    let replid2 = ctx.repl.replid2.read().unwrap().clone();
+    let second_off = ctx.repl.second_repl_offset.load(Ordering::Relaxed);
 
     assert_ne!(new_id, old_id);
     assert_eq!(replid2, old_id);

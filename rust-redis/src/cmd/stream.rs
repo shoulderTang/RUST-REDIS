@@ -1094,7 +1094,7 @@ pub async fn xread_cmd(
         None => xread(args, &db),
         Some(ms) => {
             server_ctx
-                .blocked_client_count
+                .clients_ctx.blocked_client_count
                 .fetch_add(1, Ordering::Relaxed);
             let (_shutdown_tx, mut shutdown_rx) = if let Some(rx) = &conn_ctx.shutdown {
                 (None, rx.clone())
@@ -1143,7 +1143,7 @@ pub async fn xread_cmd(
                 }
             };
             server_ctx
-                .blocked_client_count
+                .clients_ctx.blocked_client_count
                 .fetch_sub(1, Ordering::Relaxed);
             result
         }
@@ -1222,7 +1222,7 @@ pub async fn xreadgroup_cmd(
         None => xreadgroup(args, &db),
         Some(ms) => {
             server_ctx
-                .blocked_client_count
+                .clients_ctx.blocked_client_count
                 .fetch_add(1, Ordering::Relaxed);
             let (_shutdown_tx, mut shutdown_rx) = if let Some(rx) = &conn_ctx.shutdown {
                 (None, rx.clone())
@@ -1271,7 +1271,7 @@ pub async fn xreadgroup_cmd(
                 }
             };
             server_ctx
-                .blocked_client_count
+                .clients_ctx.blocked_client_count
                 .fetch_sub(1, Ordering::Relaxed);
             result
         }

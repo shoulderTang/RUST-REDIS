@@ -1466,7 +1466,7 @@ async fn blocking_zpop_generic(
 
     // Wait
     server_ctx
-        .blocked_client_count
+        .clients_ctx.blocked_client_count
         .fetch_add(1, Ordering::Relaxed);
 
     let (_shutdown_tx, mut shutdown_rx) = if let Some(rx) = &conn_ctx.shutdown {
@@ -1502,7 +1502,7 @@ async fn blocking_zpop_generic(
         }
     };
     server_ctx
-        .blocked_client_count
+        .clients_ctx.blocked_client_count
         .fetch_sub(1, Ordering::Relaxed);
 
     match result {

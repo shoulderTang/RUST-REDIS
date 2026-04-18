@@ -2,46 +2,71 @@
 
 ## 性能优化
 
-### P1 - 过期扫描策略：全量 O(n) → 随机采样
+### P1 - 过期扫描策略：全量 O(n) → 随机采样 ✅ 已完成
 文件: src/cmd/mod.rs  函数: start_expiration_task
-当前行为: 每 100ms 对每个 DB 扫描全部 key（DashMap::retain 全量迭代）
-目标行为: 每轮随机抽 20 个 key，若过期比例 > 25% 则继续抽，
-          总处理时间可控，与 Redis 行为一致
-影响: key 数量达百万级时当前方案每轮耗时线性增长
+实现: 每轮用 reservoir sampling 随机抽 20 个带 TTL 的 key（最多遍历 100 个），
+      过期比例 > 25% 则继续抽，最多 10 轮，每 tick 最多处理 1000 个 key，
+      与 DB 大小解耦。ThreadRng 在 await 前显式 drop 保证 Send 安全。
 
-### P2 - repl_backlog 改用非阻塞同步原语
+### P2 - repl_backlog 改用非阻塞同步原语 ✅ 已完成
 文件: src/cmd/mod.rs  字段: ServerContext::repl_backlog
-当前: Arc<std::sync::Mutex<VecDeque<(u64, Resp)>>>
-问题: 异步上下文持有阻塞锁会占用 Tokio worker 线程
-目标: 改为 tokio::sync::Mutex，或用 crossbeam::queue::SegQueue 无锁队列
-影响: 高并发写入 + 有副本时锁竞争明显
+实现: 改为 Arc<tokio::sync::Mutex<...>>，所有调用点改为 .lock().await。
+      info.rs（同步函数）使用 try_lock() 做非阻塞尝试。
+      涉及文件: cmd/mod.rs, cmd/replication.rs, cmd/info.rs, bin/server.rs,
+               tests/helper.rs, tests/test_move_swapdb.rs,
+               tests/test_psync2.rs, tests/aof_hang.rs
 
-### P3 - AOF flush 批量化（everysec 模式）
-文件: src/aof.rs  函数: Aof::append
-当前: 每条写命令都调用 self.writer.flush()，触发一次 OS write() syscall
-目标: everysec 模式下积攒多条命令后批量 flush（阈值：N 条或 4KB），
-      fsync 继续由独立定时任务控制，不影响持久性保证
-影响: 高写入吞吐时减少 syscall 次数
+### P3 - AOF flush 批量化（everysec 模式）✅ 已完成
+文件: src/aof.rs  函数: Aof::append / start_aof_task
+实现: 新增 append_nobuf() 方法，只写 BufWriter 不 flush。
+      everysec 模式下 start_aof_task 用 tokio::select! 监听消息 + 1 秒 ticker，
+      每秒统一执行 flush() + sync_data()，消除每命令一次 syscall。
+      同时修复了旧方案中独立 sync_task 与 BufWriter 的竞争问题。
 
-### P4 - ACL 检查改用无锁读取
-文件: src/cmd/mod.rs  函数: check_access
-当前: 每条命令取 server_ctx.acl.read()（RwLock 共享读锁）
-目标: 引入 arc-swap crate，将 ACL 存为 ArcSwap<Acl>，
-      读取路径变为原子指针加载，无锁竞争
-影响: ACL 极少变更，读锁是不必要的开销
+### P4 - ACL 检查改用无锁读取 ✅ 已完成
+文件: src/cmd/mod.rs, src/cmd/acl.rs, src/cmd/hello.rs, src/acl.rs
+实现: 引入 arc-swap crate，ServerContext::acl 从 Arc<RwLock<Acl>>
+      改为 Arc<ArcSwap<Acl>>。
+      读取路径（check_access/auth/hello/acl list等）：.acl.load() 原子指针加载，无锁。
+      写入路径（SETUSER/DELUSER/LOAD）：.acl.rcu(|old| { clone-modify-return }) 原子替换。
+      Acl 结构体新增 #[derive(Clone)]。
+      涉及文件: acl.rs, cmd/mod.rs, cmd/acl.rs, cmd/hello.rs,
+               bin/server.rs, tests/helper.rs, tests/acl.rs,
+               tests/test_reset.rs, tests/test_move_swapdb.rs, tests/aof_hang.rs
 
-### P5 - resp::read_line 零分配整数解析
-文件: src/resp.rs  函数: read_line / read_integer_line
-当前: 每次解析数组长度行、bulk 长度行都分配 String，解析后即丢弃
-目标: 在固定栈缓冲区内解析整数，跳过 String 分配
-影响: 每条命令至少产生 2 次短生命周期 String 分配（数组头 + 每个 bulk 头）
+### P5 - resp::read_line 零分配整数解析 ✅ 已完成
+文件: src/resp.rs  函数: read_integer_line
+实现: 改用 fill_buf()/consume() 在字节层面直接解析整数，
+      完全消除 String 分配和 UTF-8 验证开销。
+      影响每条命令的数组头解析（*N\r\n 热路径）。
 
-### P6 - ServerContext clone 开销：拆分子结构
+### P6 - ServerContext clone 开销：拆分子结构（进行中）
 文件: src/cmd/mod.rs  结构体: ServerContext
-当前: 每新建连接 clone 一次 ServerContext，触发 40+ 次原子引用计数操作
-目标: 将字段归组为更少的子 Arc，例如：
-        Arc<ReplicationState>  // run_id, replid2, repl_offset, replicas ...
-        Arc<PubSubState>       // pubsub_channels, pubsub_patterns
-        Arc<ClusterState>      // cluster, node_conns
-      这样 clone ServerContext 从 40+ 次原子操作降至 ~6 次
+目标: 将字段归组为更少的子 Arc，clone 从 ~58 次原子操作降至 ~15 次
 影响: 高连接数场景（每秒数千新连接）时有明显收益
+
+#### Step1 - PubSubCtx ✅ 已完成
+  pubsub_channels + pubsub_patterns → Arc<PubSubCtx> { channels, patterns }
+  涉及: cmd/pubsub.rs, cmd/notify.rs, cmd/reset.rs, bin/server.rs, 3个测试文件
+
+#### Step2 - SlowLogCtx ✅ 已完成
+  slowlog + slowlog_next_id + slowlog_max_len + slowlog_threshold_us → Arc<SlowLogCtx>
+
+#### Step3 - PersistenceCtx ✅ 已完成
+  rdbcompression/rdbchecksum/stop_writes/last_bgsave_ok/dirty/last_save_time/
+  save_params/rdb_child_pid/rdb_sync_client_id → Arc<PersistenceCtx>
+
+#### Step4 - MemoryCtx ✅ 已完成
+  maxmemory/maxmemory_policy/maxmemory_samples/mem_peak_rss/notify_keyspace_events
+  → Arc<MemoryCtx>
+
+#### Step5 - ClientCtx ✅ 已完成
+  client_count/blocked_client_count/clients/monitors/watched_clients/
+  client_watched_dirty/tracking_clients/acl_log/latency_events → Arc<ClientCtx>
+
+#### Step6 - ClusterCtx ✅ 已完成
+  cluster + node_conns → Arc<ClusterCtx>
+
+#### Step7 - ReplicationCtx ✅ 已完成
+  run_id/replid2/second_repl_offset/replication_role/replicas/repl_backlog/
+  repl_offset/... 共 22 个字段 → Arc<ReplicationCtx>

@@ -9,9 +9,9 @@ async fn test_diskless_sync_delay() {
     let server_ctx = create_server_context();
     let mut conn_ctx = create_connection_context();
     // Enable diskless sync and set delay
-    server_ctx.repl_diskless_sync.store(true, Ordering::Relaxed);
+    server_ctx.repl.repl_diskless_sync.store(true, Ordering::Relaxed);
     server_ctx
-        .repl_diskless_sync_delay
+        .repl.repl_diskless_sync_delay
         .store(2, Ordering::Relaxed);
 
     // Prepare PSYNC command
@@ -52,10 +52,10 @@ async fn test_diskless_sync_no_delay_when_disabled() {
     let mut conn_ctx = create_connection_context();
     // Disable diskless sync
     server_ctx
-        .repl_diskless_sync
+        .repl.repl_diskless_sync
         .store(false, Ordering::Relaxed);
     server_ctx
-        .repl_diskless_sync_delay
+        .repl.repl_diskless_sync_delay
         .store(2, Ordering::Relaxed);
 
     // Prepare PSYNC command

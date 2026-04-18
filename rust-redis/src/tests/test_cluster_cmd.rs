@@ -164,7 +164,7 @@ mod tests {
         };
 
         {
-            let mut st = server_ctx.cluster.write().unwrap();
+            let mut st = server_ctx.cluster_ctx.state.write().unwrap();
             st.merge_nodes_overview_text(&remote_text).unwrap();
             assert!(st.nodes.contains_key(&NodeId("remote-node-id".to_string())));
             assert!(!st.nodes.contains_key(&NodeId("127.0.0.1:7001".to_string())));
@@ -194,7 +194,7 @@ mod tests {
         };
 
         {
-            let mut st = server_ctx.cluster.write().unwrap();
+            let mut st = server_ctx.cluster_ctx.state.write().unwrap();
             st.merge_nodes_overview_text(&remote_text).unwrap();
             let rep = st.nodes.get(&NodeId("replica-1".to_string())).unwrap();
             assert_eq!(rep.role, NodeRole::Replica);
@@ -206,7 +206,7 @@ mod tests {
     async fn test_cluster_failover_promotes_replica_when_master_unreachable() {
         let server_ctx = create_server_context_with_cluster();
         {
-            let mut st = server_ctx.cluster.write().unwrap();
+            let mut st = server_ctx.cluster_ctx.state.write().unwrap();
             let master_id = NodeId("m-1".to_string());
             st.add_node(
                 master_id.clone(),
@@ -239,7 +239,7 @@ mod tests {
     async fn test_cluster_moved_error_when_slot_owned_by_remote() {
         let server_ctx = create_server_context_with_cluster();
         {
-            let mut st = server_ctx.cluster.write().unwrap();
+            let mut st = server_ctx.cluster_ctx.state.write().unwrap();
             let remote_id = NodeId("remote-1".to_string());
             st.add_node(
                 remote_id.clone(),
@@ -286,7 +286,7 @@ mod tests {
         let key = "migrate_key";
         let slot = ClusterState::key_slot(key);
         {
-            let mut st = server_ctx.cluster.write().unwrap();
+            let mut st = server_ctx.cluster_ctx.state.write().unwrap();
             let remote_id = NodeId("1.1.1.1:7001".to_string());
             st.add_node(
                 remote_id.clone(),
@@ -315,7 +315,7 @@ mod tests {
         let key = "import_key";
         let slot = ClusterState::key_slot(key);
         {
-            let mut st = server_ctx.cluster.write().unwrap();
+            let mut st = server_ctx.cluster_ctx.state.write().unwrap();
             let from_id = NodeId("2.2.2.2:7002".to_string());
             st.add_node(
                 from_id.clone(),
@@ -344,7 +344,7 @@ mod tests {
         let key = "{42}import";
         let slot = ClusterState::key_slot(key);
         {
-            let mut st = server_ctx.cluster.write().unwrap();
+            let mut st = server_ctx.cluster_ctx.state.write().unwrap();
             let from_id = NodeId("3.3.3.3:7003".to_string());
             st.add_node(
                 from_id.clone(),
@@ -367,7 +367,7 @@ mod tests {
     async fn test_cluster_slots_includes_replicas() {
         let server_ctx = create_server_context_with_cluster();
         {
-            let mut st = server_ctx.cluster.write().unwrap();
+            let mut st = server_ctx.cluster_ctx.state.write().unwrap();
             let master_id = NodeId("ms-1".to_string());
             st.add_node(
                 master_id.clone(),
@@ -428,7 +428,7 @@ mod tests {
 
         // Verify slots are assigned (merged into 1 range)
         {
-            let st = server_ctx.cluster.read().unwrap();
+            let st = server_ctx.cluster_ctx.state.read().unwrap();
             let my_id = st.myself.clone();
             let node = st.nodes.get(&my_id).unwrap();
             assert_eq!(node.slots.len(), 1);
@@ -442,7 +442,7 @@ mod tests {
 
         // Verify slots are removed
         {
-            let st = server_ctx.cluster.read().unwrap();
+            let st = server_ctx.cluster_ctx.state.read().unwrap();
             let my_id = st.myself.clone();
             let node = st.nodes.get(&my_id).unwrap();
             assert_eq!(node.slots.len(), 0);
@@ -455,7 +455,7 @@ mod tests {
         let mut conn_ctx = create_connection_context();
 
         let initial_epoch = {
-            let st = server_ctx.cluster.read().unwrap();
+            let st = server_ctx.cluster_ctx.state.read().unwrap();
             st.current_epoch
         };
 
@@ -465,7 +465,7 @@ mod tests {
 
         // Verify epoch was incremented
         {
-            let st = server_ctx.cluster.read().unwrap();
+            let st = server_ctx.cluster_ctx.state.read().unwrap();
             assert_eq!(st.current_epoch, initial_epoch + 1);
         }
     }
@@ -486,7 +486,7 @@ mod tests {
 
         // Reset epoch to 0 first
         {
-            let mut st = server_ctx.cluster.write().unwrap();
+            let mut st = server_ctx.cluster_ctx.state.write().unwrap();
             st.current_epoch = 0;
         }
 
@@ -501,7 +501,7 @@ mod tests {
 
         // Verify epoch was set
         {
-            let st = server_ctx.cluster.read().unwrap();
+            let st = server_ctx.cluster_ctx.state.read().unwrap();
             assert_eq!(st.current_epoch, 123);
         }
 
@@ -536,7 +536,7 @@ mod tests {
         let mut conn_ctx = create_connection_context();
 
         let expected_id = {
-            let st = server_ctx.cluster.read().unwrap();
+            let st = server_ctx.cluster_ctx.state.read().unwrap();
             st.myself.0.clone()
         };
 
@@ -567,7 +567,7 @@ mod tests {
         assert!(path.exists());
         let text = std::fs::read_to_string(&path).unwrap();
         let mut tmp = {
-            let st = server_ctx.cluster.read().unwrap();
+            let st = server_ctx.cluster_ctx.state.read().unwrap();
             crate::cluster::ClusterState::new(
                 st.myself.clone(),
                 server_ctx.config.bind.clone(),
@@ -585,7 +585,7 @@ mod tests {
     async fn test_cluster_load_config_text_builds_state() {
         let server_ctx = create_server_context_with_cluster();
         let text = {
-            let st = server_ctx.cluster.read().unwrap();
+            let st = server_ctx.cluster_ctx.state.read().unwrap();
             let my_id = st.myself.0.clone();
             let addr = format!("{}:{}", server_ctx.config.bind, server_ctx.config.port);
             format!(
@@ -593,12 +593,12 @@ mod tests {
             )
         };
         {
-            let mut st = server_ctx.cluster.write().unwrap();
+            let mut st = server_ctx.cluster_ctx.state.write().unwrap();
             st.load_config_text(&text, &server_ctx.config.bind, server_ctx.config.port)
                 .unwrap();
         }
         {
-            let st = server_ctx.cluster.read().unwrap();
+            let st = server_ctx.cluster_ctx.state.read().unwrap();
             assert_eq!(st.current_epoch, 5);
             let me = st.myself.clone();
             assert!(st.nodes.contains_key(&me));

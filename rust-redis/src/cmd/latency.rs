@@ -17,7 +17,7 @@ pub fn latency(items: &[Resp], server_ctx: &ServerContext) -> Resp {
     match subcommand.as_str() {
         "LATEST" => {
             let mut results = Vec::new();
-            for entry in server_ctx.latency_events.iter() {
+            for entry in server_ctx.clients_ctx.latency_events.iter() {
                 let event_name = entry.key();
                 let events = entry.value();
                 if let Some(latest) = events.back() {
@@ -45,7 +45,7 @@ pub fn latency(items: &[Resp], server_ctx: &ServerContext) -> Resp {
                 _ => return Resp::Error("ERR syntax error".to_string()),
             };
 
-            if let Some(events) = server_ctx.latency_events.get(&event_name) {
+            if let Some(events) = server_ctx.clients_ctx.latency_events.get(&event_name) {
                 let mut results = Vec::new();
                 for event in events.iter() {
                     let mut event_info = Vec::new();
@@ -69,7 +69,7 @@ pub fn latency(items: &[Resp], server_ctx: &ServerContext) -> Resp {
         }
         "RESET" => {
             if items.len() == 2 {
-                server_ctx.latency_events.clear();
+                server_ctx.clients_ctx.latency_events.clear();
             } else {
                 for i in 2..items.len() {
                     let name = match &items[i] {
@@ -77,7 +77,7 @@ pub fn latency(items: &[Resp], server_ctx: &ServerContext) -> Resp {
                         Resp::SimpleString(s) => String::from_utf8_lossy(s).to_string(),
                         _ => continue,
                     };
-                    server_ctx.latency_events.remove(&name);
+                    server_ctx.clients_ctx.latency_events.remove(&name);
                 }
             }
             Resp::SimpleString(Bytes::from("OK"))
@@ -109,7 +109,7 @@ pub fn record_latency(server_ctx: &ServerContext, event: &str, duration_ms: u64)
         .unwrap()
         .as_secs();
     let mut events = server_ctx
-        .latency_events
+        .clients_ctx.latency_events
         .entry(event.to_string())
         .or_insert_with(std::collections::VecDeque::new);
     events.push_back(LatencyEvent {

@@ -25,7 +25,7 @@ pub fn cluster(
     match sub.as_str() {
         "NODES" => {
             let lines = {
-                let st = server_ctx.cluster.read().unwrap();
+                let st = server_ctx.cluster_ctx.state.read().unwrap();
                 st.nodes_overview_redis()
             };
             let mut s = lines.join("\n");
@@ -34,7 +34,7 @@ pub fn cluster(
         }
         "MYID" => {
             let id = {
-                let st = server_ctx.cluster.read().unwrap();
+                let st = server_ctx.cluster_ctx.state.read().unwrap();
                 st.myself.0.clone()
             };
             Resp::BulkString(Some(Bytes::from(id)))
@@ -134,7 +134,7 @@ pub fn cluster(
                 None => return Resp::Error("ERR invalid port".to_string()),
             };
             {
-                let mut st = server_ctx.cluster.write().unwrap();
+                let mut st = server_ctx.cluster_ctx.state.write().unwrap();
                 // Only add placeholder if no node with same address exists
                 let exists = st.nodes.values().any(|n| n.ip == ip && n.port == port);
                 if !exists {
@@ -149,7 +149,7 @@ pub fn cluster(
                 if let Ok(Some(myid)) =
                     crate::cmd::fetch_cluster_myid(&ctx_clone, &ip_clone, port).await
                 {
-                    if let Ok(mut st) = ctx_clone.cluster.write() {
+                    if let Ok(mut st) = ctx_clone.cluster_ctx.state.write() {
                         let node = crate::cluster::ClusterNode {
                             id: NodeId(myid),
                             ip: ip_clone.clone(),
@@ -168,7 +168,7 @@ pub fn cluster(
                     if let Ok(parsed) =
                         crate::cluster::ClusterState::parse_nodes_overview_text(&text)
                     {
-                        if let Ok(mut st) = ctx_clone.cluster.write() {
+                        if let Ok(mut st) = ctx_clone.cluster_ctx.state.write() {
                             st.merge_topology(parsed);
                         }
                     }
@@ -199,7 +199,7 @@ pub fn cluster(
                 return Resp::Error("ERR invalid slot".to_string());
             }
             {
-                let mut st = server_ctx.cluster.write().unwrap();
+                let mut st = server_ctx.cluster_ctx.state.write().unwrap();
                 let me = st.myself.clone();
                 if let Err(e) = st.add_slots(&me, &slots) {
                     return Resp::Error(format!("ERR {}", e));
@@ -242,7 +242,7 @@ pub fn cluster(
                 }
             }
             {
-                let mut st = server_ctx.cluster.write().unwrap();
+                let mut st = server_ctx.cluster_ctx.state.write().unwrap();
                 let me = st.myself.clone();
                 if let Err(e) = st.add_slots(&me, &slots) {
                     return Resp::Error(format!("ERR {}", e));
@@ -269,7 +269,7 @@ pub fn cluster(
                 return Resp::Error("ERR invalid slot".to_string());
             }
             {
-                let mut st = server_ctx.cluster.write().unwrap();
+                let mut st = server_ctx.cluster_ctx.state.write().unwrap();
                 let me = st.myself.clone();
                 if let Err(e) = st.del_slots(&me, &slots) {
                     return Resp::Error(format!("ERR {}", e));
@@ -312,7 +312,7 @@ pub fn cluster(
                 }
             }
             {
-                let mut st = server_ctx.cluster.write().unwrap();
+                let mut st = server_ctx.cluster_ctx.state.write().unwrap();
                 let me = st.myself.clone();
                 if let Err(e) = st.del_slots(&me, &slots) {
                     return Resp::Error(format!("ERR {}", e));
@@ -339,7 +339,7 @@ pub fn cluster(
             };
             match mode.as_str() {
                 "STABLE" => {
-                    let mut st = server_ctx.cluster.write().unwrap();
+                    let mut st = server_ctx.cluster_ctx.state.write().unwrap();
                     if (slot as usize) >= st.slot_state.len() {
                         return Resp::Error("ERR invalid slot".to_string());
                     }
@@ -357,7 +357,7 @@ pub fn cluster(
                         Some(b) => NodeId(String::from_utf8_lossy(&b).to_string()),
                         None => return Resp::Error("ERR invalid node id".to_string()),
                     };
-                    let mut st = server_ctx.cluster.write().unwrap();
+                    let mut st = server_ctx.cluster_ctx.state.write().unwrap();
                     if (slot as usize) >= st.slot_state.len() {
                         return Resp::Error("ERR invalid slot".to_string());
                     }
@@ -375,7 +375,7 @@ pub fn cluster(
                         Some(b) => NodeId(String::from_utf8_lossy(&b).to_string()),
                         None => return Resp::Error("ERR invalid node id".to_string()),
                     };
-                    let mut st = server_ctx.cluster.write().unwrap();
+                    let mut st = server_ctx.cluster_ctx.state.write().unwrap();
                     if (slot as usize) >= st.slot_state.len() {
                         return Resp::Error("ERR invalid slot".to_string());
                     }
@@ -392,7 +392,7 @@ pub fn cluster(
                         Some(b) => NodeId(String::from_utf8_lossy(&b).to_string()),
                         None => return Resp::Error("ERR invalid node id".to_string()),
                     };
-                    let mut st = server_ctx.cluster.write().unwrap();
+                    let mut st = server_ctx.cluster_ctx.state.write().unwrap();
                     if !st.nodes.contains_key(&node_id) {
                         return Resp::Error("ERR Unknown node".to_string());
                     }
@@ -420,7 +420,7 @@ pub fn cluster(
                 Some(b) => NodeId(String::from_utf8_lossy(&b).to_string()),
                 None => return Resp::Error("ERR invalid node id".to_string()),
             };
-            let mut st = server_ctx.cluster.write().unwrap();
+            let mut st = server_ctx.cluster_ctx.state.write().unwrap();
             if st.myself == node_id {
                 return Resp::Error("ERR Cannot forget myself".to_string());
             }
@@ -435,7 +435,7 @@ pub fn cluster(
             Resp::SimpleString(Bytes::from_static(b"OK"))
         }
         "RESET" => {
-            let mut st = server_ctx.cluster.write().unwrap();
+            let mut st = server_ctx.cluster_ctx.state.write().unwrap();
             let my = st.myself.clone();
             let mut me = st.nodes.get(&my).cloned().unwrap();
             me.role = NodeRole::Master;
@@ -460,7 +460,7 @@ pub fn cluster(
                 Some(b) => NodeId(String::from_utf8_lossy(&b).to_string()),
                 None => return Resp::Error("ERR invalid node id".to_string()),
             };
-            let mut st = server_ctx.cluster.write().unwrap();
+            let mut st = server_ctx.cluster_ctx.state.write().unwrap();
             // Resolve master id:
             // 1) If exact id exists, use it.
             // 2) Otherwise, if the provided id looks like ip:port, try to find node by address.
@@ -504,7 +504,7 @@ pub fn cluster(
                 Some(b) => NodeId(String::from_utf8_lossy(&b).to_string()),
                 None => return Resp::Error("ERR invalid node id".to_string()),
             };
-            let st = server_ctx.cluster.read().unwrap();
+            let st = server_ctx.cluster_ctx.state.read().unwrap();
             let mut lines = Vec::new();
             for n in st.nodes.values() {
                 if n.role == NodeRole::Replica && n.master_id.as_ref() == Some(&master_id) {
@@ -516,7 +516,7 @@ pub fn cluster(
             Resp::BulkString(Some(Bytes::from(s)))
         }
         "SLOTS" => {
-            let st = server_ctx.cluster.read().unwrap();
+            let st = server_ctx.cluster_ctx.state.read().unwrap();
             let mut res = Vec::new();
             for n in st.nodes.values() {
                 if n.role == NodeRole::Master {
@@ -582,12 +582,12 @@ pub fn cluster(
             Resp::Array(Some(arr))
         }
         "INFO" => {
-            let st = server_ctx.cluster.read().unwrap();
+            let st = server_ctx.cluster_ctx.state.read().unwrap();
             let info = st.info_string();
             Resp::BulkString(Some(Bytes::from(info)))
         }
         "FLUSHSLOTS" => {
-            let mut st = server_ctx.cluster.write().unwrap();
+            let mut st = server_ctx.cluster_ctx.state.write().unwrap();
             let me = st.myself.clone();
             if let Some(node) = st.nodes.get_mut(&me) {
                 let slots_to_remove: Vec<u16> =
@@ -599,13 +599,13 @@ pub fn cluster(
             Resp::SimpleString(Bytes::from_static(b"OK"))
         }
         "BUMPEPOCH" => {
-            let mut st = server_ctx.cluster.write().unwrap();
+            let mut st = server_ctx.cluster_ctx.state.write().unwrap();
             st.current_epoch += 1;
             Resp::SimpleString(Bytes::from_static(b"OK"))
         }
         "SAVECONFIG" => {
             let (text, path) = {
-                let st = server_ctx.cluster.read().unwrap();
+                let st = server_ctx.cluster_ctx.state.read().unwrap();
                 let content = st.to_config_text();
                 let p = std::path::Path::new(&server_ctx.config.dir)
                     .join(&server_ctx.config.cluster_config_file);
@@ -632,7 +632,7 @@ pub fn cluster(
                 },
                 None => return Resp::Error("ERR invalid epoch".to_string()),
             };
-            let mut st = server_ctx.cluster.write().unwrap();
+            let mut st = server_ctx.cluster_ctx.state.write().unwrap();
             if st.current_epoch != 0 {
                 return Resp::Error("ERR Node already has a config epoch".to_string());
             }
@@ -641,7 +641,7 @@ pub fn cluster(
         }
         "LINKS" => Resp::Array(Some(vec![])),
         "MYSHARDID" => {
-            let st = server_ctx.cluster.read().unwrap();
+            let st = server_ctx.cluster_ctx.state.read().unwrap();
             Resp::BulkString(Some(Bytes::from(st.myself.0.clone())))
         }
         _ => Resp::Error("ERR unknown subcommand".to_string()),

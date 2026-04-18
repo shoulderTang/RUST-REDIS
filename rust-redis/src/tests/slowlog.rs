@@ -7,8 +7,8 @@ use std::sync::atomic::Ordering;
 async fn test_slowlog_basic() {
     let server_ctx = crate::tests::helper::create_server_context();
     // Log everything by setting threshold to 0
-    server_ctx.slowlog_threshold_us.store(0, Ordering::Relaxed);
-    server_ctx.slowlog_max_len.store(10, Ordering::Relaxed);
+    server_ctx.slowlog.threshold_us.store(0, Ordering::Relaxed);
+    server_ctx.slowlog.max_len.store(10, Ordering::Relaxed);
 
     // Insert client info for addressing
     let client_info = crate::cmd::ClientInfo {
@@ -25,7 +25,7 @@ async fn test_slowlog_basic() {
         shutdown_tx: None,
         msg_sender: None,
     };
-    server_ctx.clients.insert(1, client_info);
+    server_ctx.clients_ctx.clients.insert(1, client_info);
 
     let mut conn = ConnectionContext::new(1, None, None, None);
 
@@ -131,7 +131,7 @@ async fn test_slowlog_config() {
 
     // Verify change
     assert_eq!(
-        server_ctx.slowlog_threshold_us.load(Ordering::Relaxed),
+        server_ctx.slowlog.threshold_us.load(Ordering::Relaxed),
         5000
     );
 
@@ -163,5 +163,5 @@ async fn test_slowlog_config() {
     assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
 
     // Verify change
-    assert_eq!(server_ctx.slowlog_max_len.load(Ordering::Relaxed), 200);
+    assert_eq!(server_ctx.slowlog.max_len.load(Ordering::Relaxed), 200);
 }

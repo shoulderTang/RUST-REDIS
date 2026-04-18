@@ -29,24 +29,24 @@ pub fn replicaof(items: &[Resp], ctx: &ServerContext) -> Resp {
     };
 
     if host.eq_ignore_ascii_case("NO") && port_s.eq_ignore_ascii_case("ONE") {
-        if let Ok(mut role) = ctx.replication_role.write() {
+        if let Ok(mut role) = ctx.repl.replication_role.write() {
             *role = crate::cmd::ReplicationRole::Master;
         }
-        if let Ok(mut mh) = ctx.master_host.write() {
+        if let Ok(mut mh) = ctx.repl.master_host.write() {
             *mh = None;
         }
-        if let Ok(mut mp) = ctx.master_port.write() {
+        if let Ok(mut mp) = ctx.repl.master_port.write() {
             *mp = None;
         }
 
         // Shift replication ID
         {
-            let mut run_id_guard = ctx.run_id.write().unwrap();
-            let mut replid2_guard = ctx.replid2.write().unwrap();
+            let mut run_id_guard = ctx.repl.run_id.write().unwrap();
+            let mut replid2_guard = ctx.repl.replid2.write().unwrap();
 
             *replid2_guard = run_id_guard.clone();
-            ctx.second_repl_offset.store(
-                ctx.repl_offset.load(std::sync::atomic::Ordering::Relaxed) as i64 + 1,
+            ctx.repl.second_repl_offset.store(
+                ctx.repl.repl_offset.load(std::sync::atomic::Ordering::Relaxed) as i64 + 1,
                 std::sync::atomic::Ordering::Relaxed,
             );
 
@@ -65,13 +65,13 @@ pub fn replicaof(items: &[Resp], ctx: &ServerContext) -> Resp {
         Err(_) => return Resp::Error("ERR value is not an integer or out of range".to_string()),
     };
 
-    if let Ok(mut role) = ctx.replication_role.write() {
+    if let Ok(mut role) = ctx.repl.replication_role.write() {
         *role = crate::cmd::ReplicationRole::Slave;
     }
-    if let Ok(mut mh) = ctx.master_host.write() {
+    if let Ok(mut mh) = ctx.repl.master_host.write() {
         *mh = Some(host.clone());
     }
-    if let Ok(mut mp) = ctx.master_port.write() {
+    if let Ok(mut mp) = ctx.repl.master_port.write() {
         *mp = Some(port);
     }
 
@@ -81,7 +81,7 @@ pub fn replicaof(items: &[Resp], ctx: &ServerContext) -> Resp {
             error!("Replication worker exited with error: {}", e);
         }
         ctx_cloned
-            .master_link_established
+            .repl.master_link_established
             .store(false, std::sync::atomic::Ordering::Relaxed);
         info!("Replication worker stopped, master link status set to down");
     });
@@ -154,13 +154,13 @@ async fn replication_worker(
     }
 
     // Heartbeat task: periodically send PING and REPLCONF ACK <offset>
-    ctx.master_link_established
+    ctx.repl.master_link_established
         .store(true, std::sync::atomic::Ordering::Relaxed);
     info!("Master link established with {}:{}", host, port);
 
     let heartbeat_last_off = last_off.clone();
     let hb_interval_secs = ctx
-        .repl_ping_replica_period
+        .repl.repl_ping_replica_period
         .load(std::sync::atomic::Ordering::Relaxed);
     let interval_duration = if hb_interval_secs == 0 {
         Duration::from_secs(1)
@@ -214,7 +214,7 @@ async fn replication_worker(
     conn_ctx.is_master = true;
 
     let timeout_duration =
-        Duration::from_secs(ctx.repl_timeout.load(std::sync::atomic::Ordering::Relaxed));
+        Duration::from_secs(ctx.repl.repl_timeout.load(std::sync::atomic::Ordering::Relaxed));
 
     loop {
         // Read frame with timeout
@@ -293,15 +293,14 @@ async fn replication_worker(
                     // Propagate to sub-replicas (Cascading replication)
                     if let Some(prop_frame) = frame_for_prop {
                         // Send the frame to all replicas.
-                        for replica in ctx.replicas.iter() {
+                        for replica in ctx.repl.replicas.iter() {
                             let _ = replica.value().try_send(prop_frame.clone());
                         }
 
                         // Also write to backlog
-                        if let Ok(mut backlog) = ctx.repl_backlog.lock() {
-                            // Limit backlog size
+                        {
+                            let mut backlog = ctx.repl.repl_backlog.lock().await;
                             while backlog.len() > 10000 {
-                                // Simple limit
                                 backlog.pop_front();
                             }
                             let current = last_off.load(std::sync::atomic::Ordering::Relaxed);
@@ -311,7 +310,7 @@ async fn replication_worker(
 
                     last_off.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     // Also update global offset for INFO command correctness
-                    ctx.repl_offset.store(
+                    ctx.repl.repl_offset.store(
                         last_off.load(std::sync::atomic::Ordering::Relaxed),
                         std::sync::atomic::Ordering::Relaxed,
                     );
@@ -362,9 +361,9 @@ pub fn replconf(items: &[Resp], conn_ctx: &mut ConnectionContext, ctx: &ServerCo
             _ => (0, false),
         };
         if port > 0 || (port == 0 && !is_explicit_zero) {
-            ctx.replica_listening_port.insert(conn_ctx.id, port);
+            ctx.repl.replica_listening_port.insert(conn_ctx.id, port);
         } else {
-            ctx.replica_listening_port.remove(&conn_ctx.id);
+            ctx.repl.replica_listening_port.remove(&conn_ctx.id);
         }
         return Resp::SimpleString(Bytes::from_static(b"OK"));
     }
@@ -378,21 +377,21 @@ pub fn replconf(items: &[Resp], conn_ctx: &mut ConnectionContext, ctx: &ServerCo
             Resp::Integer(i) => *i as u64,
             _ => 0,
         };
-        ctx.replica_ack.insert(conn_ctx.id, off);
+        ctx.repl.replica_ack.insert(conn_ctx.id, off);
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs() as u64;
-        ctx.replica_ack_time.insert(conn_ctx.id, now);
+        ctx.repl.replica_ack_time.insert(conn_ctx.id, now);
 
         // Check waiters
-        if let Ok(mut waiters) = ctx.repl_waiters.lock() {
+        if let Ok(mut waiters) = ctx.repl.repl_waiters.lock() {
             let mut i = 0;
             while i < waiters.len() {
                 let target_offset = waiters[i].target_offset;
                 let num_replicas = waiters[i].num_replicas;
                 let curr_ack_count = ctx
-                    .replica_ack
+                    .repl.replica_ack
                     .iter()
                     .filter(|r| *r.value() >= target_offset)
                     .count();
@@ -431,20 +430,20 @@ pub async fn psync(items: &[Resp], conn_ctx: &mut ConnectionContext, ctx: &Serve
     };
 
     if let Some(sender) = &conn_ctx.msg_sender {
-        ctx.replicas.insert(conn_ctx.id, sender.clone());
+        ctx.repl.replicas.insert(conn_ctx.id, sender.clone());
         conn_ctx.is_replica = true;
         if let Ok(mut state) = conn_ctx.replication_state.lock() {
             *state = crate::cmd::ReplicationState::TransferringRdb;
         }
-        ctx.rdb_sync_client_id
+        ctx.persist.rdb_sync_client_id
             .store(conn_ctx.id, std::sync::atomic::Ordering::Relaxed);
     }
 
-    let runid = ctx.run_id.read().unwrap().clone();
-    let replid2 = ctx.replid2.read().unwrap().clone();
-    let current_off = ctx.repl_offset.load(std::sync::atomic::Ordering::Relaxed) as i64;
+    let runid = ctx.repl.run_id.read().unwrap().clone();
+    let replid2 = ctx.repl.replid2.read().unwrap().clone();
+    let current_off = ctx.repl.repl_offset.load(std::sync::atomic::Ordering::Relaxed) as i64;
     let second_off = ctx
-        .second_repl_offset
+        .repl.second_repl_offset
         .load(std::sync::atomic::Ordering::Relaxed);
 
     let can_try_partial = if req_runid == runid {
@@ -458,14 +457,12 @@ pub async fn psync(items: &[Resp], conn_ctx: &mut ConnectionContext, ctx: &Serve
     if can_try_partial && req_off >= 0 {
         let mut to_send: Vec<Resp> = Vec::new();
         let earliest_off = {
-            if let Ok(q) = ctx.repl_backlog.lock() {
-                q.front().map(|(o, _)| *o as i64).unwrap_or(current_off)
-            } else {
-                current_off
-            }
+            let q = ctx.repl.repl_backlog.lock().await;
+            q.front().map(|(o, _)| *o as i64).unwrap_or(current_off)
         };
         if req_off >= earliest_off {
-            if let Ok(q) = ctx.repl_backlog.lock() {
+            {
+                let q = ctx.repl.repl_backlog.lock().await;
                 for (off, frame) in q.iter() {
                     if (*off as i64) > req_off {
                         to_send.push(frame.clone());
@@ -483,11 +480,11 @@ pub async fn psync(items: &[Resp], conn_ctx: &mut ConnectionContext, ctx: &Serve
 
     // Delay start if configured (repl-diskless-sync + delay)
     if ctx
-        .repl_diskless_sync
+        .repl.repl_diskless_sync
         .load(std::sync::atomic::Ordering::Relaxed)
     {
         let delay = ctx
-            .repl_diskless_sync_delay
+            .repl.repl_diskless_sync_delay
             .load(std::sync::atomic::Ordering::Relaxed);
         if delay > 0 {
             tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
@@ -496,9 +493,9 @@ pub async fn psync(items: &[Resp], conn_ctx: &mut ConnectionContext, ctx: &Serve
 
     let header = Resp::SimpleString(Bytes::from(format!("FULLRESYNC {} {}", runid, current_off)));
     let compression = ctx
-        .rdbcompression
+        .persist.rdbcompression
         .load(std::sync::atomic::Ordering::Relaxed);
-    let checksum = ctx.rdbchecksum.load(std::sync::atomic::Ordering::Relaxed);
+    let checksum = ctx.persist.rdbchecksum.load(std::sync::atomic::Ordering::Relaxed);
 
     // Generate RDB snapshot in a blocking thread to avoid blocking the async runtime.
     // The entire snapshot is buffered in memory so the length prefix can be sent atomically.
@@ -534,11 +531,11 @@ pub async fn wait(items: &[Resp], _conn_ctx: &mut ConnectionContext, ctx: &Serve
         _ => return Resp::Error("ERR invalid timeout".to_string()),
     };
 
-    let current_offset = ctx.repl_offset.load(std::sync::atomic::Ordering::Relaxed) as u64;
+    let current_offset = ctx.repl.repl_offset.load(std::sync::atomic::Ordering::Relaxed) as u64;
 
     // Check currently acknowledged replicas
     let ack_count = ctx
-        .replica_ack
+        .repl.replica_ack
         .iter()
         .filter(|r| *r.value() >= current_offset)
         .count();
@@ -554,7 +551,7 @@ pub async fn wait(items: &[Resp], _conn_ctx: &mut ConnectionContext, ctx: &Serve
         Resp::BulkString(Some(Bytes::from("*"))),
     ]));
 
-    for replica in ctx.replicas.iter() {
+    for replica in ctx.repl.replicas.iter() {
         let _ = replica.value().try_send(getack_cmd.clone());
     }
 
@@ -567,7 +564,7 @@ pub async fn wait(items: &[Resp], _conn_ctx: &mut ConnectionContext, ctx: &Serve
     };
 
     {
-        if let Ok(mut waiters) = ctx.repl_waiters.lock() {
+        if let Ok(mut waiters) = ctx.repl.repl_waiters.lock() {
             waiters.push_back(waiter);
         }
     }
@@ -588,7 +585,7 @@ pub async fn wait(items: &[Resp], _conn_ctx: &mut ConnectionContext, ctx: &Serve
             }
         },
         _ = timeout_fut => {
-            let count = ctx.replica_ack.iter().filter(|r| *r.value() >= current_offset).count();
+            let count = ctx.repl.replica_ack.iter().filter(|r| *r.value() >= current_offset).count();
              Resp::Integer(count as i64)
         }
     }

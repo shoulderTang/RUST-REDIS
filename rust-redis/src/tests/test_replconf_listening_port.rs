@@ -17,8 +17,8 @@ async fn test_replconf_listening_port() {
     assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
 
     // Verify the listening port is stored correctly
-    assert!(server_ctx.replica_listening_port.contains_key(&conn_ctx.id));
-    let stored_port = server_ctx.replica_listening_port.get(&conn_ctx.id).unwrap();
+    assert!(server_ctx.repl.replica_listening_port.contains_key(&conn_ctx.id));
+    let stored_port = server_ctx.repl.replica_listening_port.get(&conn_ctx.id).unwrap();
     assert_eq!(*stored_port.value(), 6381u16);
 }
 
@@ -37,7 +37,7 @@ async fn test_replconf_listening_port_invalid() {
     assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
 
     // Should store 0 for invalid port
-    let stored_port = server_ctx.replica_listening_port.get(&conn_ctx.id).unwrap();
+    let stored_port = server_ctx.repl.replica_listening_port.get(&conn_ctx.id).unwrap();
     assert_eq!(*stored_port.value(), 0u16);
 }
 
@@ -56,5 +56,5 @@ async fn test_replconf_listening_port_zero() {
     assert_eq!(res, Resp::SimpleString(Bytes::from("OK")));
 
     // Should not store port 0
-    assert!(!server_ctx.replica_listening_port.contains_key(&conn_ctx.id));
+    assert!(!server_ctx.repl.replica_listening_port.contains_key(&conn_ctx.id));
 }

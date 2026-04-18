@@ -77,27 +77,72 @@ impl AofWriter {
 
 /// Consume `aof`, start a background task that owns it, and return an `AofWriter`
 /// that sends commands to that task via a bounded channel.
+///
+/// For `EverySec` mode the task drives both flush (BufWriter → OS) and fsync
+/// (OS → disk) on the same 1-second ticker, so there is no race between the
+/// BufWriter and a separately-spawned sync task.  The old per-command
+/// `flush()` call is eliminated for `EverySec` / `No` modes.
 pub fn start_aof_task(aof: Aof) -> AofWriter {
     let policy = aof.policy;
     let (sender, mut receiver) = tokio::sync::mpsc::channel::<AofMsg>(4096);
     tokio::spawn(async move {
         let mut aof = aof;
-        while let Some(msg) = receiver.recv().await {
-            match msg {
-                AofMsg::Append(frame) => {
-                    let _ = aof.append(&frame).await;
+        // Abort the old sync task (if any); we handle periodic sync here.
+        if let Some(t) = aof.sync_task.take() {
+            t.abort();
+        }
+
+        if policy == AppendFsync::EverySec {
+            let mut ticker =
+                tokio::time::interval(tokio::time::Duration::from_secs(1));
+            loop {
+                tokio::select! {
+                    biased;
+                    msg = receiver.recv() => {
+                        match msg {
+                            Some(AofMsg::Append(frame)) => {
+                                let _ = aof.append_nobuf(&frame).await;
+                            }
+                            Some(AofMsg::AppendSync(frame, reply)) => {
+                                let _ = aof.append(&frame).await;
+                                let _ = reply.send(());
+                            }
+                            Some(AofMsg::Flush(reply)) => {
+                                let _ = aof.writer.flush().await;
+                                let _ = aof.writer.get_mut().sync_data().await;
+                                let _ = reply.send(());
+                            }
+                            Some(AofMsg::Rewrite(databases, reply)) => {
+                                let _ = reply.send(aof.rewrite(&databases).await);
+                            }
+                            None => break,
+                        }
+                    }
+                    _ = ticker.tick() => {
+                        // Flush BufWriter → OS, then fsync OS → disk.
+                        let _ = aof.writer.flush().await;
+                        let _ = aof.writer.get_mut().sync_data().await;
+                    }
                 }
-                AofMsg::AppendSync(frame, reply) => {
-                    let _ = aof.append(&frame).await;
-                    let _ = reply.send(());
-                }
-                AofMsg::Flush(reply) => {
-                    let _ = aof.writer.flush().await;
-                    let _ = aof.writer.get_mut().sync_data().await;
-                    let _ = reply.send(());
-                }
-                AofMsg::Rewrite(databases, reply) => {
-                    let _ = reply.send(aof.rewrite(&databases).await);
+            }
+        } else {
+            while let Some(msg) = receiver.recv().await {
+                match msg {
+                    AofMsg::Append(frame) => {
+                        let _ = aof.append(&frame).await;
+                    }
+                    AofMsg::AppendSync(frame, reply) => {
+                        let _ = aof.append(&frame).await;
+                        let _ = reply.send(());
+                    }
+                    AofMsg::Flush(reply) => {
+                        let _ = aof.writer.flush().await;
+                        let _ = aof.writer.get_mut().sync_data().await;
+                        let _ = reply.send(());
+                    }
+                    AofMsg::Rewrite(databases, reply) => {
+                        let _ = reply.send(aof.rewrite(&databases).await);
+                    }
                 }
             }
         }
@@ -152,6 +197,8 @@ impl Aof {
         })
     }
 
+    /// Append a frame and immediately flush + fsync (used for `Always` and as
+    /// the fallback for `Flush` messages).
     pub async fn append(&mut self, frame: &Resp) -> io::Result<()> {
         write_resp(&mut self.writer, frame).await?;
         self.writer.flush().await?;
@@ -161,6 +208,13 @@ impl Aof {
         }
 
         Ok(())
+    }
+
+    /// Append a frame **without** flushing the BufWriter.  The caller is
+    /// responsible for flushing periodically (e.g., via the 1-second ticker in
+    /// `start_aof_task`).  Only suitable for `EverySec` / `No` policies.
+    async fn append_nobuf(&mut self, frame: &Resp) -> io::Result<()> {
+        write_resp(&mut self.writer, frame).await
     }
 
     pub async fn load(

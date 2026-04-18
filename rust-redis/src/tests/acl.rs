@@ -3,8 +3,9 @@ use crate::cmd::{process_frame, scripting};
 use crate::conf::Config;
 use crate::db::Db;
 use crate::resp::Resp;
+use arc_swap::ArcSwap;
 use bytes::Bytes;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_acl_key_permissions() {
@@ -109,7 +110,7 @@ async fn test_acl_persistence() {
     assert!(acl_path.exists());
 
     // Create a NEW ACL instance to test loading
-    let new_acl = Arc::new(RwLock::new(Acl::new()));
+    let new_acl = Arc::new(ArcSwap::from_pointee(Acl::new()));
     let mut server_ctx_new = crate::tests::helper::create_server_context();
     server_ctx_new.acl = new_acl.clone();
     server_ctx_new.config = cfg_arc.clone();
@@ -126,7 +127,7 @@ async fn test_acl_persistence() {
     }
 
     // Check if alice exists in new_acl
-    let acl_guard = new_acl.read().unwrap();
+    let acl_guard = new_acl.load();
     let alice = acl_guard.get_user("alice");
     assert!(alice.is_some(), "User alice should exist after loading");
     let alice = alice.unwrap();

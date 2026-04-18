@@ -442,7 +442,7 @@ async fn blocking_pop_generic(
 
     // Wait
     server_ctx
-        .blocked_client_count
+        .clients_ctx.blocked_client_count
         .fetch_add(1, Ordering::Relaxed);
 
     let (_shutdown_tx, mut shutdown_rx) = if let Some(rx) = &conn_ctx.shutdown {
@@ -478,7 +478,7 @@ async fn blocking_pop_generic(
         }
     };
     server_ctx
-        .blocked_client_count
+        .clients_ctx.blocked_client_count
         .fetch_sub(1, Ordering::Relaxed);
 
     match result {
@@ -800,7 +800,7 @@ pub async fn blmove(
     queue.push_back(tx);
 
     server_ctx
-        .blocked_client_count
+        .clients_ctx.blocked_client_count
         .fetch_add(1, Ordering::Relaxed);
     let result = if timeout_secs > 0.0 {
         let duration = Duration::from_secs_f64(timeout_secs);
@@ -816,7 +816,7 @@ pub async fn blmove(
         }
     };
     server_ctx
-        .blocked_client_count
+        .clients_ctx.blocked_client_count
         .fetch_sub(1, Ordering::Relaxed);
 
     match result {

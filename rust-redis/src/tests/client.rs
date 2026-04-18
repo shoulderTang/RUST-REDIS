@@ -20,7 +20,7 @@ async fn test_client_list_basic() {
         shutdown_tx: None,
         msg_sender: None,
     };
-    server_ctx.clients.insert(ci.id, ci);
+    server_ctx.clients_ctx.clients.insert(ci.id, ci);
 
     let mut conn_ctx = crate::tests::helper::create_connection_context();
     let req = Resp::Array(Some(vec![
@@ -78,8 +78,8 @@ async fn test_client_list_multiple() {
         shutdown_tx: None,
         msg_sender: None,
     };
-    server_ctx.clients.insert(ci1.id, ci1);
-    server_ctx.clients.insert(ci2.id, ci2);
+    server_ctx.clients_ctx.clients.insert(ci1.id, ci1);
+    server_ctx.clients_ctx.clients.insert(ci2.id, ci2);
 
     let mut conn_ctx = crate::tests::helper::create_connection_context();
     let req = Resp::Array(Some(vec![
@@ -124,7 +124,7 @@ async fn test_client_kill_id() {
         shutdown_tx: Some(tx),
         msg_sender: None,
     };
-    server_ctx.clients.insert(ci.id, ci);
+    server_ctx.clients_ctx.clients.insert(ci.id, ci);
 
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
@@ -160,7 +160,7 @@ async fn test_client_kill_addr() {
         shutdown_tx: Some(tx),
         msg_sender: None,
     };
-    server_ctx.clients.insert(ci.id, ci);
+    server_ctx.clients_ctx.clients.insert(ci.id, ci);
 
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
@@ -196,7 +196,7 @@ async fn test_client_kill_legacy() {
         shutdown_tx: Some(tx),
         msg_sender: None,
     };
-    server_ctx.clients.insert(ci.id, ci);
+    server_ctx.clients_ctx.clients.insert(ci.id, ci);
 
     let mut conn_ctx = crate::tests::helper::create_connection_context();
 
@@ -232,7 +232,7 @@ async fn test_client_setname() {
         shutdown_tx: None,
         msg_sender: None,
     };
-    server_ctx.clients.insert(ci.id, ci);
+    server_ctx.clients_ctx.clients.insert(ci.id, ci);
 
     let mut conn_ctx = crate::tests::helper::create_connection_context();
     conn_ctx.id = 13;
@@ -249,7 +249,7 @@ async fn test_client_setname() {
         _ => panic!("Expected SimpleString OK"),
     }
 
-    let updated_ci = server_ctx.clients.get(&13).unwrap();
+    let updated_ci = server_ctx.clients_ctx.clients.get(&13).unwrap();
     assert_eq!(updated_ci.name, "new_name");
 }
 
@@ -270,7 +270,7 @@ async fn test_client_setname_invalid() {
         shutdown_tx: None,
         msg_sender: None,
     };
-    server_ctx.clients.insert(ci.id, ci);
+    server_ctx.clients_ctx.clients.insert(ci.id, ci);
 
     let mut conn_ctx = crate::tests::helper::create_connection_context();
     conn_ctx.id = 14;

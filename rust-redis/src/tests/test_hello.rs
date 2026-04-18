@@ -96,9 +96,9 @@ async fn test_hello() {
         _ => panic!("Expected Array, got {:?}", resp),
     }
     // Verify client name
-    // Since we don't have direct access to server_ctx.clients inside test easily without lock,
+    // Since we don't have direct access to server_ctx.clients_ctx.clients inside test easily without lock,
     // we can check via CLIENT GETNAME or similar if implemented, but we trust the response for now.
-    // Actually we can check conn_ctx if it was updated? No, conn_ctx has id, name is in server_ctx.clients.
+    // Actually we can check conn_ctx if it was updated? No, conn_ctx has id, name is in server_ctx.clients_ctx.clients.
     // We can use CLIENT LIST or CLIENT GETNAME if available.
 
     // HELLO 2 AUTH default (no pass) - might fail if default user has no pass?

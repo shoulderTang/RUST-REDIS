@@ -9,8 +9,8 @@ pub fn auth(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &Serve
             Resp::BulkString(Some(b)) => {
                 let pass = String::from_utf8_lossy(b);
                 // Try authenticate as default user
-                let acl_guard = server_ctx.acl.read().unwrap();
-                if let Some(_) = acl_guard.authenticate("default", &pass) {
+                let acl = server_ctx.acl.load();
+                if let Some(_) = acl.authenticate("default", &pass) {
                     conn_ctx.authenticated = true;
                     conn_ctx.current_username = "default".to_string();
                     Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
@@ -42,8 +42,8 @@ pub fn auth(items: &[Resp], conn_ctx: &mut ConnectionContext, server_ctx: &Serve
             None => return Resp::Error("ERR invalid password".to_string()),
         };
 
-        let acl_guard = server_ctx.acl.read().unwrap();
-        if let Some(_user) = acl_guard.authenticate(&username, &password) {
+        let acl = server_ctx.acl.load();
+        if let Some(_user) = acl.authenticate(&username, &password) {
             conn_ctx.authenticated = true;
             conn_ctx.current_username = username;
             Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
@@ -68,8 +68,8 @@ pub fn acl(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCont
                 Resp::BulkString(Some(bytes::Bytes::from(conn_ctx.current_username.clone())))
             }
             "USERS" => {
-                let acl_guard = server_ctx.acl.read().unwrap();
-                let users: Vec<Resp> = acl_guard
+                let acl = server_ctx.acl.load();
+                let users: Vec<Resp> = acl
                     .users
                     .keys()
                     .map(|k| Resp::BulkString(Some(bytes::Bytes::from(k.clone()))))
@@ -88,29 +88,30 @@ pub fn acl(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCont
                         None => return Resp::Error("ERR invalid username".to_string()),
                     };
 
-                    let mut acl_guard = server_ctx.acl.write().unwrap();
-                    let mut user = if let Some(u) = acl_guard.get_user(&username) {
-                        (*u).clone()
-                    } else {
-                        crate::acl::User::new(&username)
-                    };
-
                     let mut rules = Vec::new();
                     for item in items.iter().skip(3) {
                         if let Some(b) = as_bytes(item) {
                             rules.push(String::from_utf8_lossy(b).to_string());
                         }
                     }
-                    user.parse_rules(&rules);
-
-                    acl_guard.set_user(user);
+                    server_ctx.acl.rcu(|old| {
+                        let mut new_acl = (**old).clone();
+                        let mut user = if let Some(u) = new_acl.get_user(&username) {
+                            (*u).clone()
+                        } else {
+                            crate::acl::User::new(&username)
+                        };
+                        user.parse_rules(&rules);
+                        new_acl.set_user(user);
+                        std::sync::Arc::new(new_acl)
+                    });
                     Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
                 }
             }
             "SAVE" => {
                 if let Some(acl_file) = &server_ctx.config.aclfile {
-                    let acl_guard = server_ctx.acl.read().unwrap();
-                    if let Err(e) = acl_guard.save_to_file(acl_file) {
+                    let acl = server_ctx.acl.load();
+                    if let Err(e) = acl.save_to_file(acl_file) {
                         Resp::Error(format!("ERR saving ACL: {}", e))
                     } else {
                         Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
@@ -121,19 +122,24 @@ pub fn acl(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCont
             }
             "LOAD" => {
                 if let Some(acl_file) = &server_ctx.config.aclfile {
-                    let mut acl_guard = server_ctx.acl.write().unwrap();
-                    if let Err(e) = acl_guard.load_from_file(acl_file) {
-                        Resp::Error(format!("ERR loading ACL: {}", e))
-                    } else {
-                        Resp::SimpleString(bytes::Bytes::from_static(b"OK"))
+                    let path = acl_file.clone();
+                    let mut result = Ok(());
+                    server_ctx.acl.rcu(|old| {
+                        let mut new_acl = (**old).clone();
+                        result = new_acl.load_from_file(&path);
+                        std::sync::Arc::new(new_acl)
+                    });
+                    match result {
+                        Err(e) => Resp::Error(format!("ERR loading ACL: {}", e)),
+                        Ok(_) => Resp::SimpleString(bytes::Bytes::from_static(b"OK")),
                     }
                 } else {
                     Resp::Error("ERR no aclfile configured".to_string())
                 }
             }
             "LIST" => {
-                let acl_guard = server_ctx.acl.read().unwrap();
-                let users: Vec<Resp> = acl_guard
+                let acl = server_ctx.acl.load();
+                let users: Vec<Resp> = acl
                     .users
                     .values()
                     .map(|u| Resp::BulkString(Some(bytes::Bytes::from(u.to_string()))))
@@ -150,12 +156,13 @@ pub fn acl(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCont
                         Some(b) => String::from_utf8_lossy(b).to_string(),
                         None => return Resp::Error("ERR invalid username".to_string()),
                     };
-                    let mut acl_guard = server_ctx.acl.write().unwrap();
-                    if acl_guard.del_user(&username) {
-                        Resp::Integer(1)
-                    } else {
-                        Resp::Integer(0)
-                    }
+                    let mut deleted = false;
+                    server_ctx.acl.rcu(|old| {
+                        let mut new_acl = (**old).clone();
+                        deleted = new_acl.del_user(&username);
+                        std::sync::Arc::new(new_acl)
+                    });
+                    if deleted { Resp::Integer(1) } else { Resp::Integer(0) }
                 }
             }
             "LOG" => {
@@ -170,13 +177,13 @@ pub fn acl(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCont
                         None => return Resp::Error("ERR syntax error".to_string()),
                     };
                     if arg == "RESET" {
-                        let mut log = server_ctx.acl_log.write().unwrap();
+                        let mut log = server_ctx.clients_ctx.acl_log.write().unwrap();
                         log.clear();
                         return Resp::SimpleString(Bytes::from("OK"));
                     } else {
                         // ACL LOG <count>
                         if let Ok(count) = arg.parse::<usize>() {
-                            let log = server_ctx.acl_log.read().unwrap();
+                            let log = server_ctx.clients_ctx.acl_log.read().unwrap();
                             let mut results = Vec::new();
                             for entry in log.iter().take(count) {
                                 results.push(format_acl_log_entry(entry));
@@ -190,7 +197,7 @@ pub fn acl(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCont
                     }
                 } else {
                     // ACL LOG (returns all)
-                    let log = server_ctx.acl_log.read().unwrap();
+                    let log = server_ctx.clients_ctx.acl_log.read().unwrap();
                     let mut results = Vec::new();
                     for entry in log.iter() {
                         results.push(format_acl_log_entry(entry));
@@ -213,8 +220,8 @@ pub fn acl(items: &[Resp], conn_ctx: &ConnectionContext, server_ctx: &ServerCont
                     None => return Resp::Error("ERR invalid command".to_string()),
                 };
 
-                let acl_guard = server_ctx.acl.read().unwrap();
-                if let Some(user) = acl_guard.get_user(&username) {
+                let acl = server_ctx.acl.load();
+                if let Some(user) = acl.get_user(&username) {
                     if user.can_execute(&cmd_to_test) {
                         // Check keys if provided
                         let mut all_keys_allowed = true;
@@ -269,7 +276,7 @@ fn format_acl_log_entry(entry: &AclLogEntry) -> Resp {
 }
 
 pub fn record_acl_log(server_ctx: &ServerContext, entry: AclLogEntry) {
-    let mut log = server_ctx.acl_log.write().unwrap();
+    let mut log = server_ctx.clients_ctx.acl_log.write().unwrap();
     log.push_front(entry);
     if log.len() > 128 {
         log.pop_back();

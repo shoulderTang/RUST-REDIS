@@ -50,25 +50,25 @@ async fn config_get(items: &[Resp], ctx: &ServerContext) -> Resp {
         AppendFsync::No => "no",
     };
 
-    let slowlog_threshold = ctx.slowlog_threshold_us.load(Ordering::Relaxed);
-    let slowlog_max_len = ctx.slowlog_max_len.load(Ordering::Relaxed);
-    let maxmemory = ctx.maxmemory.load(Ordering::Relaxed);
-    let maxmemory_policy = *ctx.maxmemory_policy.read().unwrap();
-    let maxmemory_samples = ctx.maxmemory_samples.load(Ordering::Relaxed);
-    let notify_flags = ctx.notify_keyspace_events.load(Ordering::Relaxed);
+    let slowlog_threshold = ctx.slowlog.threshold_us.load(Ordering::Relaxed);
+    let slowlog_max_len = ctx.slowlog.max_len.load(Ordering::Relaxed);
+    let maxmemory = ctx.mem.maxmemory.load(Ordering::Relaxed);
+    let maxmemory_policy = *ctx.mem.maxmemory_policy.read().unwrap();
+    let maxmemory_samples = ctx.mem.maxmemory_samples.load(Ordering::Relaxed);
+    let notify_flags = ctx.mem.notify_keyspace_events.load(Ordering::Relaxed);
     let notify_str = crate::cmd::notify::flags_to_string(notify_flags);
-    let rdbcompression = ctx.rdbcompression.load(Ordering::Relaxed);
-    let rdbchecksum = ctx.rdbchecksum.load(Ordering::Relaxed);
-    let stop_writes_on_bgsave_error = ctx.stop_writes_on_bgsave_error.load(Ordering::Relaxed);
-    let repl_backlog_size = ctx.repl_backlog_size.load(Ordering::Relaxed);
-    let repl_ping_replica_period = ctx.repl_ping_replica_period.load(Ordering::Relaxed);
-    let repl_timeout = ctx.repl_timeout.load(Ordering::Relaxed);
-    let min_replicas_to_write = ctx.min_replicas_to_write.load(Ordering::Relaxed);
-    let min_replicas_max_lag = ctx.min_replicas_max_lag.load(Ordering::Relaxed);
-    let repl_diskless_sync = ctx.repl_diskless_sync.load(Ordering::Relaxed);
-    let repl_diskless_sync_delay = ctx.repl_diskless_sync_delay.load(Ordering::Relaxed);
-    let replica_read_only = ctx.replica_read_only.load(Ordering::Relaxed);
-    let save_params = ctx.save_params.read().unwrap();
+    let rdbcompression = ctx.persist.rdbcompression.load(Ordering::Relaxed);
+    let rdbchecksum = ctx.persist.rdbchecksum.load(Ordering::Relaxed);
+    let stop_writes_on_bgsave_error = ctx.persist.stop_writes_on_bgsave_error.load(Ordering::Relaxed);
+    let repl_backlog_size = ctx.repl.repl_backlog_size.load(Ordering::Relaxed);
+    let repl_ping_replica_period = ctx.repl.repl_ping_replica_period.load(Ordering::Relaxed);
+    let repl_timeout = ctx.repl.repl_timeout.load(Ordering::Relaxed);
+    let min_replicas_to_write = ctx.repl.min_replicas_to_write.load(Ordering::Relaxed);
+    let min_replicas_max_lag = ctx.repl.min_replicas_max_lag.load(Ordering::Relaxed);
+    let repl_diskless_sync = ctx.repl.repl_diskless_sync.load(Ordering::Relaxed);
+    let repl_diskless_sync_delay = ctx.repl.repl_diskless_sync_delay.load(Ordering::Relaxed);
+    let replica_read_only = ctx.repl.replica_read_only.load(Ordering::Relaxed);
+    let save_params = ctx.persist.save_params.read().unwrap();
     let save_str = save_params
         .iter()
         .map(|(s, c)| format!("{} {}", s, c))
@@ -188,7 +188,7 @@ async fn config_set(items: &[Resp], ctx: &ServerContext) -> Resp {
     match param_lower.as_str() {
         "slowlog-log-slower-than" => match value.parse::<i64>() {
             Ok(v) => {
-                ctx.slowlog_threshold_us.store(v, Ordering::Relaxed);
+                ctx.slowlog.threshold_us.store(v, Ordering::Relaxed);
                 Resp::SimpleString(Bytes::from("OK"))
             }
             Err(_) => Resp::Error("ERR value is not an integer or out of range".to_string()),
@@ -196,9 +196,9 @@ async fn config_set(items: &[Resp], ctx: &ServerContext) -> Resp {
         "slowlog-max-len" => {
             match value.parse::<usize>() {
                 Ok(v) => {
-                    ctx.slowlog_max_len.store(v, Ordering::Relaxed);
+                    ctx.slowlog.max_len.store(v, Ordering::Relaxed);
                     // Trim the slowlog queue immediately
-                    let mut logq = ctx.slowlog.lock().await;
+                    let mut logq = ctx.slowlog.log.lock().await;
                     while logq.len() > v {
                         logq.pop_back();
                     }
@@ -224,7 +224,7 @@ async fn config_set(items: &[Resp], ctx: &ServerContext) -> Resp {
             match num.parse::<u64>() {
                 Ok(n) => {
                     let bytes = n * unit;
-                    ctx.maxmemory.store(bytes, Ordering::Relaxed);
+                    ctx.mem.maxmemory.store(bytes, Ordering::Relaxed);
                     Resp::SimpleString(Bytes::from("OK"))
                 }
                 Err(_) => Resp::Error("ERR value is not an integer or out of range".to_string()),
@@ -232,7 +232,7 @@ async fn config_set(items: &[Resp], ctx: &ServerContext) -> Resp {
         }
         "maxmemory-policy" => {
             if let Some(p) = crate::conf::EvictionPolicy::from_str(&value) {
-                let mut policy = ctx.maxmemory_policy.write().unwrap();
+                let mut policy = ctx.mem.maxmemory_policy.write().unwrap();
                 *policy = p;
                 Resp::SimpleString(Bytes::from("OK"))
             } else {
@@ -241,28 +241,28 @@ async fn config_set(items: &[Resp], ctx: &ServerContext) -> Resp {
         }
         "maxmemory-samples" => match value.parse::<usize>() {
             Ok(v) => {
-                ctx.maxmemory_samples.store(v, Ordering::Relaxed);
+                ctx.mem.maxmemory_samples.store(v, Ordering::Relaxed);
                 Resp::SimpleString(Bytes::from("OK"))
             }
             Err(_) => Resp::Error("ERR value is not an integer or out of range".to_string()),
         },
         "notify-keyspace-events" => {
             let flags = crate::cmd::notify::parse_notify_flags(&value);
-            ctx.notify_keyspace_events.store(flags, Ordering::Relaxed);
+            ctx.mem.notify_keyspace_events.store(flags, Ordering::Relaxed);
             Resp::SimpleString(Bytes::from("OK"))
         }
         "rdbcompression" => {
-            ctx.rdbcompression
+            ctx.persist.rdbcompression
                 .store(value.eq_ignore_ascii_case("yes"), Ordering::Relaxed);
             Resp::SimpleString(Bytes::from("OK"))
         }
         "rdbchecksum" => {
-            ctx.rdbchecksum
+            ctx.persist.rdbchecksum
                 .store(value.eq_ignore_ascii_case("yes"), Ordering::Relaxed);
             Resp::SimpleString(Bytes::from("OK"))
         }
         "stop-writes-on-bgsave-error" => {
-            ctx.stop_writes_on_bgsave_error
+            ctx.persist.stop_writes_on_bgsave_error
                 .store(value.eq_ignore_ascii_case("yes"), Ordering::Relaxed);
             Resp::SimpleString(Bytes::from("OK"))
         }
@@ -281,59 +281,59 @@ async fn config_set(items: &[Resp], ctx: &ServerContext) -> Resp {
                     }
                 }
             }
-            let mut params = ctx.save_params.write().unwrap();
+            let mut params = ctx.persist.save_params.write().unwrap();
             *params = new_params;
             Resp::SimpleString(Bytes::from("OK"))
         }
         "repl-backlog-size" => match value.parse::<usize>() {
             Ok(v) => {
-                ctx.repl_backlog_size.store(v, Ordering::Relaxed);
+                ctx.repl.repl_backlog_size.store(v, Ordering::Relaxed);
                 Resp::SimpleString(Bytes::from("OK"))
             }
             Err(_) => Resp::Error("ERR value is not an integer or out of range".to_string()),
         },
         "repl-ping-replica-period" => match value.parse::<u64>() {
             Ok(v) if v > 0 => {
-                ctx.repl_ping_replica_period.store(v, Ordering::Relaxed);
+                ctx.repl.repl_ping_replica_period.store(v, Ordering::Relaxed);
                 Resp::SimpleString(Bytes::from("OK"))
             }
             _ => Resp::Error("ERR value is not an integer or out of range".to_string()),
         },
         "repl-timeout" => match value.parse::<u64>() {
             Ok(v) if v > 0 => {
-                ctx.repl_timeout.store(v, Ordering::Relaxed);
+                ctx.repl.repl_timeout.store(v, Ordering::Relaxed);
                 Resp::SimpleString(Bytes::from("OK"))
             }
             _ => Resp::Error("ERR value is not an integer or out of range".to_string()),
         },
         "min-replicas-to-write" => match value.parse::<usize>() {
             Ok(v) => {
-                ctx.min_replicas_to_write.store(v, Ordering::Relaxed);
+                ctx.repl.min_replicas_to_write.store(v, Ordering::Relaxed);
                 Resp::SimpleString(Bytes::from("OK"))
             }
             _ => Resp::Error("ERR value is not an integer or out of range".to_string()),
         },
         "min-replicas-max-lag" => match value.parse::<u64>() {
             Ok(v) => {
-                ctx.min_replicas_max_lag.store(v, Ordering::Relaxed);
+                ctx.repl.min_replicas_max_lag.store(v, Ordering::Relaxed);
                 Resp::SimpleString(Bytes::from("OK"))
             }
             _ => Resp::Error("ERR value is not an integer or out of range".to_string()),
         },
         "repl-diskless-sync" => {
-            ctx.repl_diskless_sync
+            ctx.repl.repl_diskless_sync
                 .store(value.eq_ignore_ascii_case("yes"), Ordering::Relaxed);
             Resp::SimpleString(Bytes::from("OK"))
         }
         "repl-diskless-sync-delay" => match value.parse::<u64>() {
             Ok(v) => {
-                ctx.repl_diskless_sync_delay.store(v, Ordering::Relaxed);
+                ctx.repl.repl_diskless_sync_delay.store(v, Ordering::Relaxed);
                 Resp::SimpleString(Bytes::from("OK"))
             }
             _ => Resp::Error("ERR value is not an integer or out of range".to_string()),
         },
         "replica-read-only" => {
-            ctx.replica_read_only
+            ctx.repl.replica_read_only
                 .store(value.eq_ignore_ascii_case("yes"), Ordering::Relaxed);
             Resp::SimpleString(Bytes::from("OK"))
         }
@@ -361,20 +361,20 @@ async fn config_rewrite(_items: &[Resp], ctx: &ServerContext) -> Resp {
         // maxmemory
         append_cfg(
             "maxmemory",
-            &ctx.maxmemory.load(Ordering::Relaxed).to_string(),
+            &ctx.mem.maxmemory.load(Ordering::Relaxed).to_string(),
         );
         // maxmemory-policy
         append_cfg(
             "maxmemory-policy",
-            ctx.maxmemory_policy.read().unwrap().as_str(),
+            ctx.mem.maxmemory_policy.read().unwrap().as_str(),
         );
         // maxmemory-samples
         append_cfg(
             "maxmemory-samples",
-            &ctx.maxmemory_samples.load(Ordering::Relaxed).to_string(),
+            &ctx.mem.maxmemory_samples.load(Ordering::Relaxed).to_string(),
         );
         // notify-keyspace-events
-        let notify_flags = ctx.notify_keyspace_events.load(Ordering::Relaxed);
+        let notify_flags = ctx.mem.notify_keyspace_events.load(Ordering::Relaxed);
         append_cfg(
             "notify-keyspace-events",
             &crate::cmd::notify::flags_to_string(notify_flags),
@@ -382,7 +382,7 @@ async fn config_rewrite(_items: &[Resp], ctx: &ServerContext) -> Resp {
         // rdbcompression
         append_cfg(
             "rdbcompression",
-            if ctx.rdbcompression.load(Ordering::Relaxed) {
+            if ctx.persist.rdbcompression.load(Ordering::Relaxed) {
                 "yes"
             } else {
                 "no"
@@ -391,7 +391,7 @@ async fn config_rewrite(_items: &[Resp], ctx: &ServerContext) -> Resp {
         // rdbchecksum
         append_cfg(
             "rdbchecksum",
-            if ctx.rdbchecksum.load(Ordering::Relaxed) {
+            if ctx.persist.rdbchecksum.load(Ordering::Relaxed) {
                 "yes"
             } else {
                 "no"
@@ -400,7 +400,7 @@ async fn config_rewrite(_items: &[Resp], ctx: &ServerContext) -> Resp {
         // stop-writes-on-bgsave-error
         append_cfg(
             "stop-writes-on-bgsave-error",
-            if ctx.stop_writes_on_bgsave_error.load(Ordering::Relaxed) {
+            if ctx.persist.stop_writes_on_bgsave_error.load(Ordering::Relaxed) {
                 "yes"
             } else {
                 "no"
@@ -409,7 +409,7 @@ async fn config_rewrite(_items: &[Resp], ctx: &ServerContext) -> Resp {
         // replica-read-only
         append_cfg(
             "replica-read-only",
-            if ctx.replica_read_only.load(Ordering::Relaxed) {
+            if ctx.repl.replica_read_only.load(Ordering::Relaxed) {
                 "yes"
             } else {
                 "no"
@@ -418,19 +418,19 @@ async fn config_rewrite(_items: &[Resp], ctx: &ServerContext) -> Resp {
         // min-replicas-to-write
         append_cfg(
             "min_replicas_to_write",
-            &ctx.min_replicas_to_write
+            &ctx.repl.min_replicas_to_write
                 .load(Ordering::Relaxed)
                 .to_string(),
         );
         // min-replicas-max-lag
         append_cfg(
             "min_replicas_max_lag",
-            &ctx.min_replicas_max_lag.load(Ordering::Relaxed).to_string(),
+            &ctx.repl.min_replicas_max_lag.load(Ordering::Relaxed).to_string(),
         );
         // repl-diskless-sync
         append_cfg(
             "repl-diskless-sync",
-            if ctx.repl_diskless_sync.load(Ordering::Relaxed) {
+            if ctx.repl.repl_diskless_sync.load(Ordering::Relaxed) {
                 "yes"
             } else {
                 "no"
@@ -439,13 +439,13 @@ async fn config_rewrite(_items: &[Resp], ctx: &ServerContext) -> Resp {
         // repl-diskless-sync-delay
         append_cfg(
             "repl-diskless-sync-delay",
-            &ctx.repl_diskless_sync_delay
+            &ctx.repl.repl_diskless_sync_delay
                 .load(Ordering::Relaxed)
                 .to_string(),
         );
         // save
         {
-            let params = ctx.save_params.read().unwrap();
+            let params = ctx.persist.save_params.read().unwrap();
             for (s, c) in params.iter() {
                 append_cfg("save", &format!("{} {}", s, c));
             }
@@ -468,11 +468,11 @@ async fn config_rewrite(_items: &[Resp], ctx: &ServerContext) -> Resp {
         // slowlog
         append_cfg(
             "slowlog-log-slower-than",
-            &ctx.slowlog_threshold_us.load(Ordering::Relaxed).to_string(),
+            &ctx.slowlog.threshold_us.load(Ordering::Relaxed).to_string(),
         );
         append_cfg(
             "slowlog-max-len",
-            &ctx.slowlog_max_len.load(Ordering::Relaxed).to_string(),
+            &ctx.slowlog.max_len.load(Ordering::Relaxed).to_string(),
         );
 
         // maxclients
